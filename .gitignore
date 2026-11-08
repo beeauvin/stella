@@ -1,0 +1,5 @@
+/target
+/build
+
+# Documentation
+docs/.obsidian/workspace.json
