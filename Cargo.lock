@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "stella-checks"
+version = "0.0.0"
+
+[[package]]
 name = "stella-cli"
 version = "0.0.0"
 dependencies = [
