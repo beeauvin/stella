@@ -10,7 +10,7 @@
 //! name must be lowercase kebab: lowercase letters and digits joined by single hyphens. Last, the
 //! file's name must end in `.stella`, have something before it, and be kebab before it.
 
-use crate::problem::Problem;
+use crate::problem::{Kind, Problem};
 
 /// A source path passed the path lint. It's relative, it stays inside the directory the compiler
 /// runs in, and every name in it is lowercase kebab. Only `lint_path` makes one.
@@ -34,5 +34,57 @@ impl<'path> SourcePath<'path> {
 
 /// Checks the path a program was named by, before anything reads it.
 pub fn lint_path(path: &str) -> Result<SourcePath<'_>, Problem> {
-    todo!("lint the path {path:?}")
+    if path.starts_with('/') {
+        return Err(Problem::whole_file(Kind::PathAbsolute));
+    }
+    let normalized = path.strip_prefix("./").unwrap_or(path);
+    // Each check looks at every part before the next check runs.
+    if normalized.split('/').any(|part| part == "..") {
+        return Err(Problem::whole_file(Kind::PathParent));
+    }
+    if normalized.split('/').any(str::is_empty) {
+        return Err(Problem::whole_file(Kind::PathEmptyPart));
+    }
+    if normalized.split('/').any(|part| part == ".") {
+        return Err(Problem::whole_file(Kind::PathDotPart));
+    }
+    // The last part is the file, and every part before it is a directory.
+    let mut parts = normalized.rsplit('/');
+    let file = parts.next().expect("a split has at least one part");
+    if !parts.all(is_kebab) {
+        return Err(Problem::whole_file(Kind::DirectoryNotKebab));
+    }
+    let Some(name) = file.strip_suffix(".stella") else {
+        return Err(Problem::whole_file(Kind::NameNotStella));
+    };
+    if name.is_empty() {
+        return Err(Problem::whole_file(Kind::NameEmpty));
+    }
+    if !is_kebab(name) {
+        return Err(Problem::whole_file(Kind::NameNotKebab));
+    }
+    // Every part passed, so the path is kebab names joined by `/`: relative, and ASCII.
+    assert!(!normalized.starts_with('/'));
+    assert!(normalized.is_ascii());
+    Ok(SourcePath { normalized, name })
+}
+
+/// Says whether `name` is lowercase letters and digits joined by single hyphens, like
+/// `hello-world`.
+fn is_kebab(name: &str) -> bool {
+    // A word is needed at the start, and again after every hyphen.
+    let mut word_needed = true;
+    for byte in name.bytes() {
+        match byte {
+            b'a'..=b'z' | b'0'..=b'9' => word_needed = false,
+            b'-' if !word_needed => word_needed = true,
+            _ => return false,
+        }
+    }
+    let kebab = !word_needed;
+    if kebab {
+        assert!(!name.starts_with('-'));
+        assert!(!name.ends_with('-'));
+    }
+    kebab
 }

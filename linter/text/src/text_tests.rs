@@ -100,6 +100,7 @@ fn accepted_sources() {
         "\n// a\n\nfunction main() returns Void {\n\n    // b\n\n}\n",
         "// café, 日本語, and a flag: \u{1F3F3}\u{FE0F}\u{200D}\u{1F308}\n",
         "// punctuation: ~ / // /// //! { } ( )\n",
+        "function main() returns Void {\n    // café\n}\n",
         "function main() returns Void {\n        // eight\n            // twelve\n}\n",
         // The code itself is the lexer's to check.
         "functoin mian() returns Viod {\n}\n",
@@ -115,6 +116,14 @@ fn size() {
     refuses(b"", whole_file(FileEmpty));
     let one_more = source_of_size(SOURCE_BYTES_MAX + 1);
     refuses(one_more.as_bytes(), whole_file(FileTooBig));
+    // At the limit, a problem can be on the last line a source can have, or just past the end of
+    // the longest line, and the lines step can walk every line there can be.
+    let newlines = "\n".repeat(SOURCE_BYTES_MAX as usize - 1);
+    refuses(format!("{newlines}\t").as_bytes(), at(Tab, SOURCE_BYTES_MAX, 1));
+    refuses(&[newlines.as_bytes(), b"\xFF"].concat(), at(NotUtf8, SOURCE_BYTES_MAX, 1));
+    refuses(format!("{newlines}\n").as_bytes(), at(BlankLineAtEnd, 1, 1));
+    let longest = "x".repeat(SOURCE_BYTES_MAX as usize);
+    refuses(longest.as_bytes(), at(NoFinalNewline, 1, SOURCE_BYTES_MAX + 1));
 }
 
 #[test]
@@ -123,6 +132,7 @@ fn characters() {
         ("\u{FEFF}function main() returns Void {\n}\n", at(ByteOrderMark, 1, 1)),
         ("function main() returns Void {\r\n}\n", at(CarriageReturn, 1, 31)),
         ("function main() returns Void {\n\t// x\n}\n", at(Tab, 2, 1)),
+        ("// one\u{2028}two\n", at(LineSeparator('\u{2028}'), 1, 7)),
         // Columns count code points: é is one, and the flag is four.
         ("// é\t\n", at(Tab, 1, 5)),
         ("// \u{1F3F3}\u{FE0F}\u{200D}\u{1F308}\t\n", at(Tab, 1, 8)),
@@ -158,6 +168,15 @@ fn invalid_utf8() {
 
 #[test]
 fn lines() {
+    // Every indentation up to five levels: only whole levels of four spaces pass.
+    for spaces in 0..=20 {
+        let source = format!("function main() returns Void {{\n{}// x\n}}\n", " ".repeat(spaces));
+        if spaces % 4 == 0 {
+            accepts(&source);
+        } else {
+            refuses(source.as_bytes(), at(IndentationNotFour, 2, 1));
+        }
+    }
     for (source, problem) in [
         ("function main() returns Void {\n}", at(NoFinalNewline, 2, 2)),
         ("}", at(NoFinalNewline, 1, 2)),
@@ -172,11 +191,11 @@ fn lines() {
         ("function main() returns Void {\n    \n}\n", at(TrailingSpace, 2, 1)),
         ("function main() returns Void {\n  \n}\n", at(TrailingSpace, 2, 1)),
         ("}\n    \n", at(TrailingSpace, 2, 1)),
-        ("function main() returns Void {\n // x\n}\n", at(IndentationNotFour, 2, 1)),
-        ("function main() returns Void {\n  // x\n}\n", at(IndentationNotFour, 2, 1)),
-        ("function main() returns Void {\n     // x\n}\n", at(IndentationNotFour, 2, 1)),
-        ("function main() returns Void {\n      // x\n}\n", at(IndentationNotFour, 2, 1)),
         ("function main() returns Void {\n  }\n", at(IndentationNotFour, 2, 1)),
+        // The last line is checked like any other, even when it has no `\n`.
+        ("} ", at(TrailingSpace, 1, 2)),
+        (" }", at(IndentationNotFour, 1, 1)),
+        ("}\n  ", at(TrailingSpace, 2, 1)),
         // The earliest problem wins, the end of the file included.
         ("function main() returns Void {\n  // x \n}\n", at(IndentationNotFour, 2, 1)),
         ("function main() returns Void { \n  // x\n}\n", at(TrailingSpace, 1, 31)),
@@ -204,6 +223,7 @@ fn comments() {
         // The earliest problem wins.
         ("//x\nfunction main() returns Void { // hi\n}\n", at(CommentNeedsSpace, 1, 3)),
         ("function main() returns Void { // hi\n//x\n}\n", at(CommentSharesLine, 1, 32)),
+        ("function main() returns Void { // a // b\n}\n", at(CommentSharesLine, 1, 32)),
     ] {
         refuses(source.as_bytes(), problem);
     }
@@ -215,6 +235,9 @@ fn ascii() {
         ("function maín() returns Void {\n}\n", at(NotAscii('í'), 1, 12)),
         ("// a\nfunction maín() returns Void {\n}\n", at(NotAscii('í'), 2, 12)),
         ("function main() returns Void {\n}\u{A0}\n", at(NotAscii('\u{A0}'), 2, 2)),
+        // The earliest problem wins.
+        ("aé\u{A0}\n", at(NotAscii('é'), 1, 2)),
+        ("é\nñ\n", at(NotAscii('é'), 1, 1)),
     ] {
         refuses(source.as_bytes(), problem);
     }

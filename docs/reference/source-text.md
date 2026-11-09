@@ -1,6 +1,6 @@
 # Source text
 
-A source file is UTF-8 text, at most 16,384 bytes long. Outside
+A source file is UTF-8 text, at most 16,384 bytes long, and never empty. Outside
 [comments](comments.md), it's ASCII. The size is tested by
 [`size`](../../linter/text/src/text_tests.rs) and
 [`accepted_sources`](../../linter/text/src/text_tests.rs).

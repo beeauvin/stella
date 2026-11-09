@@ -23,7 +23,8 @@ Stella code has one layout, and the compiler refuses any other.
   Not tested yet.
 - No line ends in a space. Tested by
   [`lines`](../../linter/text/src/text_tests.rs).
-- Blank lines may go anywhere, except at the end of the file. Tested by
+- Blank lines may go anywhere, except at the end of the file. A line of only
+  spaces isn't blank: it ends in a space, so it's refused. Tested by
   [`accepted_sources`](../../linter/text/src/text_tests.rs) and
   [`lines`](../../linter/text/src/text_tests.rs).
 - The file ends with exactly one newline. Tested by

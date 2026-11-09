@@ -70,11 +70,11 @@ one less to worry about:
 1. The path: it's relative, and no part of it is `..`, empty, or a `.` other
    than one leading `./`. Then its directories are named the one way. Last, its
    file ends in `.stella`, with a name before it that's named the one way.
-2. The size: at most 16,384 bytes.
+2. The size: at least one byte, and at most 16,384.
 3. The characters: everything on the [source text](source-text.md) page but
    the ASCII rule, in one pass.
-4. The lines: the final newline, trailing spaces, and indentation in
-   multiples of four.
+4. The lines: exactly one final newline with no blank line before it, no
+   trailing spaces, and indentation in multiples of four.
 5. [Comments](comments.md), including that code and a comment can't share a
    line.
 6. ASCII: outside comments, every character is ASCII.
@@ -86,8 +86,8 @@ aren't tested yet.
 
 For now, when the compiler refuses a program, it stops at the first check that
 fails. Within that check, it reports the earliest problem in the file. That's
-tested by [`characters`](../../linter/text/src/text_tests.rs), [`invalid_utf8`](../../linter/text/src/text_tests.rs), [`lines`](../../linter/text/src/text_tests.rs) and
-[`comments`](../../linter/text/src/text_tests.rs). It writes one message to stderr. For example:
+tested by [`characters`](../../linter/text/src/text_tests.rs), [`invalid_utf8`](../../linter/text/src/text_tests.rs), [`lines`](../../linter/text/src/text_tests.rs),
+[`comments`](../../linter/text/src/text_tests.rs) and [`ascii`](../../linter/text/src/text_tests.rs). It writes one message to stderr. For example:
 
 ```
 hello.stella:1:29: a space must come before `{`.
@@ -98,7 +98,7 @@ hello.stella:1:29: a space must come before `{`.
 The message starts with the file, line and column, so editors and terminals can
 jump to it. Then one sentence says what's wrong. Last comes the line itself,
 with a caret under the column. Lines and columns count from 1, and a column
-counts characters, not bytes.
+counts code points, not bytes.
 
 Every sentence is tested by [`sentences`](../../linter/text/src/problem_tests.rs), and every line and column by the
 text tests above. The message as a whole isn't tested yet.
