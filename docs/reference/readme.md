@@ -14,6 +14,8 @@ function main() returns Void {
 
 - [Programs](programs.md): what a program is, and what running one does.
 - [Source text](source-text.md): what a source file may contain.
+- [Tokens](tokens.md): what code is made of.
+- [Names](names.md): the two shapes a name can have.
 - [Functions](functions.md): how a function is written.
 - [Types](types.md): the types there are.
 - [Comments](comments.md): how a comment is written.

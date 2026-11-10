@@ -51,8 +51,8 @@ choose. Not built yet.
 ## Linting
 
 `stella lint` checks programs without building them. It runs a build's checks,
-in the same order, up to the code itself, which it doesn't check yet. It prints
-nothing for a program that passes.
+in the same order, through the [tokens](tokens.md). It doesn't check the code
+itself yet. It prints nothing for a program that passes.
 
 ```
 $ stella lint programs/hello.stella
@@ -127,6 +127,7 @@ them gets. For `stella lint`, this is tested by
 [`unreadable_paths`](../../cli/tests/lint.rs),
 [`unreadable_directories`](../../cli/tests/lint.rs),
 [`the_worst_status_wins`](../../cli/tests/lint.rs),
+[`code_that_cant_be_lexed`](../../cli/tests/lint.rs),
 [`no_programs`](../../cli/tests/lint.rs),
 [`the_walk_is_bounded`](../../cli/tests/lint.rs),
 [`a_named_path_is_bounded`](../../cli/tests/lint.rs),
@@ -152,20 +153,26 @@ one less to worry about:
 5. [Comments](comments.md), including that code and a comment can't share a
    line.
 6. ASCII: outside comments, every character is ASCII.
-7. The code itself.
+7. The [tokens](tokens.md): in code, every character is in a token or is a
+   space, and every name has its one [shape](names.md).
+8. The code itself.
 
 The order of the path's checks is tested by
-[`refused_paths`](../../linter/text/tests/path.rs), and the order of steps 2 to
-6 by [`the_steps_run_in_order`](../../linter/text/tests/text.rs). The code's
-own checks aren't built yet.
+[`refused_paths`](../../linter/text/tests/path.rs), the order of steps 2 to 6
+by [`the_steps_run_in_order`](../../linter/text/tests/text.rs), and that the
+tokens come after them by
+[`code_that_cant_be_lexed`](../../cli/tests/lint.rs). The code's own checks
+aren't built yet.
 
 For now, when the compiler refuses a program, it stops at the first check that
 fails. Within that check, it reports the earliest problem in the file. That's
 tested by [`characters`](../../linter/text/tests/text.rs),
 [`invalid_utf8`](../../linter/text/tests/text.rs),
 [`lines`](../../linter/text/tests/text.rs),
-[`comments`](../../linter/text/tests/text.rs) and
-[`ascii`](../../linter/text/tests/text.rs). It writes one message to stderr.
+[`comments`](../../linter/text/tests/text.rs),
+[`ascii`](../../linter/text/tests/text.rs) and
+[`the_first_problem_wins`](../../lexer/tests/lex.rs). It writes one message to
+stderr.
 For example:
 
 ```
@@ -192,7 +199,9 @@ reaches the terminal, and the caret stays exactly under the problem. Tested by
 [`every_byte_that_isnt_utf8_is_shown_safely`](../../cli/tests/message.rs)
 and [`the_caret_lands_after_every_code_point`](../../cli/tests/message.rs).
 
-Every sentence is tested by [`sentences`](../../linter/text/tests/problem.rs),
-and every line and column by the text tests above. The message as a whole is tested by
+Every sentence is tested by the text lint's
+[`sentences`](../../linter/text/tests/problem.rs) and the lexer's
+[`sentences`](../../lexer/tests/problem.rs), and every line and column by the
+tests above. The message as a whole is tested by
 [`whole_file_messages`](../../cli/tests/message.rs) and
 [`messages`](../../cli/tests/message.rs).
