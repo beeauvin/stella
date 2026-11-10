@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+name = "stella_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "stella"
 path = "src/main.rs"
