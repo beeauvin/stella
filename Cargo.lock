@@ -14,5 +14,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-lexer"
+version = "0.0.0"
+dependencies = [
+ "stella-linter-text",
+]
+
+[[package]]
 name = "stella-linter-text"
 version = "0.0.0"
