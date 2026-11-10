@@ -3,7 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! The `stella` command. For now it has one: `stella lint [path]`. It checks each program's path,
-//! then its text with the text lint, then its tokens with the lexer.
+//! then its text with the text lint, then its tokens with the lexer, then their layout with the
+//! tokens lint.
 //!
 //! Everything it says goes to stderr, each message as soon as it's made, so linting every file
 //! holds one message at a time, however many there are. If stderr can't be written, there's
@@ -24,6 +25,7 @@ use std::process::ExitCode;
 use stella_cli::{Found, WALK_ENTRIES_MAX, message, shown, walk};
 use stella_lexer::{TokenBuffer, lex};
 use stella_linter_text::{Kind, Place, Problem, SOURCE_BYTES_MAX, lint, lint_path};
+use stella_linter_tokens::lint_tokens;
 
 /// Every program the command checked passed.
 const PASSED: u8 = 0;
@@ -138,9 +140,9 @@ fn lint_one(path: &[u8], buffers: &mut Buffers) -> (u8, String) {
     lint_stored(path, &as_stored, buffers)
 }
 
-/// Lints the program stored at `stored`, which `path` names: its path, then its text, then its
-/// tokens. A problem with the path is shown at `stored`, and any other at `path`, as it was
-/// given. Returns its status and its message, which is empty when it passes.
+/// Lints the program stored at `stored`, which `path` names: its path, then its text, its tokens
+/// and their layout. A problem with the path is shown at `stored`, and any other at `path`, as it
+/// was given. Returns its status and its message, which is empty when it passes.
 fn lint_stored(path: &[u8], stored: &[u8], buffers: &mut Buffers) -> (u8, String) {
     assert!(!stored.is_empty());
     let stored_text = String::from_utf8_lossy(stored);
@@ -152,19 +154,30 @@ fn lint_stored(path: &[u8], stored: &[u8], buffers: &mut Buffers) -> (u8, String
         Ok(source) => source,
         Err(sentence) => return (FAILED, format!("{}: {sentence}\n", shown(path))),
     };
-    let (status, text) = match lint(source) {
-        Err(problem) => (REFUSED, message(path, source, problem.place, problem.kind)),
-        // Only text that passed can be lexed, so the text lint's problems always come first.
-        Ok(text) => match lex(text, &mut buffers.tokens) {
-            Ok(_) => (PASSED, String::new()),
-            Err(problem) => {
-                (REFUSED, message(path, source, Place::At(problem.position), problem.kind))
-            }
-        },
+    let (status, text) = match check(source, &mut buffers.tokens) {
+        Ok(()) => (PASSED, String::new()),
+        Err((place, sentence)) => (REFUSED, message(path, source, place, sentence)),
     };
     // A program that passes says nothing, and one that doesn't always says why.
     assert_eq!(status == PASSED, text.is_empty());
     (status, text)
+}
+
+/// Checks `source`'s text, then its tokens, lexed into `buffer`, then their layout, and stops at
+/// the first check that fails. Returns where its problem is and the sentence that says what it
+/// is. Each check takes what only the one before it makes, so they can't run in another order,
+/// and an earlier check's problem always comes first.
+fn check(source: &[u8], buffer: &mut TokenBuffer) -> Result<(), (Place, String)> {
+    assert!(source.len() <= BUFFER_BYTES);
+    let text = lint(source).map_err(|problem| (problem.place, problem.kind.to_string()))?;
+    // Only text that passed is lexed, so the text lint's limits hold from here on.
+    assert!(source.len() <= SOURCE_BYTES_MAX as usize);
+    let lexed = lex(text, buffer);
+    let tokens =
+        lexed.map_err(|problem| (Place::At(problem.position), problem.kind.to_string()))?;
+    let laid_out = lint_tokens(tokens);
+    laid_out.map_err(|problem| (Place::At(problem.position), problem.kind.to_string()))?;
+    Ok(())
 }
 
 /// Unstored says why a path couldn't be found as it's stored.

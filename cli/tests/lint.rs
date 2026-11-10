@@ -34,6 +34,14 @@ const UNEXPECTED: &[u8] = b"function main() returns Void { ;\n}\n";
 const UNEXPECTED_MESSAGE: &str = ":1:32: `;` can't start a token.\n    \
      function main() returns Void { ;\n                                   ^\n";
 
+/// This program passes the text lint and the lexer, and the tokens lint refuses it at 1:30,
+/// because `{` doesn't end its line.
+const EMPTY_BODY: &[u8] = b"function main() returns Void {}\n";
+
+/// This is the message for `EMPTY_BODY`, after its path.
+const EMPTY_BODY_MESSAGE: &str = ":1:30: `{` must end its line.\n    \
+     function main() returns Void {}\n                                 ^\n";
+
 /// This is the line every misuse ends with.
 const USAGE: &str = "usage: stella lint [path]\n";
 
@@ -500,6 +508,53 @@ fn code_that_cant_be_lexed() {
         2,
         &format!(
             "b.stella{UNEXPECTED_MESSAGE}\n\
+             d.stella: this file can't be read: Permission denied (os error 13).\n"
+        ),
+    );
+    assert_eq!(stella(&directory, &["lint"]), expected);
+}
+
+#[test]
+fn code_in_another_layout() {
+    // Code that lexes is checked for the one layout, and refused at the first character at fault.
+    let message = format!("hello.stella{EMPTY_BODY_MESSAGE}");
+    lints_one("laid-out", &[("hello.stella", EMPTY_BODY)], "hello.stella", exits(1, &message));
+    // The path is shown as it was given.
+    let message = format!("./hello.stella{EMPTY_BODY_MESSAGE}");
+    lints_one(
+        "laid-out-as-given",
+        &[("hello.stella", EMPTY_BODY)],
+        "./hello.stella",
+        exits(1, &message),
+    );
+    // A space where none goes is refused at the space.
+    let spaced: &[u8] = b"function main () returns Void {\n}\n";
+    let message = "hello.stella:1:14: no space can go between a name and `(`.\n    \
+                   function main () returns Void {\n                 ^\n";
+    lints_one("spaced", &[("hello.stella", spaced)], "hello.stella", exits(1, message));
+    // A space that's missing is refused at the token that needs one before it, as the layout
+    // page shows.
+    let unspaced: &[u8] = b"function main() returns Void{\n}\n";
+    let message = "hello.stella:1:29: one space must go between a type's name and `{`.\n    \
+                   function main() returns Void{\n                                ^\n";
+    lints_one("unspaced", &[("hello.stella", unspaced)], "hello.stella", exits(1, message));
+    // The lexer runs first, so its problem wins, even when the layout's is earlier in the line.
+    let both: &[u8] = b"function main() returns Void { ;}\n";
+    let lexed_first = "hello.stella:1:32: `;` can't start a token.\n    \
+                       function main() returns Void { ;}\n                                   ^\n";
+    lints_one("lexed-first", &[("hello.stella", both)], "hello.stella", exits(1, lexed_first));
+    // Linting every file checks each one's layout, and the worst status still wins.
+    let directory = fresh_directory("laid-out-tree");
+    write(&directory, "a.stella", GOOD);
+    write(&directory, "b.stella", EMPTY_BODY);
+    write(&directory, "c.stella", UNEXPECTED);
+    write(&directory, "d.stella", GOOD);
+    let _lock = Lock::new(directory.join("d.stella"), 0o000);
+    let expected = exits(
+        2,
+        &format!(
+            "b.stella{EMPTY_BODY_MESSAGE}\n\
+             c.stella{UNEXPECTED_MESSAGE}\n\
              d.stella: this file can't be read: Permission denied (os error 13).\n"
         ),
     );

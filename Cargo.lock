@@ -12,6 +12,7 @@ version = "0.0.0"
 dependencies = [
  "stella-lexer",
  "stella-linter-text",
+ "stella-linter-tokens",
 ]
 
 [[package]]
