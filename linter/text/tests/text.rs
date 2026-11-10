@@ -2,16 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! Unit tests for the text lint. They live beside it in their own module, so they can only reach
-//! what the crate makes public: bytes in, a `Text` or a `Problem` out.
+//! Unit tests for the text lint. They're a crate of their own, so the compiler lets them reach
+//! only what the crate makes public: bytes in, a `Text` or a `Problem` out.
 //!
 //! Every code point is tried, in a comment and in code, against the source text page's table.
 //! The rest are tables, one per step: a source, and the problem it should get. The last table
 //! checks the steps run in order, so an earlier step's problem wins even when a later step's
 //! comes first in the file.
 
-use crate::Kind::*;
-use crate::{Kind, Place, Position, Problem, SOURCE_BYTES_MAX, lint};
+use stella_linter_text::Kind::*;
+use stella_linter_text::{Kind, Place, Position, Problem, SOURCE_BYTES_MAX, lint};
 
 /// Lints `source`, which must pass, and checks the `Text` holds it unchanged.
 fn accepts(source: &str) {
@@ -116,8 +116,8 @@ fn size() {
     refuses(b"", whole_file(FileEmpty));
     let one_more = source_of_size(SOURCE_BYTES_MAX + 1);
     refuses(one_more.as_bytes(), whole_file(FileTooBig));
-    // At the limit, a problem can be on the last line a source can have, or just past the end of
-    // the longest line, and the lines step can walk every line there can be.
+    // At the limit, every problem is still found and placed: on the last line a source can have,
+    // just past the end of the longest line, or in a source of nothing but blank lines.
     let newlines = "\n".repeat(SOURCE_BYTES_MAX as usize - 1);
     refuses(format!("{newlines}\t").as_bytes(), at(Tab, SOURCE_BYTES_MAX, 1));
     refuses(&[newlines.as_bytes(), b"\xFF"].concat(), at(NotUtf8, SOURCE_BYTES_MAX, 1));
@@ -136,7 +136,7 @@ fn characters() {
         // Columns count code points: é is one, and the flag is four.
         ("// é\t\n", at(Tab, 1, 5)),
         ("// \u{1F3F3}\u{FE0F}\u{200D}\u{1F308}\t\n", at(Tab, 1, 8)),
-        // One pass, so the earliest problem wins, whatever its kind.
+        // The earliest problem wins, whatever its kind.
         ("// one\n// t\rwo\n\t// three\n", at(CarriageReturn, 2, 5)),
         ("// one\n\t// two\n// t\rhree\n", at(Tab, 2, 1)),
         ("// a\u{202E}\n// b\u{7}\n", at(BidiControl('\u{202E}'), 1, 5)),
@@ -158,7 +158,7 @@ fn invalid_utf8() {
         (b"// \x80\n", at(NotUtf8, 1, 4)),
         (b"function main() returns Void {\n    // \xFF\n}\n", at(NotUtf8, 2, 8)),
         (b"}\n\xE2\x82", at(NotUtf8, 2, 1)),
-        // It's the same pass as the characters, so the earliest problem wins.
+        // Bytes that aren't UTF-8 are part of the characters step, so the earliest problem wins.
         (b"\t// \xFF\n", at(Tab, 1, 1)),
         (b"// \xFF\t\n", at(NotUtf8, 1, 4)),
     ] {

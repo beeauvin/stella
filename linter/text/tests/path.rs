@@ -2,16 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! Unit and fuzz tests for the path lint. They live beside it in their own module, so they can
-//! only reach what the crate makes public: a path in, a `SourcePath` or a `Problem` out.
+//! Unit and fuzz tests for the path lint. They're a crate of their own, so the compiler lets them
+//! reach only what the crate makes public: a path in, a `SourcePath` or a `Problem` out.
 //!
 //! A name holds only 37 characters, so every code point is tried, in a file's name and in a
 //! directory's. The rest of the rules are two tables, one accepted and one refused. A seeded fuzz
 //! test checks random paths against an oracle, which states the path lint as plainly as the
 //! reference does. Every example checks the oracle too.
 
-use crate::Kind::*;
-use crate::{Kind, Place, Problem, lint_path};
+use stella_linter_text::Kind::*;
+use stella_linter_text::{Kind, Place, Problem, lint_path};
 
 /// These are the 37 characters a name can hold.
 const NAME_CHARACTERS: &str = "abcdefghijklmnopqrstuvwxyz0123456789-";

@@ -14,7 +14,7 @@ The binary goes in `.build/`, at the same path as its source, without
 `.stella`. So `programs/hello.stella` builds to `.build/programs/hello`. If
 something other than a regular file is already there, such as a directory, the
 build stops without touching it. The path and the name it's built from are
-tested by [`accepted_paths`](../../linter/text/src/path_tests.rs). The building itself isn't tested yet.
+tested by [`accepted_paths`](../../linter/text/tests/path.rs). The building itself isn't tested yet.
 
 The compiler refuses a path it can't build from: an absolute path, or one with
 `..` as a part. It also refuses a file whose name doesn't end in `.stella`.
@@ -23,10 +23,10 @@ lowercase letters and digits joined by single hyphens, like `hello-world` or
 `rung-0`. One leading `./` is fine, so `./programs/hello.stella` means the same
 as `programs/hello.stella`. Anywhere else, `.` or an empty part, as in
 `programs//hello.stella`, is refused. Tested by
-[`every_code_point_in_a_files_name`](../../linter/text/src/path_tests.rs),
-[`every_code_point_in_a_directorys_name`](../../linter/text/src/path_tests.rs),
-[`accepted_paths`](../../linter/text/src/path_tests.rs), [`refused_paths`](../../linter/text/src/path_tests.rs) and
-[`fuzz_against_the_oracle`](../../linter/text/src/path_tests.rs).
+[`every_code_point_in_a_files_name`](../../linter/text/tests/path.rs),
+[`every_code_point_in_a_directorys_name`](../../linter/text/tests/path.rs),
+[`accepted_paths`](../../linter/text/tests/path.rs), [`refused_paths`](../../linter/text/tests/path.rs) and
+[`fuzz_against_the_oracle`](../../linter/text/tests/path.rs).
 
 Source can't be piped in. Not tested yet.
 
@@ -80,14 +80,14 @@ one less to worry about:
 6. ASCII: outside comments, every character is ASCII.
 7. The code itself.
 
-The order of the path's checks is tested by [`refused_paths`](../../linter/text/src/path_tests.rs), and the
-order of steps 2 to 6 by [`the_steps_run_in_order`](../../linter/text/src/text_tests.rs). The code's own checks
+The order of the path's checks is tested by [`refused_paths`](../../linter/text/tests/path.rs), and the
+order of steps 2 to 6 by [`the_steps_run_in_order`](../../linter/text/tests/text.rs). The code's own checks
 aren't tested yet.
 
 For now, when the compiler refuses a program, it stops at the first check that
 fails. Within that check, it reports the earliest problem in the file. That's
-tested by [`characters`](../../linter/text/src/text_tests.rs), [`invalid_utf8`](../../linter/text/src/text_tests.rs), [`lines`](../../linter/text/src/text_tests.rs),
-[`comments`](../../linter/text/src/text_tests.rs) and [`ascii`](../../linter/text/src/text_tests.rs). It writes one message to stderr. For example:
+tested by [`characters`](../../linter/text/tests/text.rs), [`invalid_utf8`](../../linter/text/tests/text.rs), [`lines`](../../linter/text/tests/text.rs),
+[`comments`](../../linter/text/tests/text.rs) and [`ascii`](../../linter/text/tests/text.rs). It writes one message to stderr. For example:
 
 ```
 hello.stella:1:29: a space must come before `{`.
@@ -100,5 +100,5 @@ jump to it. Then one sentence says what's wrong. Last comes the line itself,
 with a caret under the column. Lines and columns count from 1, and a column
 counts code points, not bytes.
 
-Every sentence is tested by [`sentences`](../../linter/text/src/problem_tests.rs), and every line and column by the
+Every sentence is tested by [`sentences`](../../linter/text/tests/problem.rs), and every line and column by the
 text tests above. The message as a whole isn't tested yet.

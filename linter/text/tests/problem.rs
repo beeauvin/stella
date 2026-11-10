@@ -5,7 +5,7 @@
 //! Unit tests for the sentences problems print. Each sentence is pinned exactly, because people
 //! and tools both read them.
 
-use crate::Kind::*;
+use stella_linter_text::Kind::*;
 
 #[test]
 fn sentences() {

@@ -3,7 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! The reference links each rule to the tests that check it, as a link whose text is a test's
-//! name and whose target is its file: [`lines`](../../linter/text/src/text_tests.rs). This
+//! name and whose target is its file: [`lines`](../../linter/text/tests/text.rs). This
 //! checks that every such link still leads to a file holding a `#[test]` of that name, so a
 //! renamed or moved test can't leave the reference pointing at nothing.
 

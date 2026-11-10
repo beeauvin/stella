@@ -2,8 +2,8 @@
 
 A comment is a line that, after its indentation, starts with `//`. After the
 `//`, the line either ends, or goes on with a space and then any text. Tested
-by [`comments`](../../linter/text/src/text_tests.rs) and
-[`accepted_sources`](../../linter/text/src/text_tests.rs).
+by [`comments`](../../linter/text/tests/text.rs) and
+[`accepted_sources`](../../linter/text/tests/text.rs).
 
 ```stella
 // This line is a comment.
@@ -14,7 +14,7 @@ function main() returns Void {
 ```
 
 That's the only way to write a comment. The compiler refuses each of these
-lines, and [`comments`](../../linter/text/src/text_tests.rs) tests each one:
+lines, and [`comments`](../../linter/text/tests/text.rs) tests each one:
 
 - `function main() returns Void { // hi`, because code and a comment can't
   share a line.

@@ -17,10 +17,3 @@ mod text;
 pub use path::{SourcePath, lint_path};
 pub use problem::{Kind, Place, Position, Problem};
 pub use text::{SOURCE_BYTES_MAX, Text, lint};
-
-#[cfg(test)]
-mod path_tests;
-#[cfg(test)]
-mod problem_tests;
-#[cfg(test)]
-mod text_tests;
