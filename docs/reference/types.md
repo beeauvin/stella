@@ -7,4 +7,4 @@ function that returns `Void` returns when its body ends.
 
 `Void` is the type `main` returns. For now, it's the only type.
 
-Nothing on this page is tested yet. It waits for the rest of the compiler.
+Nothing on this page is built yet. It waits for the rest of the compiler.

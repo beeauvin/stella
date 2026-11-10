@@ -4,7 +4,7 @@ Stella code has one layout, and the compiler refuses any other.
 
 - A line is indented one level for each `{` still open on it. A line that
   starts with `}` counts its own brace as already closed. This holds for code
-  and comments alike. Not tested yet.
+  and comments alike. Not built yet.
 - For now, a level is four spaces, and every line's indentation is a multiple
   of four. Tested by [`lines`](../../linter/text/tests/text.rs).
 - A tab is refused anywhere in a source file. Tested by
@@ -12,7 +12,7 @@ Stella code has one layout, and the compiler refuses any other.
   [`every_code_point_in_a_comment`](../../linter/text/tests/text.rs).
 - A function's first line reads exactly `function main() returns Void {`, with
   single spaces as shown. So `function main ()` and `returns Void{` are
-  refused. Not tested yet.
+  refused. Not built yet.
 - `{` ends the line it's on, and `}` sits on a line of its own. That holds even
   for an empty body, so this is refused:
 
@@ -20,7 +20,7 @@ Stella code has one layout, and the compiler refuses any other.
   function main() returns Void {}
   ```
 
-  Not tested yet.
+  Not built yet.
 - No line ends in a space. Tested by
   [`lines`](../../linter/text/tests/text.rs).
 - Blank lines may go anywhere, except at the end of the file. A line of only
