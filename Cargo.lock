@@ -10,6 +10,7 @@ version = "0.0.0"
 name = "stella-cli"
 version = "0.0.0"
 dependencies = [
+ "stella-lexer",
  "stella-linter-text",
 ]
 

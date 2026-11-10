@@ -2,7 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! The `stella` command. For now it has one: `stella lint [path]`.
+//! The `stella` command. For now it has one: `stella lint [path]`. It checks each program's path,
+//! then its text with the text lint, then its tokens with the lexer.
 //!
 //! Everything it says goes to stderr, each message as soon as it's made, so linting every file
 //! holds one message at a time, however many there are. If stderr can't be written, there's
@@ -21,7 +22,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use stella_cli::{Found, WALK_ENTRIES_MAX, message, shown, walk};
-use stella_linter_text::{Kind, Problem, SOURCE_BYTES_MAX, lint, lint_path};
+use stella_lexer::{TokenBuffer, lex};
+use stella_linter_text::{Kind, Place, Problem, SOURCE_BYTES_MAX, lint, lint_path};
 
 /// Every program the command checked passed.
 const PASSED: u8 = 0;
@@ -41,6 +43,15 @@ const USAGE: &str = "usage: stella lint [path]\n";
 /// source, so a source that's too big is seen to be.
 const BUFFER_BYTES: usize = SOURCE_BYTES_MAX as usize + 1;
 
+/// The buffers a program is checked in. They're made once, in `main`, and lent to each program in
+/// turn, so checking every program in a tree takes the same room as checking one.
+struct Buffers {
+    /// The source is read into this.
+    source: [u8; BUFFER_BYTES],
+    /// The source's tokens go in this.
+    tokens: TokenBuffer,
+}
+
 // The walk's sentences name its bound, so a new bound needs new sentences.
 const _: () = assert!(WALK_ENTRIES_MAX == 10_000);
 
@@ -54,16 +65,16 @@ enum Command<'arguments> {
 
 fn main() -> ExitCode {
     let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let mut buffer = [0_u8; BUFFER_BYTES];
+    let mut buffers = Buffers { source: [0_u8; BUFFER_BYTES], tokens: TokenBuffer::new() };
     let Ok(stderr) = io::stderr().as_fd().try_clone_to_owned() else {
         return ExitCode::from(FAILED);
     };
     let mut stderr = File::from(stderr);
     let written = match command(&arguments) {
         Err(sentence) => write!(stderr, "stella: {sentence}\n{USAGE}").map(|()| FAILED),
-        Ok(Command::LintEvery) => lint_every(&mut buffer, &mut stderr),
+        Ok(Command::LintEvery) => lint_every(&mut buffers, &mut stderr),
         Ok(Command::LintOne(path)) => {
-            let (status, text) = lint_one(path, &mut buffer);
+            let (status, text) = lint_one(path, &mut buffers);
             stderr.write_all(text.as_bytes()).map(|()| status)
         }
     };
@@ -104,7 +115,7 @@ fn command(arguments: &[OsString]) -> Result<Command<'_>, String> {
 
 /// Lints the program at `path`, checking the path before the file is read. Returns its status
 /// and its message, which is empty when it passes.
-fn lint_one(path: &[u8], buffer: &mut [u8; BUFFER_BYTES]) -> (u8, String) {
+fn lint_one(path: &[u8], buffers: &mut Buffers) -> (u8, String) {
     assert!(!path.is_empty());
     // A path that isn't UTF-8 can't be kebab, so it's refused like any other bad name.
     let typed = String::from_utf8_lossy(path);
@@ -124,26 +135,32 @@ fn lint_one(path: &[u8], buffer: &mut [u8; BUFFER_BYTES]) -> (u8, String) {
             return (FAILED, format!("{}: {sentence}\n", shown(path)));
         }
     };
-    lint_stored(path, &as_stored, buffer)
+    lint_stored(path, &as_stored, buffers)
 }
 
-/// Lints the program stored at `stored`, which `path` names. A problem with the path is shown at
-/// `stored`, and any other at `path`, as it was given. Returns its status and its message, which
-/// is empty when it passes.
-fn lint_stored(path: &[u8], stored: &[u8], buffer: &mut [u8; BUFFER_BYTES]) -> (u8, String) {
+/// Lints the program stored at `stored`, which `path` names: its path, then its text, then its
+/// tokens. A problem with the path is shown at `stored`, and any other at `path`, as it was
+/// given. Returns its status and its message, which is empty when it passes.
+fn lint_stored(path: &[u8], stored: &[u8], buffers: &mut Buffers) -> (u8, String) {
     assert!(!stored.is_empty());
     let stored_text = String::from_utf8_lossy(stored);
     let stored_path = match lint_path(&stored_text) {
         Ok(stored_path) => stored_path,
         Err(problem) => return (REFUSED, message(stored, b"", problem.place, problem.kind)),
     };
-    let source = match read(stored_path.normalized(), buffer) {
+    let source = match read(stored_path.normalized(), &mut buffers.source) {
         Ok(source) => source,
         Err(sentence) => return (FAILED, format!("{}: {sentence}\n", shown(path))),
     };
     let (status, text) = match lint(source) {
-        Ok(_) => (PASSED, String::new()),
         Err(problem) => (REFUSED, message(path, source, problem.place, problem.kind)),
+        // Only text that passed can be lexed, so the text lint's problems always come first.
+        Ok(text) => match lex(text, &mut buffers.tokens) {
+            Ok(_) => (PASSED, String::new()),
+            Err(problem) => {
+                (REFUSED, message(path, source, Place::At(problem.position), problem.kind))
+            }
+        },
     };
     // A program that passes says nothing, and one that doesn't always says why.
     assert_eq!(status == PASSED, text.is_empty());
@@ -304,7 +321,7 @@ fn stored_name(
 
 /// Lints every program the walk finds, writing each message to `stderr` as it's made, with a
 /// blank line between messages. Returns the worst status any of them gets.
-fn lint_every(buffer: &mut [u8; BUFFER_BYTES], stderr: &mut impl Write) -> io::Result<u8> {
+fn lint_every(buffers: &mut Buffers, stderr: &mut impl Write) -> io::Result<u8> {
     let Ok(found) = walk() else {
         let sentence = "there are more than 10,000 files and directories under this directory.";
         writeln!(stderr, "stella: {sentence}")?;
@@ -319,7 +336,7 @@ fn lint_every(buffer: &mut [u8; BUFFER_BYTES], stderr: &mut impl Write) -> io::R
     for find in &found {
         let (find_status, text) = match find {
             // The walk finds each name as it's stored, and it never follows a symlink.
-            Found::Source(path) => lint_stored(path, path, buffer),
+            Found::Source(path) => lint_stored(path, path, buffers),
             Found::Unreadable { directory, error } => {
                 let reason = reason(error);
                 let sentence = format!("this directory can't be read: {reason}.");

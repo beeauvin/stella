@@ -26,6 +26,14 @@ const COMMENT_SHARES_LINE: &[u8] = b"function main() returns Void { // hi\n}\n";
 const COMMENT_SHARES_LINE_MESSAGE: &str = ":1:32: a comment can't share a line with code.\n    \
      function main() returns Void { // hi\n                                   ^\n";
 
+/// This program passes the text lint, and the lexer refuses it at 1:32, because `;` can't start a
+/// token.
+const UNEXPECTED: &[u8] = b"function main() returns Void { ;\n}\n";
+
+/// This is the message for `UNEXPECTED`, after its path.
+const UNEXPECTED_MESSAGE: &str = ":1:32: `;` can't start a token.\n    \
+     function main() returns Void { ;\n                                   ^\n";
+
 /// This is the line every misuse ends with.
 const USAGE: &str = "usage: stella lint [path]\n";
 
@@ -455,6 +463,47 @@ fn the_worst_status_wins() {
         };
         assert_eq!(stella(&directory, &["lint"]), exits(2, &stderr), "for {refused} refused");
     }
+}
+
+#[test]
+fn code_that_cant_be_lexed() {
+    // Code that passes the text lint is lexed, and a character that can't start a token is
+    // refused at its line and column.
+    let message = format!("hello.stella{UNEXPECTED_MESSAGE}");
+    lints_one("lexed", &[("hello.stella", UNEXPECTED)], "hello.stella", exits(1, &message));
+    // The path is shown as it was given.
+    let message = format!("./hello.stella{UNEXPECTED_MESSAGE}");
+    lints_one(
+        "lexed-as-given",
+        &[("hello.stella", UNEXPECTED)],
+        "./hello.stella",
+        exits(1, &message),
+    );
+    // A name that breaks its shape is refused at the character that breaks it.
+    let camel: &[u8] = b"function myFunction() returns Void {\n}\n";
+    let message = "hello.stella:1:12: a name must be lowercase letters and digits joined by \
+                   single underscores, like `my_function`.\n    \
+                   function myFunction() returns Void {\n               ^\n";
+    lints_one("camel-case", &[("hello.stella", camel)], "hello.stella", exits(1, message));
+    // The text lint runs first, so its problem wins, even when the lexer's is earlier in the file.
+    let both: &[u8] = b"function main() returns Void { ;\n} \n";
+    let text_first = "hello.stella:2:2: a line can't end in a space.\n    } \n     ^\n";
+    lints_one("text-first", &[("hello.stella", both)], "hello.stella", exits(1, text_first));
+    // Linting every file lexes each one, and the worst status still wins.
+    let directory = fresh_directory("lexed-tree");
+    write(&directory, "a.stella", GOOD);
+    write(&directory, "b.stella", UNEXPECTED);
+    write(&directory, "c.stella", GOOD);
+    write(&directory, "d.stella", GOOD);
+    let _lock = Lock::new(directory.join("d.stella"), 0o000);
+    let expected = exits(
+        2,
+        &format!(
+            "b.stella{UNEXPECTED_MESSAGE}\n\
+             d.stella: this file can't be read: Permission denied (os error 13).\n"
+        ),
+    );
+    assert_eq!(stella(&directory, &["lint"]), expected);
 }
 
 #[test]

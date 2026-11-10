@@ -15,4 +15,5 @@ name = "stella"
 path = "src/main.rs"
 
 [dependencies]
+stella-lexer = { path = "../lexer" }
 stella-linter-text = { path = "../linter/text" }
