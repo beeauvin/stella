@@ -6,10 +6,14 @@
 
 use std::fmt;
 
-use crate::text::SOURCE_BYTES_MAX;
+use crate::text::{LEVEL_SPACES, SOURCE_BYTES_MAX};
 
 // `FileTooBig`'s sentence names the limit, so a new limit needs a new sentence.
 const _: () = assert!(SOURCE_BYTES_MAX == 16_384);
+
+// `Tab`'s and `IndentationNotFour`'s sentences name a level's four spaces, so a new level needs new
+// sentences.
+const _: () = assert!(LEVEL_SPACES == 4);
 
 /// A problem is one thing the text lint refused, and where it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -27,8 +27,9 @@ pub const SOURCE_BYTES_MAX: u32 = 16_384;
 // Positions are `u32`, and a column can be one past the longest line.
 const _: () = assert!(SOURCE_BYTES_MAX < u32::MAX);
 
-/// A level of indentation is four spaces, for now.
-const LEVEL_SPACES: usize = 4;
+/// A level of indentation is four spaces, for now. The tokens lint indents one level for each `{`
+/// still open on a line, so this is its level too.
+pub const LEVEL_SPACES: u32 = 4;
 
 /// A text is source that passed every step of the text lint. Only `lint` makes one, so holding a
 /// `Text` proves the source passed.
@@ -137,7 +138,7 @@ fn lint_lines(source: &str) -> Result<(), Problem> {
         // starts a trailing space.
         let trimmed = content.trim_end_matches(' ');
         let indentation = trimmed.len() - trimmed.trim_start_matches(' ').len();
-        if indentation % LEVEL_SPACES != 0 {
+        if indentation % LEVEL_SPACES as usize != 0 {
             return Err(Problem::at(Kind::IndentationNotFour, line, 1));
         }
         if trimmed.len() < content.len() {
