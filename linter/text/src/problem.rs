@@ -22,7 +22,7 @@ pub struct Problem {
 
 impl Problem {
     /// Returns a problem with the file as a whole.
-    pub(crate) fn whole_file(kind: Kind) -> Problem {
+    pub fn whole_file(kind: Kind) -> Problem {
         assert!(kind.is_whole_file());
         Problem { kind, place: Place::File }
     }
@@ -59,12 +59,13 @@ pub struct Position {
     pub column: u32,
 }
 
-/// A kind is one of the problems the text lint can find. They're grouped by the step that finds
-/// them, in the order the steps run.
+/// A kind is one of the problems the text lint can find, or, for `PathSymlink`, that the command
+/// finds for it. They're grouped by the step that finds them, in the order the steps run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     // The path, checked before the file is read. The checks run in this order: absolute, parent,
-    // empty parts, `.` parts, directories' names, and then the file's name.
+    // empty parts, `.` parts, directories' names, and then the file's name. Then the command
+    // looks for a symlink in it.
     /// The path starts at the root, so there's no way to mirror it under `.build/`.
     PathAbsolute,
     /// A part of the path is `..`, so it could leave the directory the compiler runs in.
@@ -82,6 +83,9 @@ pub enum Kind {
     /// The file's name before `.stella` isn't lowercase letters and digits with single hyphens
     /// between words.
     NameNotKebab,
+    /// A part of the path is a symlink. The path lint can't see this, since it never touches the
+    /// filesystem, so the command finds it, after every check above.
+    PathSymlink,
 
     // The size.
     /// The file has no bytes at all.
@@ -134,7 +138,9 @@ impl Kind {
         use Kind::*;
         match self {
             PathAbsolute | PathParent | PathEmptyPart | PathDotPart | DirectoryNotKebab
-            | NameNotStella | NameEmpty | NameNotKebab | FileEmpty | FileTooBig => true,
+            | NameNotStella | NameEmpty | NameNotKebab | PathSymlink | FileEmpty | FileTooBig => {
+                true
+            }
             NotUtf8 | ByteOrderMark | CarriageReturn | Tab | ControlCharacter(_)
             | BidiControl(_) | LineSeparator(_) | NoFinalNewline | BlankLineAtEnd
             | TrailingSpace | IndentationNotFour | CommentSharesLine | CommentNeedsSpace
@@ -165,6 +171,9 @@ impl fmt::Display for Kind {
             NameNotKebab => {
                 "a source file's name, before `.stella`, must be lowercase letters and digits \
                  joined by single hyphens, like `hello-world`."
+            }
+            PathSymlink => {
+                "the build path can't be established from a path that goes through a symlink."
             }
             FileEmpty => "this file is empty.",
             FileTooBig => "this file is over 16,384 bytes, the most a source file can hold.",

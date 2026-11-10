@@ -29,6 +29,10 @@ fn sentences() {
             "a source file's name, before `.stella`, must be lowercase letters and digits joined \
              by single hyphens, like `hello-world`.",
         ),
+        (
+            PathSymlink,
+            "the build path can't be established from a path that goes through a symlink.",
+        ),
         (FileEmpty, "this file is empty."),
         (FileTooBig, "this file is over 16,384 bytes, the most a source file can hold."),
         (NotUtf8, "this isn't valid UTF-8."),
