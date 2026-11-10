@@ -24,3 +24,11 @@ dependencies = [
 [[package]]
 name = "stella-linter-text"
 version = "0.0.0"
+
+[[package]]
+name = "stella-linter-tokens"
+version = "0.0.0"
+dependencies = [
+ "stella-lexer",
+ "stella-linter-text",
+]
