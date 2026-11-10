@@ -76,11 +76,7 @@ fn lint_characters(bytes: &[u8]) -> Result<&str, Problem> {
     assert!(bytes.len() <= SOURCE_BYTES_MAX as usize);
     // The characters before the first invalid byte come before it, so a refused one among them
     // is the earlier problem.
-    let valid = match std::str::from_utf8(bytes) {
-        Ok(source) => source,
-        Err(error) => std::str::from_utf8(&bytes[..error.valid_up_to()])
-            .expect("the bytes before the error are valid"),
-    };
+    let valid = bytes.utf8_chunks().next().expect("the bytes aren't empty").valid();
     let mut line: u32 = 1;
     let mut column: u32 = 1;
     for character in valid.chars() {
