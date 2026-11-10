@@ -13,17 +13,17 @@
 //! UTF-8 is shown as `\xFF`. So nothing unsafe reaches the terminal, and since everything shown
 //! is ASCII, the caret is always exactly under the problem.
 
-use std::fmt::Write;
+use std::fmt::{self, Write};
 
-use stella_linter_text::{Place, Problem};
+use stella_linter_text::Place;
 
-/// Returns the message for `problem`, found in `source`, the file at `path`. Every line of it
-/// ends in `\n`. A problem at a position must be one the lint found in `source`, since its line
-/// is looked up there; one that isn't is a programmer's error, and panics.
-pub fn message(path: &[u8], source: &[u8], problem: Problem) -> String {
+/// Returns the message for a problem at `place` in `source`, the file at `path`, which `sentence`
+/// says. Every line of it ends in `\n`. A problem at a position must be one found in `source`,
+/// since its line is looked up there; one that isn't is a programmer's error, and panics.
+pub fn message(path: &[u8], source: &[u8], place: Place, sentence: impl fmt::Display) -> String {
     let path = shown(path);
-    let text = match problem.place {
-        Place::File => format!("{path}: {}\n", problem.kind),
+    let text = match place {
+        Place::File => format!("{path}: {sentence}\n"),
         Place::At(position) => {
             assert!(position.line >= 1);
             let source_line = source
@@ -33,7 +33,7 @@ pub fn message(path: &[u8], source: &[u8], problem: Problem) -> String {
             let (echo, caret_width) = echo(source_line, position.column);
             let caret = " ".repeat(caret_width);
             let (line, column) = (position.line, position.column);
-            format!("{path}:{line}:{column}: {}\n    {echo}\n    {caret}^\n", problem.kind)
+            format!("{path}:{line}:{column}: {sentence}\n    {echo}\n    {caret}^\n")
         }
     };
     assert!(text.ends_with('\n'));

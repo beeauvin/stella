@@ -110,14 +110,15 @@ fn lint_one(path: &[u8], buffer: &mut [u8; BUFFER_BYTES]) -> (u8, String) {
     let typed = String::from_utf8_lossy(path);
     let source_path = match lint_path(&typed) {
         Ok(source_path) => source_path,
-        Err(problem) => return (REFUSED, message(path, b"", problem)),
+        Err(problem) => return (REFUSED, message(path, b"", problem.place, problem.kind)),
     };
     // On macOS, which ignores case, `hello.stella` can name `Hello.stella`, so the path is found
     // as it's stored before it's checked again.
     let as_stored = match stored(source_path.normalized()) {
         Ok(as_stored) => as_stored,
         Err(Unstored::Symlink) => {
-            return (REFUSED, message(path, b"", Problem::whole_file(Kind::PathSymlink)));
+            let problem = Problem::whole_file(Kind::PathSymlink);
+            return (REFUSED, message(path, b"", problem.place, problem.kind));
         }
         Err(Unstored::Failed(sentence)) => {
             return (FAILED, format!("{}: {sentence}\n", shown(path)));
@@ -134,7 +135,7 @@ fn lint_stored(path: &[u8], stored: &[u8], buffer: &mut [u8; BUFFER_BYTES]) -> (
     let stored_text = String::from_utf8_lossy(stored);
     let stored_path = match lint_path(&stored_text) {
         Ok(stored_path) => stored_path,
-        Err(problem) => return (REFUSED, message(stored, b"", problem)),
+        Err(problem) => return (REFUSED, message(stored, b"", problem.place, problem.kind)),
     };
     let source = match read(stored_path.normalized(), buffer) {
         Ok(source) => source,
@@ -142,7 +143,7 @@ fn lint_stored(path: &[u8], stored: &[u8], buffer: &mut [u8; BUFFER_BYTES]) -> (
     };
     let (status, text) = match lint(source) {
         Ok(_) => (PASSED, String::new()),
-        Err(problem) => (REFUSED, message(path, source, problem)),
+        Err(problem) => (REFUSED, message(path, source, problem.place, problem.kind)),
     };
     // A program that passes says nothing, and one that doesn't always says why.
     assert_eq!(status == PASSED, text.is_empty());

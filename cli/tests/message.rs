@@ -68,7 +68,11 @@ fn the_caret_lands_after_every_code_point() {
         let caret = " ".repeat(5 + shown_oracle(character).len());
         let expected =
             format!("x.stella:1:7: a line can't end in a space.\n    {echo}\n    {caret}^\n");
-        assert_eq!(message(b"x.stella", source.as_bytes(), problem), expected, "for {character:?}");
+        assert_eq!(
+            message(b"x.stella", source.as_bytes(), problem.place, problem.kind),
+            expected,
+            "for {character:?}"
+        );
     }
 }
 
@@ -98,7 +102,7 @@ fn whole_file_messages() {
              lowercase letters and digits joined by single hyphens, like `hello-world`.\n",
         ),
     ] {
-        assert_eq!(message(path, source, problem), expected, "for {problem:?}");
+        assert_eq!(message(path, source, problem.place, problem.kind), expected, "for {problem:?}");
     }
 }
 
@@ -153,6 +157,10 @@ fn messages() {
             "x.stella:2:1: a file can't end with a blank line.\n    \n    ^\n",
         ),
     ] {
-        assert_eq!(message(b"x.stella", source, problem), expected, "for {problem:?}");
+        assert_eq!(
+            message(b"x.stella", source, problem.place, problem.kind),
+            expected,
+            "for {problem:?}"
+        );
     }
 }
