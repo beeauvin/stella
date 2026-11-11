@@ -1,0 +1,12 @@
+[package]
+name = "stella-blocks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+stella-lexer = { path = "../lexer" }
+stella-linter-text = { path = "../linter/text" }
+stella-linter-tokens = { path = "../linter/tokens" }

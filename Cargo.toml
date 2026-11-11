@@ -1,5 +1,5 @@
 [workspace]
-members = ["checks", "cli", "lexer", "linter/text", "linter/tokens"]
+members = ["blocks", "checks", "cli", "lexer", "linter/text", "linter/tokens"]
 resolver = "3"
 
 [workspace.package]
