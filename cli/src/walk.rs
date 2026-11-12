@@ -103,6 +103,10 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
                 match entry.and_then(|entry| Ok((entry.name(), entry.file_type()?))) {
                     Ok(named) => named,
                     Err(error) => {
+                        // One failure is enough to say the directory couldn't be read whole,
+                        // and the command then ends with the status for what it couldn't check.
+                        // The rest of the listing is left: after a read that failed, nothing
+                        // says it's all there, and a second find would only say the same.
                         finds.push(unreadable(directory.clone(), error));
                         break;
                     }

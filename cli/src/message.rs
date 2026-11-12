@@ -95,6 +95,9 @@ fn echo(line: &[u8], column: u32) -> (String, usize) {
         echo.len()
     });
     assert!(caret_index <= echo.len(), "the caret is under the line, or just past its end");
+    // The caret is put as many spaces in as there are bytes before it, which is as many columns
+    // only while every byte shown is a column of its own.
+    assert!(echo.is_ascii(), "printable ASCII and escapes are all ASCII");
     (echo, caret_index)
 }
 
