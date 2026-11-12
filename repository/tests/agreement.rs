@@ -53,9 +53,9 @@ fn patterns(ignore: &str) -> Vec<&str> {
 /// it: the directory first, then its contents, since Git won't look inside a directory it
 /// ignores.
 fn lets_through(patterns: &[&str], directory: &str) -> bool {
-    let directory_rule = format!("!/{directory}/");
-    let contents_rule = format!("!/{directory}/**");
-    patterns.windows(2).any(|pair| pair == [directory_rule.as_str(), contents_rule.as_str()])
+    let directory_pattern = format!("!/{directory}/");
+    let contents_pattern = format!("!/{directory}/**");
+    patterns.windows(2).any(|pair| pair == [directory_pattern.as_str(), contents_pattern.as_str()])
 }
 
 #[test]

@@ -16,13 +16,13 @@
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
-use stella_repository::{Wanted, files_under, root, text_of};
+use stella_repository::{Filter, files_under, root, text_of};
 use stella_test_support::slice;
 
 /// Returns every page of the reference, each with its text.
 fn pages() -> Vec<(PathBuf, String)> {
     let reference = root().join("docs/reference");
-    let pages: Vec<(PathBuf, String)> = files_under(&reference, Wanted::WithExtension("md"))
+    let pages: Vec<(PathBuf, String)> = files_under(&reference, Filter::WithExtension("md"))
         .into_iter()
         .map(|page| {
             let text = text_of(&page);

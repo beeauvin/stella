@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 
-use stella_repository::{Wanted, files_under, members, members_in, root, text_of};
+use stella_repository::{Filter, files_in, files_under, members, members_in, root, text_of};
 
 /// These are the lines every source file starts with.
 const LICENSE: &str = "\
@@ -60,7 +60,7 @@ fn every_crate_is_a_member_of_the_workspace() {
     // have its manifest.
     let members = members();
     let root = root();
-    let manifests = files_under(&root, Wanted::Named("Cargo.toml"));
+    let manifests = files_under(&root, Filter::Named("Cargo.toml"));
     let mut crates_count: u32 = 0;
     for manifest in &manifests {
         let directory = manifest.parent().expect("a manifest is in a directory");
@@ -104,19 +104,16 @@ fn every_crate_root_forbids_unsafe() {
     // which is built as a crate of its own. Each one a member has must forbid `unsafe`, and
     // every member has a `src` root at least.
     for member in members() {
-        let source = root().join(&member).join("src");
-        let mut roots: Vec<PathBuf> = ["lib.rs", "main.rs"]
-            .iter()
-            .map(|name| source.join(name))
-            .filter(|path| path.is_file())
-            .collect();
+        let member_directory = root().join(&member);
+        let is_source_root = |path: &PathBuf| {
+            path.file_name().is_some_and(|name| name == "lib.rs" || name == "main.rs")
+        };
+        let in_source = files_in(&member_directory.join("src"), Filter::WithExtension("rs"));
+        let mut roots: Vec<PathBuf> = in_source.into_iter().filter(is_source_root).collect();
         assert!(!roots.is_empty(), "{member} has neither a `src/lib.rs` nor a `src/main.rs`");
-        let tests = root().join(&member).join("tests");
-        if tests.is_dir() {
-            let in_tests = files_under(&tests, Wanted::WithExtension("rs"));
-            // A file deeper down is a module of one of these, not a root.
-            roots.extend(in_tests.into_iter().filter(|path| path.parent() == Some(&tests)));
-        }
+        // Only a file directly in `tests` is a root. One deeper down is a module of one of them.
+        // A member without tests has no such directory, and so no such roots.
+        roots.extend(files_in(&member_directory.join("tests"), Filter::WithExtension("rs")));
         for crate_root in roots {
             let forbids =
                 text_of(&crate_root).split('\n').any(|line| line == "#![forbid(unsafe_code)]");
@@ -130,7 +127,7 @@ fn no_file_switches_a_lint_off_for_a_whole_crate_or_module() {
     // An inner `#![allow(..)]` isn't seen by the lint that refuses `#[allow]`, and an inner
     // `#![expect(..)]` covers far more than the one item an exception is for. No source file may
     // hold either.
-    let sources = files_under(&root(), Wanted::WithExtension("rs"));
+    let sources = files_under(&root(), Filter::WithExtension("rs"));
     assert!(!sources.is_empty(), "found no source files in the repository");
     for source in sources {
         let text = text_of(&source);
@@ -149,7 +146,7 @@ fn no_line_is_wider_than_the_formatter_keeps_code() {
     let width = width.and_then(|width| width.parse::<usize>().ok());
     let width = width.expect("rustfmt.toml sets `max_width` to a number");
     for extension in ["rs", "toml"] {
-        let files = files_under(&root(), Wanted::WithExtension(extension));
+        let files = files_under(&root(), Filter::WithExtension(extension));
         assert!(!files.is_empty(), "found no .{extension} files in the repository");
         for file in files {
             for (line, number) in text_of(&file).split('\n').zip(1_u32..) {
@@ -165,7 +162,7 @@ fn no_line_is_wider_than_the_formatter_keeps_code() {
 fn every_source_file_carries_the_license() {
     // Each source file starts with the three lines that say it's under the MPL, and then a blank
     // line.
-    let sources = files_under(&root(), Wanted::WithExtension("rs"));
+    let sources = files_under(&root(), Filter::WithExtension("rs"));
     assert!(!sources.is_empty(), "found no source files in the repository");
     for source in sources {
         let text = text_of(&source);
@@ -174,6 +171,23 @@ fn every_source_file_carries_the_license() {
         let blank = after.is_some_and(|after| after.starts_with('\n'));
         assert!(blank, "{} must have a blank line after the license", source.display());
     }
+}
+
+#[test]
+fn a_listing_finds_only_what_its_directory_holds() {
+    // The repository itself is what's listed. A listing finds a file directly in its directory
+    // and nothing deeper, which a walk from the same place does find. A directory that isn't
+    // there holds nothing, and neither does one with no file the filter takes.
+    let root = root();
+    let manifests = files_in(&root, Filter::Named("Cargo.toml"));
+    assert_eq!(manifests, [root.join("Cargo.toml")]);
+    let deeper = files_under(&root, Filter::Named("Cargo.toml"));
+    assert!(deeper.len() > manifests.len(), "a walk goes into the members, and a listing doesn't");
+    let own_tests = files_in(&root.join("repository/tests"), Filter::WithExtension("rs"));
+    assert!(own_tests.contains(&root.join("repository/tests/workspace.rs")), "{own_tests:?}");
+    assert!(own_tests.is_sorted(), "a listing is sorted by path");
+    assert_eq!(files_in(&root.join("linter"), Filter::WithExtension("rs")), Vec::<PathBuf>::new());
+    assert_eq!(files_in(&root.join("no-such-member/tests"), Filter::WithExtension("rs")).len(), 0);
 }
 
 #[test]

@@ -19,7 +19,7 @@
 use std::env;
 use std::ffi::OsStr;
 use std::fs::{self, File};
-use std::io::Read as _;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 /// This is the most bytes of a file a test reads. It's many times the longest page, manifest or
@@ -30,13 +30,23 @@ pub const TEXT_BYTES_MAX: u64 = 1024 * 1024;
 /// holds, and it keeps a walk bounded.
 pub const ENTRIES_MAX: u32 = 10_000;
 
-/// Which files a walk is looking for.
+/// A filter says which files a listing or a walk is looking for.
 #[derive(Clone, Copy, Debug)]
-pub enum Wanted {
+pub enum Filter {
     /// Files with exactly this name.
     Named(&'static str),
     /// Files with this extension.
     WithExtension(&'static str),
+}
+
+impl Filter {
+    /// Says whether the file at `path` is one the filter is looking for.
+    fn takes(self, path: &Path) -> bool {
+        match self {
+            Self::Named(name) => path.file_name() == Some(OsStr::new(name)),
+            Self::WithExtension(extension) => path.extension() == Some(OsStr::new(extension)),
+        }
+    }
 }
 
 /// Returns the repository's root, which holds this crate's directory.
@@ -105,7 +115,34 @@ pub fn members_in(manifest: &str) -> Vec<String> {
     array.split('"').skip(1).step_by(2).map(String::from).collect()
 }
 
-/// Returns every file under `directory` that's `wanted`, sorted by path.
+/// Returns every file directly in `directory` that `filter` takes, sorted by path. A directory
+/// that isn't there holds none, so a caller needn't ask first whether it is.
+///
+/// # Panics
+///
+/// Panics if the directory is there and can't be read, or holds more than `ENTRIES_MAX` entries.
+#[must_use]
+pub fn files_in(directory: &Path, filter: Filter) -> Vec<PathBuf> {
+    let listing = match fs::read_dir(directory) {
+        Ok(listing) => listing,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
+        unreadable @ Err(_) => unreadable.expect("a directory of the repository can be read"),
+    };
+    let mut found = Vec::new();
+    let mut seen_count: u32 = 0;
+    for entry in listing {
+        let path = entry.expect("an entry of the repository can be read").path();
+        seen_count += 1;
+        assert!(seen_count <= ENTRIES_MAX, "more than {ENTRIES_MAX} entries in a directory");
+        if path.is_file() && filter.takes(&path) {
+            found.push(path);
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Returns every file under `directory` that `filter` takes, sorted by path.
 ///
 /// It doesn't go into `target` or into anything whose name starts with `.`, where nothing
 /// authored lives that a test here reads. It walks with a stack rather than recursion.
@@ -115,7 +152,7 @@ pub fn members_in(manifest: &str) -> Vec<String> {
 /// Panics if a directory can't be read, holds a name that isn't UTF-8, or the walk passes
 /// `ENTRIES_MAX`. A walk that quietly found less would let the tests that lean on it pass.
 #[must_use]
-pub fn files_under(directory: &Path, wanted: Wanted) -> Vec<PathBuf> {
+pub fn files_under(directory: &Path, filter: Filter) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut directories = vec![directory.to_path_buf()];
     let mut seen_count: u32 = 0;
@@ -129,13 +166,9 @@ pub fn files_under(directory: &Path, wanted: Wanted) -> Vec<PathBuf> {
             if name.starts_with('.') || name == "target" {
                 continue;
             }
-            let is_wanted = match wanted {
-                Wanted::Named(wanted_name) => name == wanted_name,
-                Wanted::WithExtension(extension) => path.extension() == Some(OsStr::new(extension)),
-            };
             if path.is_dir() {
                 directories.push(path);
-            } else if is_wanted {
+            } else if filter.takes(&path) {
                 found.push(path);
             } else {
                 // Any other file isn't one that was asked for.

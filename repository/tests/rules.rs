@@ -13,7 +13,7 @@
 
 use std::path::Path;
 
-use stella_repository::{Wanted, files_under, root, text_of};
+use stella_repository::{Filter, files_under, root, text_of};
 
 /// This is the page that states each rule, from the repository's root.
 const RULES_PAGE: &str = "docs/rules.md";
@@ -57,7 +57,7 @@ fn cited() -> Vec<(String, String)> {
     let root = root();
     let mut cited = Vec::new();
     for extension in ["rs", "toml", "md", "yml"] {
-        for file in files_under(&root, Wanted::WithExtension(extension)) {
+        for file in files_under(&root, Filter::WithExtension(extension)) {
             let relative = file.strip_prefix(&root).expect("the file is under the root");
             if relative == Path::new(RULES_PAGE)
                 || relative == Path::new("repository/tests/rules.rs")
