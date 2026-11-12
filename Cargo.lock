@@ -53,3 +53,10 @@ dependencies = [
 [[package]]
 name = "stella-source"
 version = "0.0.0"
+
+[[package]]
+name = "stella-test-support"
+version = "0.0.0"
+dependencies = [
+ "stella-source",
+]
