@@ -15,16 +15,12 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use stella_checks::{root, text_of};
 use stella_test_support::slice;
 
 /// This is the most files the walk will look at. It's far more than the repository holds, and
 /// it keeps the walk bounded.
 const FILES_MAX: usize = 10_000;
-
-/// Returns the repository's root, which holds this crate's directory.
-fn root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("checks/ is in the root")
-}
 
 /// Returns every page of the reference, each with its text.
 fn pages() -> Vec<(PathBuf, String)> {
@@ -32,7 +28,7 @@ fn pages() -> Vec<(PathBuf, String)> {
     let pages: Vec<(PathBuf, String)> = files_with_extension(&reference, "md")
         .into_iter()
         .map(|page| {
-            let text = fs::read_to_string(&page).expect("a reference page is UTF-8 text");
+            let text = text_of(&page);
             (page, text)
         })
         .collect();
@@ -98,7 +94,7 @@ fn the_front_page_links_every_page() {
     // The reference's front page is its table of contents, so a page it doesn't link can't be
     // found from it. Every other page in its directory must be one of its links.
     let front = root().join("docs/reference/readme.md");
-    let text = fs::read_to_string(&front).expect("the front page is UTF-8 text");
+    let text = text_of(&front);
     let linked = page_links(&text);
     for (page, _) in pages() {
         if page == front {

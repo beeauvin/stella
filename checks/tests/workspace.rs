@@ -15,6 +15,8 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use stella_checks::{members, members_in, root, text_of};
+
 /// This is the most files and directories a walk here will look at. It's far more than the
 /// repository holds, and it keeps the walk bounded.
 const ENTRIES_MAX: usize = 10_000;
@@ -35,39 +37,6 @@ const INHERITED: [&str; 6] = [
     "repository.workspace = true",
     "publish.workspace = true",
 ];
-
-/// Returns the repository's root, which holds this crate's directory.
-fn root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("checks/ is in the root")
-}
-
-/// Returns the text of the file at `path`, which is in the repository.
-fn text_of(path: &Path) -> String {
-    let text = fs::read_to_string(path);
-    assert!(text.is_ok(), "{} should be UTF-8 text that can be read: {text:?}", path.display());
-    text.expect("the file was read")
-}
-
-/// Returns the workspace's members, as the root manifest lists them.
-fn members() -> Vec<String> {
-    let members = members_in(&text_of(&root().join("Cargo.toml")));
-    // A scanner that silently found nothing would let every check here pass.
-    assert!(!members.is_empty(), "found no members in the root manifest");
-    members
-}
-
-/// Returns the members `manifest`, a workspace's manifest, lists: each string in its `members`
-/// array.
-fn members_in(manifest: &str) -> Vec<String> {
-    let Some((_, after_open)) = manifest.split_once("members = [") else {
-        return Vec::new();
-    };
-    let Some((array, _)) = after_open.split_once(']') else {
-        return Vec::new();
-    };
-    // The array's strings are between its quotes, so they're every second piece.
-    array.split('"').skip(1).step_by(2).map(String::from).collect()
-}
 
 /// Returns every file under `directory` that's `wanted`, sorted by path. It doesn't go into
 /// `target` or into anything whose name starts with `.`, where no crate lives. It walks with a
