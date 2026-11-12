@@ -11,6 +11,8 @@
 //! - `command` works out what the arguments ask for, or the `Misuse` they are.
 //! - `Linter` lints one program, or every program `walk` finds, and says how each came out.
 //! - `stored` finds a path as its filesystem stores it, and `read` reads a file into a buffer.
+//!   They and `walk` ask the filesystem through one module, which turns each of its failures
+//!   into `Unreached` or a `Reason`.
 //! - `message` turns a problem into what the compiler prints, and `shown` makes any bytes safe to
 //!   print.
 //! - `Status` is how a run ends.
@@ -18,21 +20,21 @@
 #![forbid(unsafe_code)]
 
 pub use arguments::{Command, Misuse, USAGE, command};
+pub use filesystem::{Reason, Unreached};
 pub use lint::{Linter, Outcome};
 pub use message::{Place, message, shown};
 pub use read::{READ_INTERRUPTIONS_MAX, SourceBuffer, Unread, fill, read};
 pub use run::run;
 pub use status::Status;
 pub use stored::{STORED_ENTRIES_MAX, Unstored, stored};
-pub use unreached::Unreached;
 pub use walk::{Find, TooManyEntries, WALK_ENTRIES_MAX, walk};
 
 mod arguments;
+mod filesystem;
 mod lint;
 mod message;
 mod read;
 mod run;
 mod status;
 mod stored;
-mod unreached;
 mod walk;

@@ -20,12 +20,12 @@
 
 use std::ffi::OsStr;
 use std::fmt;
-use std::fs;
-use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 
 use stella_source::usize_from_u32;
+
+use crate::filesystem::{Reason, list};
 
 /// This is the most entries the walk looks at.
 ///
@@ -49,7 +49,7 @@ pub enum Find {
         /// This is the directory's path.
         directory: Vec<u8>,
         /// This is why it couldn't be read.
-        error: io::Error,
+        error: Reason,
     },
 }
 
@@ -91,7 +91,7 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
     let mut directories: Vec<Vec<u8>> = vec![Vec::new()];
     let mut entries_count: u32 = 0;
     while let Some(directory) = directories.pop() {
-        let entries = match fs::read_dir(directory_path(root, &directory)) {
+        let entries = match list(&directory_path(root, &directory)) {
             Ok(entries) => entries,
             Err(error) => {
                 finds.push(unreadable(directory, error));
@@ -100,7 +100,7 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
         };
         for entry in entries {
             let (name, file_type) =
-                match entry.and_then(|entry| Ok((entry.file_name(), entry.file_type()?))) {
+                match entry.and_then(|entry| Ok((entry.name(), entry.file_type()?))) {
                     Ok(named) => named,
                     Err(error) => {
                         finds.push(unreadable(directory.clone(), error));
@@ -151,7 +151,7 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
 
 /// Returns a find for `directory`, which couldn't be read for `error`. The empty path is the
 /// root, called `.`.
-fn unreadable(directory: Vec<u8>, error: io::Error) -> Find {
+fn unreadable(directory: Vec<u8>, error: Reason) -> Find {
     let directory = if directory.is_empty() { b".".to_vec() } else { directory };
     assert!(!directory.starts_with(b"/"), "a find's path is relative to the root");
     Find::Unreadable { directory, error }

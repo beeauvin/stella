@@ -124,10 +124,3 @@ fn push_shown(text: &mut String, unit: Unit) {
     };
     written.expect("writing to a string can't fail");
 }
-
-/// Returns why `error` happened, shown safely like anything else that reaches the terminal.
-pub(crate) fn reason(error: &std::io::Error) -> String {
-    let reason = shown(error.to_string().as_bytes());
-    assert!(!reason.is_empty(), "every error says something");
-    reason
-}

@@ -9,13 +9,12 @@
 //! largest source, so a file that's too big is seen to be, without being read whole.
 
 use std::fmt;
-use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
 
-use crate::unreached::Unreached;
+use crate::filesystem::{Unreached, look_through, open};
 
 /// This is how many bytes a source buffer holds: one more than the largest source.
 const BUFFER_BYTES: usize = usize_from_u32(SOURCE_BYTES_MAX) + 1;
@@ -95,14 +94,13 @@ pub fn read<'buffer>(
     // the next, and even then a directory on the way could be swapped. Only someone who can
     // already write where the program is could do either, so the gap is left open rather than
     // closed halfway.
-    let metadata =
-        fs::metadata(path).map_err(|error| Unread::Unreached(Unreached::from_looking(error)))?;
+    let metadata = look_through(path).map_err(Unread::Unreached)?;
     if !metadata.is_file() {
         return Err(Unread::NotAFile);
     }
-    let unreadable = |error| Unread::Unreached(Unreached::Unreadable(error));
-    let mut file = File::open(path).map_err(unreadable)?;
-    let length = fill(&mut file, &mut buffer.bytes).map_err(unreadable)?;
+    let mut file = open(path).map_err(Unread::Unreached)?;
+    let length = fill(&mut file, &mut buffer.bytes)
+        .map_err(|error| Unread::Unreached(Unreached::from_reading(error)))?;
     assert!(length <= BUFFER_BYTES, "a fill writes no more than the buffer holds");
     // Only what this read wrote is returned, never what an earlier file left further on.
     Ok(&buffer.bytes[..length])

@@ -19,7 +19,7 @@ use stella_linter_path::lint_path;
 use stella_linter_tokens::lint_tokens;
 use stella_source::Position;
 
-use crate::message::{Place, message, reason};
+use crate::message::{Place, message};
 use crate::read::{SourceBuffer, read};
 use crate::status::Status;
 use crate::stored::{Unstored, stored};
@@ -134,8 +134,7 @@ impl<'root> Linter<'root> {
                 // The walk finds each name as it's stored, and it never follows a symlink.
                 Find::Source(path) => self.lint_stored(Named { typed: path, stored: path }),
                 Find::Unreadable { directory, error } => {
-                    let reason = reason(error);
-                    let sentence = format_args!("this directory can't be read: {reason}.");
+                    let sentence = format_args!("this directory can't be read: {error}.");
                     Outcome::Failed(message(directory, Place::File, sentence))
                 }
             };

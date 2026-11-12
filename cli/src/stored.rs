@@ -25,16 +25,14 @@
 
 use std::ffi::OsStr;
 use std::fmt;
-use std::fs::{self, Metadata};
-use std::io;
+use std::fs::Metadata;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 
 use stella_linter_path::SourcePath;
 
-use crate::message::reason;
-use crate::unreached::Unreached;
+use crate::filesystem::{Reason, Unreached, list, look_at};
 use crate::walk::WALK_ENTRIES_MAX;
 
 /// This is the most entries the search looks at, across every directory on the way to one
@@ -55,7 +53,7 @@ pub enum Unstored {
     /// and has gone since, or it can't be looked at.
     Unreached(Unreached),
     /// A directory on the way couldn't be listed.
-    DirectoryUnreadable(io::Error),
+    DirectoryUnreadable(Reason),
     /// The directories on the way hold more than `STORED_ENTRIES_MAX` entries between them.
     TooManyEntries,
 }
@@ -68,8 +66,7 @@ impl fmt::Display for Unstored {
                 "the build path can't be established from a path that goes through a symlink.",
             ),
             Self::Unreached(unreached) => unreached.fmt(f),
-            Self::DirectoryUnreadable(error) => {
-                let reason = reason(error);
+            Self::DirectoryUnreadable(reason) => {
                 write!(f, "a directory on the way to this file can't be read: {reason}.")
             }
             Self::TooManyEntries => f.write_str(
@@ -99,8 +96,7 @@ pub fn stored(root: &Path, typed: SourcePath<'_>) -> Result<Vec<u8>, Unstored> {
         assert!(!typed.is_empty(), "the path lint refuses an empty part");
         let directory = root.join(OsStr::from_bytes(&stored));
         let part = Part { directory: &directory, typed };
-        let metadata = fs::symlink_metadata(directory.join(typed))
-            .map_err(|error| Unstored::Unreached(Unreached::from_looking(error)))?;
+        let metadata = look_at(&directory.join(typed)).map_err(Unstored::Unreached)?;
         if metadata.file_type().is_symlink() {
             return Err(Unstored::Symlink);
         }
@@ -167,13 +163,13 @@ fn stored_name(
 ) -> Result<Vec<u8>, Unstored> {
     assert!(*entries_count <= STORED_ENTRIES_MAX, "the search stops at the bound");
     let mut found: Option<(Vec<u8>, Closeness)> = None;
-    for entry in fs::read_dir(part.directory).map_err(Unstored::DirectoryUnreadable)? {
+    for entry in list(part.directory).map_err(Unstored::DirectoryUnreadable)? {
         let entry = entry.map_err(Unstored::DirectoryUnreadable)?;
         *entries_count += 1;
         if *entries_count > STORED_ENTRIES_MAX {
             return Err(Unstored::TooManyEntries);
         }
-        let name = entry.file_name();
+        let name = entry.name();
         let Some(closeness) = closeness(part, name.as_bytes(), reached) else {
             continue;
         };
@@ -203,6 +199,6 @@ fn closeness(part: Part<'_>, name: &[u8], reached: FileId) -> Option<Closeness> 
     }
     // A name that isn't ASCII may fold to the one typed, and only the entry itself can say
     // whether it's the same file. One that can't be looked at isn't.
-    let metadata = fs::symlink_metadata(part.directory.join(OsStr::from_bytes(name))).ok()?;
+    let metadata = look_at(&part.directory.join(OsStr::from_bytes(name))).ok()?;
     (FileId::of(&metadata) == reached).then_some(Closeness::Folded)
 }
