@@ -7,8 +7,8 @@
 //! One keeps the reference's links honest: each link to a test leads to that test, and each link
 //! to a page leads to a page. Another holds every crate to what no tool makes it do: be a member
 //! of the workspace, inherit its lints, forbid `unsafe`, and carry the license. A third holds
-//! together what the repository says in more than one place: the Rust it's pinned to, the checks
-//! it runs, and what Git is told to keep.
+//! together what the repository says in more than one place: the Rust it's pinned to, the
+//! command that runs every check, and what Git is told to keep.
 //!
 //! The checks are in `tests/`, so they run with every `cargo test`. This library holds only what
 //! they share: where the repository is, and how to read it.

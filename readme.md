@@ -48,14 +48,17 @@ something outside the program went wrong, like a file that doesn't exist.
 
 ## Working on it
 
-Four checks must pass before anything merges, and CI runs the same four:
+One command runs every check that must pass before anything merges, and CI runs
+the same one:
 
 ```sh
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+cargo xtask ci
 ```
+
+It checks the formatting, runs Clippy with warnings denied, runs the tests,
+builds the documentation, and then proves that the lints bite: it compiles a
+small fixture for each lint the workspace claims to enforce, and fails unless
+that lint is what's reported.
 
 The lints are strict on purpose, and they're declared once, in the root
 `Cargo.toml` and `clippy.toml`. Every crate inherits them.
@@ -76,6 +79,7 @@ only it can make, so nothing downstream can be given text that wasn't checked.
 | `cli`           | The `stella` command, which reads files and runs the checks.  |
 | `checks`        | Checks of the repository itself, like the reference's links.  |
 | `test-support`  | What the tests share.                                         |
+| `xtask`         | The workspace's own tools, run as `cargo xtask <command>`.    |
 | `docs`          | The documentation, with the reference in `docs/reference`.    |
 
 ## License

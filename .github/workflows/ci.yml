@@ -13,8 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The release mise.toml and Cargo.toml pin. A check in checks/ holds the three together.
-  RUST_VERSION: "1.99.1"
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -22,17 +20,17 @@ jobs:
     # The compiler is written for macOS: it checks names as a filesystem that ignores case stores
     # them, and one test mounts a disk image.
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Rust
-        run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt
-          rustup default "$RUST_VERSION"
-      # The four checks the readme lists. A check in checks/ holds the two lists together.
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+      # Installs the Rust that mise.toml pins, so CI builds with the toolchain the code is
+      # written against.
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          version: 2026.10.17
+          install: true
+          cache: true
+      # The one command a person runs before they push. What it runs is in xtask/src/ci.rs.
+      - run: mise run ci
