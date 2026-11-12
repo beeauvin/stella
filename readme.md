@@ -36,6 +36,9 @@ mise install
 cargo build --release
 ```
 
+With mise activated in your shell, `cargo` is that Rust. If it isn't activated,
+put `mise exec --` before each `cargo` command here.
+
 Then lint one program, or every program under the directory you're in:
 
 ```sh
