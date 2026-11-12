@@ -134,7 +134,7 @@ fn lint_one(path: &[u8], buffers: &mut Buffers) -> (u8, String) {
             return (REFUSED, message(path, b"", problem.place, problem.kind));
         }
         Err(Unstored::Failed(sentence)) => {
-            return (FAILED, format!("{}: {sentence}\n", shown(path)));
+            return (FAILED, message(path, b"", Place::File, sentence));
         }
     };
     lint_stored(path, &as_stored, buffers)
@@ -152,7 +152,7 @@ fn lint_stored(path: &[u8], stored: &[u8], buffers: &mut Buffers) -> (u8, String
     };
     let source = match read(stored_path.normalized(), &mut buffers.source) {
         Ok(source) => source,
-        Err(sentence) => return (FAILED, format!("{}: {sentence}\n", shown(path))),
+        Err(sentence) => return (FAILED, message(path, b"", Place::File, sentence)),
     };
     let (status, text) = match check(source, &mut buffers.tokens) {
         Ok(()) => (PASSED, String::new()),
@@ -195,12 +195,7 @@ enum Unstored {
 fn stored(path: &str) -> Result<Vec<u8>, Unstored> {
     assert!(!path.is_empty());
     assert!(!path.starts_with('/'));
-    let failed = |error: io::Error| {
-        Unstored::Failed(match error.kind() {
-            io::ErrorKind::NotFound => String::from("this file doesn't exist."),
-            _ => format!("this file can't be read: {}.", reason(&error)),
-        })
-    };
+    let failed = |error: io::Error| Unstored::Failed(file_error(&error));
     let mut stored: Vec<u8> = Vec::new();
     // Each part's device is compared with its directory's, so a mount point can be told apart.
     let mut directory_device = fs::symlink_metadata(".").map_err(failed)?.dev();
@@ -215,12 +210,28 @@ fn stored(path: &str) -> Result<Vec<u8>, Unstored> {
             return Err(Unstored::Symlink);
         }
         // A mount point is listed with the inode of what it covers, so it's found by its name.
+        let by_name = Wanted::Name { device: metadata.dev(), inode: metadata.ino() };
         let wanted = if metadata.dev() == directory_device {
             Wanted::Inode(metadata.ino())
         } else {
-            Wanted::Name { device: metadata.dev(), inode: metadata.ino() }
+            by_name
         };
-        let name = stored_name(directory, part, wanted, &mut entries_count)?;
+        let entries_before = entries_count;
+        let mut found = stored_name(directory, part, wanted, &mut entries_count)?;
+        // Some entries aren't listed with their own inode though they're on the same device: a
+        // bind mount within one filesystem, or any entry on a filesystem whose listing gives other
+        // inodes than `lstat` does. So a part not found by its inode is looked for by its name.
+        // The directory's entries were counted already, so they're counted again from where they
+        // started, and the bound means what its sentence says.
+        if found.is_none() && matches!(wanted, Wanted::Inode(_)) {
+            let mut entries_again = entries_before;
+            found = stored_name(directory, part, by_name, &mut entries_again)?;
+            assert!(entries_again <= WALK_ENTRIES_MAX);
+        }
+        // It was there when it was looked at, so it's gone since.
+        let Some(name) = found else {
+            return Err(Unstored::Failed(String::from(MISSING)));
+        };
         assert!(!name.is_empty());
         if !stored.is_empty() {
             stored.push(b'/');
@@ -238,13 +249,13 @@ fn stored(path: &str) -> Result<Vec<u8>, Unstored> {
 enum Wanted {
     /// By its inode, which every name for the same file shares.
     Inode(u64),
-    /// By its name, for a mount point, whose listed inode is of what it covers. A name that
-    /// doesn't match it even in ASCII case is looked at itself, to see if it's this device and
-    /// inode.
+    /// By its name, for an entry whose listed inode isn't its own, as a mount point's is of what
+    /// it covers. A name that doesn't match it even in ASCII case is looked at itself, to see if
+    /// it's this device and inode.
     Name {
-        /// This is the mounted device.
+        /// This is the device it's on, which for a mount point is the mounted one.
         device: u64,
-        /// This is the inode of the mounted root.
+        /// This is its own inode, which for a mount point is the mounted root's.
         inode: u64,
     },
 }
@@ -263,16 +274,16 @@ enum Closeness {
     Exact,
 }
 
-/// Returns the name `part` is stored by in `directory`, found as `wanted` says. Of several
-/// names for the same file, as hard links make, the closest to `part` is taken. An ASCII name
-/// that matches `part` in neither way is another link, never the name that was typed, so it's
-/// never taken. Every entry is looked at, and counted in `entries_count`.
+/// Returns the name `part` is stored by in `directory`, found as `wanted` says, or nothing if no
+/// entry is it. Of several names for the same file, as hard links make, the closest to `part` is
+/// taken. An ASCII name that matches `part` in neither way is another link, never the name that
+/// was typed, so it's never taken. Every entry is looked at, and counted in `entries_count`.
 fn stored_name(
     directory: &OsStr,
     part: &str,
     wanted: Wanted,
     entries_count: &mut u32,
-) -> Result<Vec<u8>, Unstored> {
+) -> Result<Option<Vec<u8>>, Unstored> {
     assert!(!part.is_empty());
     assert!(*entries_count <= WALK_ENTRIES_MAX);
     let unreadable = |error: io::Error| {
@@ -324,11 +335,8 @@ fn stored_name(
             found = Some((name.to_vec(), closeness));
         }
     }
-    // It was there when it was looked at, so it's gone since.
-    let Some((name, _)) = found else {
-        return Err(Unstored::Failed(String::from("this file doesn't exist.")));
-    };
-    assert!(!name.is_empty());
+    let name = found.map(|(name, _)| name);
+    assert!(name.as_ref().is_none_or(|name| !name.is_empty()));
     Ok(name)
 }
 
@@ -353,7 +361,7 @@ fn lint_every(buffers: &mut Buffers, stderr: &mut impl Write) -> io::Result<u8> 
             Found::Unreadable { directory, error } => {
                 let reason = reason(error);
                 let sentence = format!("this directory can't be read: {reason}.");
-                (FAILED, format!("{}: {sentence}\n", shown(directory)))
+                (FAILED, message(directory, b"", Place::File, sentence))
             }
         };
         assert_eq!(find_status == PASSED, text.is_empty());
@@ -380,13 +388,7 @@ fn read<'buffer>(
     // FIFO, can wait forever. Only something swapped in between the two could still do that, or be
     // a symlink by the time it's opened. Closing that gap would take `unsafe` or a dependency, and
     // only someone who can already write where the program is could open it.
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Err(String::from("this file doesn't exist."));
-        }
-        Err(error) => return Err(format!("this file can't be read: {}.", reason(&error))),
-    };
+    let metadata = fs::metadata(path).map_err(|error| file_error(&error))?;
     if !metadata.is_file() {
         return Err(String::from("this isn't a file."));
     }
@@ -404,6 +406,18 @@ fn read<'buffer>(
     }
     assert!(length <= BUFFER_BYTES);
     Ok(&buffer[..length])
+}
+
+/// This is the sentence for a file that isn't there, however it's found to be missing.
+const MISSING: &str = "this file doesn't exist.";
+
+/// Returns the sentence for `error`, which came from looking at a file: that it doesn't exist,
+/// or that it can't be read, and why.
+fn file_error(error: &io::Error) -> String {
+    match error.kind() {
+        io::ErrorKind::NotFound => String::from(MISSING),
+        _ => format!("this file can't be read: {}.", reason(error)),
+    }
 }
 
 /// Returns why `error` happened, shown safely like anything else that reaches the terminal.
