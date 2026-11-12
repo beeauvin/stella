@@ -93,8 +93,8 @@ impl Fixture {
         directory
     }
 
-    /// Returns where the fixture is: its directory, or its one file.
-    pub(crate) fn place(&self) -> &Path {
+    /// Returns the fixture's own path: its directory, or its one file.
+    pub(crate) fn path(&self) -> &Path {
         self.directory.as_deref().unwrap_or(&self.source)
     }
 
@@ -147,17 +147,17 @@ pub(crate) fn fixtures(directory: &Path) -> Result<Vec<Fixture>, String> {
 /// directory `x` would be, each answering for the other.
 fn fixtures_refuse_name_twice(fixtures: &[Fixture]) -> Result<(), String> {
     let mut crates: Vec<(String, &Path)> =
-        fixtures.iter().map(|fixture| (fixture.crate_directory(), fixture.place())).collect();
+        fixtures.iter().map(|fixture| (fixture.crate_directory(), fixture.path())).collect();
     crates.sort();
     for pair in crates.windows(2) {
-        let [(one, one_place), (other, other_place)] = pair else {
+        let [(one, one_path), (other, other_path)] = pair else {
             unreachable!("a window of two holds two");
         };
         if one == other {
             return Err(format!(
                 "{} and {} are two fixtures of one name.",
-                one_place.display(),
-                other_place.display()
+                one_path.display(),
+                other_path.display()
             ));
         }
     }

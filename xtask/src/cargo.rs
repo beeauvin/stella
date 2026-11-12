@@ -9,7 +9,7 @@
 
 use std::io::Read as _;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 
 use crate::files::create;
 
@@ -49,10 +49,19 @@ impl Run<'_> {
     ///
     /// # Errors
     ///
-    /// Returns why when Cargo can't be started, or that it failed. Cargo has said why itself.
+    /// Returns why when Cargo can't be started, or how it ended when it failed. The two are
+    /// different sentences, and the second keeps the status Cargo ended with. Cargo has said
+    /// what went wrong itself.
     pub(crate) fn finish(self) -> Result<(), String> {
         let status = self.command().status().map_err(|error| self.unstarted(&error))?;
-        if status.success() { Ok(()) } else { Err(format!("`{}` failed.", self.shown())) }
+        self.finish_ended(status)
+    }
+
+    /// Returns the run's failure when Cargo ended with `status`, which is kept in the sentence
+    /// as the operating system gives it: the code Cargo exited with, or the signal that
+    /// stopped it.
+    fn finish_ended(self, status: ExitStatus) -> Result<(), String> {
+        if status.success() { Ok(()) } else { Err(format!("`{}` failed: {status}.", self.shown())) }
     }
 
     /// Runs Cargo in a scratch workspace, which builds beside its own crates, and returns what
@@ -111,5 +120,43 @@ impl Run<'_> {
     /// Returns the sentence that says Cargo couldn't be started, for `error`.
     fn unstarted(self, error: &std::io::Error) -> String {
         format!("`{}` can't be run: {error}.", self.shown())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::path::Path;
+    use std::process::ExitStatus;
+
+    use stella_test_support::Scratch;
+
+    use super::Run;
+
+    #[test]
+    fn a_run_that_ends_in_failure_says_how_it_ended() {
+        // A wait status is the exit code in its second byte, or a signal in its first. Success
+        // is no error. A code and a signal are each kept in the sentence, after the run as a
+        // person would type it.
+        let directory = Path::new("/workspace");
+        let run = Run { directory, arguments: &["test", "--workspace"] };
+        assert_eq!(run.finish_ended(ExitStatus::from_raw(0)), Ok(()));
+        assert_eq!(
+            run.finish_ended(ExitStatus::from_raw(101 << 8)),
+            Err(String::from("`cargo test --workspace` failed: exit status: 101."))
+        );
+        let killed = run.finish_ended(ExitStatus::from_raw(9)).expect_err("a signal isn't success");
+        assert!(killed.starts_with("`cargo test --workspace` failed: signal: 9"), "{killed}");
+    }
+
+    #[test]
+    fn a_run_that_cant_start_is_told_from_one_that_fails() {
+        // Cargo is run in a directory that isn't there, so nothing starts. The sentence says it
+        // couldn't be run, with the operating system's reason, and not that it failed.
+        let absent = Scratch::of("xtask-cargo").fresh("unstarted").join("absent");
+        let run = Run { directory: &absent, arguments: &["--version"] };
+        let unstarted = run.finish().expect_err("there's no such directory to run in");
+        assert!(unstarted.starts_with("`cargo --version` can't be run: "), "{unstarted}");
+        assert!(!unstarted.contains("failed"), "{unstarted}");
     }
 }
