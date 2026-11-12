@@ -21,7 +21,8 @@ in code, by
 - No bidirectional control character may appear. These are Unicode's
   `Bidi_Control` characters: U+061C, U+200E, U+200F, U+202A to U+202E, and
   U+2066 to U+2069. They can make text display in a different order from the
-  way the compiler reads it.
+  way the compiler reads it. Tested by
+  [`characters`](../../linter/text/tests/text.rs) too.
 - U+FEFF, the byte-order mark, is refused anywhere, including at the start of
   the file. Tested by [`characters`](../../linter/text/tests/text.rs) too.
 - Outside comments, every character is ASCII. Tested by

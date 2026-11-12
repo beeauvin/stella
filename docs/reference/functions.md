@@ -18,4 +18,4 @@ For now:
 - It returns `Void`.
 - Its body is empty, apart from any [comments](comments.md).
 
-Nothing on this page is built yet. It waits for the parser.
+Nothing on this page is built yet. It waits for the grammar.
