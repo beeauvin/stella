@@ -4,8 +4,8 @@
 
 //! An `if let` with an `else`, which `option_if_let_else` would turn into `map_or`.
 
-/// Returns the number after `count`, or zero when there is none.
+/// Returns a greeting for `name`, or for nobody in particular when there is none.
 #[must_use]
-pub const fn next(count: Option<u32>) -> u32 {
-    if let Some(count) = count { count.saturating_add(1) } else { 0 }
+pub fn greeting(name: Option<&str>) -> String {
+    if let Some(name) = name { format!("hello, {name}") } else { String::from("hello") }
 }

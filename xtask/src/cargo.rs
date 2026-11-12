@@ -83,6 +83,11 @@ impl Run<'_> {
         Ok(messages)
     }
 
+    /// Returns the run as a person would type it.
+    pub(crate) fn shown(self) -> String {
+        format!("cargo {}", self.arguments.join(" "))
+    }
+
     /// Returns Cargo, ready to run this way. A warning in documentation is refused, as CI
     /// refuses it, whichever command builds the documentation.
     fn command(self) -> Command {
@@ -90,11 +95,6 @@ impl Run<'_> {
         let mut command = Command::new("cargo");
         command.args(self.arguments).current_dir(self.directory).env("RUSTDOCFLAGS", "-D warnings");
         command
-    }
-
-    /// Returns the run as a person would type it.
-    pub(crate) fn shown(self) -> String {
-        format!("cargo {}", self.arguments.join(" "))
     }
 
     /// Returns the sentence that says Cargo couldn't be started, for `error`.
