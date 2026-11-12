@@ -45,17 +45,17 @@ fn run_steps(workflow: &str) -> Vec<&str> {
 
 /// Returns the lines of `ignore`, an ignore file, that say something: not blank, and not a
 /// comment.
-fn rules(ignore: &str) -> Vec<&str> {
+fn patterns(ignore: &str) -> Vec<&str> {
     ignore.split('\n').filter(|line| !line.is_empty() && !line.starts_with('#')).collect()
 }
 
-/// Says whether `rules`, an ignore file's rules, let `directory` through, with everything in
+/// Says whether `patterns`, an ignore file's, let `directory` through, with everything in
 /// it: the directory first, then its contents, since Git won't look inside a directory it
 /// ignores.
-fn lets_through(rules: &[&str], directory: &str) -> bool {
+fn lets_through(patterns: &[&str], directory: &str) -> bool {
     let directory_rule = format!("!/{directory}/");
     let contents_rule = format!("!/{directory}/**");
-    rules.windows(2).any(|pair| pair == [directory_rule.as_str(), contents_rule.as_str()])
+    patterns.windows(2).any(|pair| pair == [directory_rule.as_str(), contents_rule.as_str()])
 }
 
 #[test]
@@ -94,18 +94,18 @@ fn the_ignore_file_lets_every_crate_through() {
     // The ignore file ignores everything, then names what Git is to keep. A crate in a directory
     // it doesn't name would never be committed, and `git status` wouldn't mention it.
     let ignore = text_of(&root().join(".gitignore"));
-    let rules = rules(&ignore);
-    assert_eq!(rules.first(), Some(&"*"), "the ignore file must start by ignoring everything");
+    let patterns = patterns(&ignore);
+    assert_eq!(patterns.first(), Some(&"*"), "the ignore file must start by ignoring everything");
     for member in members() {
         let directory = member.split('/').next().expect("a split has a first piece");
         assert!(
-            lets_through(&rules, directory),
+            lets_through(&patterns, directory),
             "the ignore file doesn't let {directory}/ through"
         );
     }
     for directory in [".cargo", ".github", "docs"] {
         assert!(
-            lets_through(&rules, directory),
+            lets_through(&patterns, directory),
             "the ignore file doesn't let {directory}/ through"
         );
     }
@@ -131,11 +131,11 @@ fn the_scanners_find_what_theyre_for() {
     assert_eq!(run_steps("steps:\n  - uses: a/b@c\n"), [""; 0]);
 
     let ignore = "# Everything.\n*\n\n!/cli/\n!/cli/**\n!/docs/\n!/lexer/**\n.DS_Store\n";
-    let rules = rules(ignore);
-    assert_eq!(rules, ["*", "!/cli/", "!/cli/**", "!/docs/", "!/lexer/**", ".DS_Store"]);
-    assert!(lets_through(&rules, "cli"));
+    let patterns = patterns(ignore);
+    assert_eq!(patterns, ["*", "!/cli/", "!/cli/**", "!/docs/", "!/lexer/**", ".DS_Store"]);
+    assert!(lets_through(&patterns, "cli"));
     // The directory without its contents, and the contents without the directory, aren't enough.
-    assert!(!lets_through(&rules, "docs"));
-    assert!(!lets_through(&rules, "lexer"));
-    assert!(!lets_through(&rules, "blocks"));
+    assert!(!lets_through(&patterns, "docs"));
+    assert!(!lets_through(&patterns, "lexer"));
+    assert!(!lets_through(&patterns, "blocks"));
 }

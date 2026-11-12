@@ -4,7 +4,7 @@
 
 //! Ways to make the files and directories a test works in.
 //!
-//! Each is a fixture: it does one fallible thing a test needs done, and fails the test with a
+//! Each is a helper: it does one fallible thing a test needs done, and fails the test with a
 //! plain reason if it can't, since a test directory is the test's own to write.
 
 use std::env;

@@ -28,7 +28,7 @@ pub const TEXT_BYTES_MAX: u64 = 1024 * 1024;
 
 /// This is the most files and directories one walk looks at. It's far more than the repository
 /// holds, and it keeps a walk bounded.
-pub const ENTRIES_MAX: usize = 10_000;
+pub const ENTRIES_MAX: u32 = 10_000;
 
 /// Which files a walk is looking for.
 #[derive(Clone, Copy, Debug)]
@@ -118,7 +118,7 @@ pub fn members_in(manifest: &str) -> Vec<String> {
 pub fn files_under(directory: &Path, wanted: Wanted) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut directories = vec![directory.to_path_buf()];
-    let mut seen_count: usize = 0;
+    let mut seen_count: u32 = 0;
     while let Some(next) = directories.pop() {
         for entry in fs::read_dir(&next).expect("a directory of the repository can be read") {
             let path = entry.expect("an entry of the repository can be read").path();

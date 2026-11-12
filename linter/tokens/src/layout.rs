@@ -107,14 +107,14 @@ pub fn lint_tokens<'source, 'buffer>(
 fn lint_lines(tokens: &[Token]) -> Result<(), Problem> {
     for (index, token) in tokens.iter().enumerate() {
         assert!(!token.span().is_empty(), "a token is at least one character");
-        // Whether a token comes before this one on its line, and whether one comes after it.
-        let before = index.checked_sub(1).is_some_and(|previous| {
+        // Whether this token comes after another on its line, and whether it comes before one.
+        let comes_after_one = index.checked_sub(1).is_some_and(|previous| {
             Pair { first: &tokens[previous], second: token }.is_on_one_line()
         });
-        let after = tokens
+        let comes_before_one = tokens
             .get(index + 1)
             .is_some_and(|next| Pair { first: token, second: next }.is_on_one_line());
-        let kind = match (token.kind(), before, after) {
+        let kind = match (token.kind(), comes_after_one, comes_before_one) {
             // Of the two problems a `{` can have, not ending its line is the one reported.
             (BraceOpen, true | false, true) => Some(Kind::BraceOpenNotLast),
             (BraceOpen, false, false) => Some(Kind::BraceOpenStartsLine),
@@ -130,9 +130,9 @@ fn lint_lines(tokens: &[Token]) -> Result<(), Problem> {
                 true | false,
                 true,
             ) => None,
-            (Comment, comes_before, comes_after) => {
-                assert!(!comes_before, "the lexer makes a comment of a whole line");
-                assert!(!comes_after, "the lexer makes a comment of a whole line");
+            (Comment, after_one, before_one) => {
+                assert!(!after_one, "the lexer makes a comment of a whole line");
+                assert!(!before_one, "the lexer makes a comment of a whole line");
                 None
             }
             (

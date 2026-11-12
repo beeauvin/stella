@@ -117,13 +117,17 @@ fn a_path_stored_as_typed_comes_back_as_typed() {
     // leading `./` is no part of the path as it's stored.
     let directory = fresh_directory("as-typed");
     write(&directory, "hello.stella", GOOD);
-    write(&directory, "programs/rung-0/hello-world.stella", GOOD);
+    write(&directory, "programs/examples/hello-world.stella", GOOD);
     // Other entries beside them, a look-alike in another case included, are never taken instead.
-    write(&directory, "programs/rung-0/other.stella", GOOD);
+    write(&directory, "programs/examples/other.stella", GOOD);
     write(&directory, "notes.txt", b"");
     stores(&directory, "hello.stella", "hello.stella");
     stores(&directory, "./hello.stella", "hello.stella");
-    stores(&directory, "programs/rung-0/hello-world.stella", "programs/rung-0/hello-world.stella");
+    stores(
+        &directory,
+        "programs/examples/hello-world.stella",
+        "programs/examples/hello-world.stella",
+    );
 }
 
 #[test]
