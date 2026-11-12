@@ -50,18 +50,18 @@ pub enum Unreached {
 }
 
 impl Unreached {
+    /// Returns why, from the `error` a file that was open gave when it was read. The file was
+    /// there to open, so whatever went wrong, it isn't missing.
+    pub(crate) const fn from_reading(error: io::Error) -> Self {
+        Self::Unreadable(Reason(error))
+    }
+
     /// Returns why, from the `error` the filesystem gave when the path was looked at or opened.
     fn from_reaching(error: io::Error) -> Self {
         match error.kind() {
             io::ErrorKind::NotFound => Self::Missing,
             _ => Self::Unreadable(Reason(error)),
         }
-    }
-
-    /// Returns why, from the `error` a file that was open gave when it was read. The file was
-    /// there to open, so whatever went wrong, it isn't missing.
-    pub(crate) const fn from_reading(error: io::Error) -> Self {
-        Self::Unreadable(Reason(error))
     }
 }
 
@@ -75,11 +75,11 @@ impl fmt::Display for Unreached {
     }
 }
 
-/// A listed entry is one thing a directory lists.
+/// A directory entry is one thing a directory lists.
 #[derive(Debug)]
-pub(crate) struct Listed(fs::DirEntry);
+pub(crate) struct DirectoryEntry(fs::DirEntry);
 
-impl Listed {
+impl DirectoryEntry {
     /// Returns the entry's name in its directory.
     pub(crate) fn name(&self) -> OsString {
         self.0.file_name()
@@ -97,11 +97,11 @@ impl Listed {
 pub(crate) struct Listing(fs::ReadDir);
 
 impl Iterator for Listing {
-    type Item = Result<Listed, Reason>;
+    type Item = Result<DirectoryEntry, Reason>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let entry = self.0.next()?;
-        Some(entry.map(Listed).map_err(Reason))
+        Some(entry.map(DirectoryEntry).map_err(Reason))
     }
 }
 

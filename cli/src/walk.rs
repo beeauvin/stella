@@ -130,7 +130,6 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
             let is_source = file_type.is_file() && name.ends_with(b".stella");
             if is_source {
                 assert!(!path.starts_with(b"."), "every name that starts with `.` was skipped");
-                assert!(!path.starts_with(b"/"), "a find's path is relative to the root");
                 finds.push(Find::Source(path));
             }
         }
@@ -153,7 +152,6 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
 /// root, called `.`.
 fn unreadable(directory: Vec<u8>, error: Reason) -> Find {
     let directory = if directory.is_empty() { b".".to_vec() } else { directory };
-    assert!(!directory.starts_with(b"/"), "a find's path is relative to the root");
     Find::Unreadable { directory, error }
 }
 

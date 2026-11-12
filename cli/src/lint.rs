@@ -91,7 +91,7 @@ impl<'root> Linter<'root> {
         // On macOS, which ignores case, `hello.stella` can name `Hello.stella`, so the path is
         // found as it's stored before it's checked again.
         match stored(self.root, typed_path) {
-            Ok(as_stored) => self.lint_stored(Named { typed, stored: &as_stored }),
+            Ok(as_stored) => self.lint_stored(ProgramPaths { typed, stored: &as_stored }),
             Err(unstored @ Unstored::Symlink) => {
                 Outcome::Refused(message(typed, Place::File, unstored))
             }
@@ -132,7 +132,7 @@ impl<'root> Linter<'root> {
         for find in &finds {
             let outcome = match find {
                 // The walk finds each name as it's stored, and it never follows a symlink.
-                Find::Source(path) => self.lint_stored(Named { typed: path, stored: path }),
+                Find::Source(path) => self.lint_stored(ProgramPaths { typed: path, stored: path }),
                 Find::Unreadable { directory, error } => {
                     let sentence = format_args!("this directory can't be read: {error}.");
                     Outcome::Failed(message(directory, Place::File, sentence))
@@ -156,8 +156,8 @@ impl<'root> Linter<'root> {
     /// Lints `program`: its path as it's stored, then its text, its tokens, their layout and its
     /// blocks. A problem with the path is shown at the path as it's stored, and any other at the
     /// path as it was typed.
-    fn lint_stored(&mut self, program: Named<'_>) -> Outcome {
-        let Named { typed, stored } = program;
+    fn lint_stored(&mut self, program: ProgramPaths<'_>) -> Outcome {
+        let ProgramPaths { typed, stored } = program;
         let stored_text = String::from_utf8_lossy(stored);
         let stored_path = match lint_path(&stored_text) {
             Ok(stored_path) => stored_path,
@@ -181,10 +181,10 @@ impl<'root> Linter<'root> {
     }
 }
 
-/// A program to lint, by both of its names. Each is named, so the two can't be given the wrong
+/// A program's paths are the two it goes by. Each is named, so the two can't be given the wrong
 /// way round.
 #[derive(Clone, Copy)]
-struct Named<'path> {
+struct ProgramPaths<'path> {
     /// The program's path as it was typed, or as the walk found it.
     typed: &'path [u8],
     /// The program's path as it's stored, which the file is read by.
