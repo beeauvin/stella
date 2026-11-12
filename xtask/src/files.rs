@@ -42,8 +42,10 @@ impl Link<'_> {
     ///
     /// Returns why when it can't be made, such as when something is already there.
     pub(crate) fn make(self) -> Result<(), String> {
-        symlink(self.to, self.at)
-            .map_err(|error| format!("{} can't be linked to: {error}.", self.to.display()))
+        symlink(self.to, self.at).map_err(|error| {
+            let (at, to) = (self.at.display(), self.to.display());
+            format!("{at} can't be made a link to {to}: {error}.")
+        })
     }
 }
 
@@ -284,8 +286,14 @@ mod tests {
             read_text(&directory.join("crate/src/lib.rs")).as_deref(),
             Ok("//! A library.\n")
         );
+        // The sentence names the place the link couldn't be made, which is what's in the way.
         let again = link.make().expect_err("something is already there");
-        assert!(again.contains("can't be linked to: "), "{again}");
+        let names_both = format!(
+            "{} can't be made a link to {}: ",
+            directory.join("crate/src").display(),
+            directory.join("real").display()
+        );
+        assert!(again.starts_with(&names_both), "{again}");
         assert_eq!(remove_directory(&directory.join("crate")), Ok(()));
         assert_eq!(is_file(&directory.join("crate/Cargo.toml")), Ok(false));
         assert_eq!(is_file(&directory.join("real/lib.rs")), Ok(true));

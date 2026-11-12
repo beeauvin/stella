@@ -32,7 +32,7 @@ pub(crate) struct Report {
     /// What Cargo wrote to its stdout.
     pub messages: String,
     /// Whether Cargo said it succeeded.
-    pub succeeded: bool,
+    pub is_success: bool,
 }
 
 /// A run is one way of running Cargo: where, and what it's asked.
@@ -91,7 +91,7 @@ impl Run<'_> {
         if !is_bounded {
             return Err(format!("`{}` wrote more than a tool reads.", self.shown()));
         }
-        Ok(Report { messages, succeeded: status.success() })
+        Ok(Report { messages, is_success: status.success() })
     }
 
     /// Returns the run as a person would type it.

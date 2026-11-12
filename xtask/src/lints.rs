@@ -289,7 +289,7 @@ fn diagnostics_in(report: &Report) -> Result<Vec<Diagnostic>, String> {
     for line in report.messages.split_terminator('\n') {
         diagnostics.extend(diagnostic(line)?);
     }
-    if !report.succeeded && diagnostics.is_empty() {
+    if !report.is_success && diagnostics.is_empty() {
         return Err(String::from("Cargo failed without reporting a diagnostic."));
     }
     Ok(diagnostics)
@@ -489,18 +489,18 @@ mod tests {
         // lines that aren't diagnostics. With success, that's a build that passed. With failure,
         // nothing was shown about any fixture, so it's an error and not a pass.
         let messages = String::from("{\"reason\":\"build-finished\",\"success\":true}\n");
-        let passed = Report { messages: messages.clone(), succeeded: true };
+        let passed = Report { messages: messages.clone(), is_success: true };
         assert_eq!(diagnostics_in(&passed), Ok(Vec::new()));
-        let failed = Report { messages, succeeded: false };
+        let failed = Report { messages, is_success: false };
         assert_eq!(
             diagnostics_in(&failed),
             Err(String::from("Cargo failed without reporting a diagnostic."))
         );
-        let silent = Report { messages: String::new(), succeeded: false };
+        let silent = Report { messages: String::new(), is_success: false };
         assert!(diagnostics_in(&silent).is_err());
         // A diagnostic that can't be read is an error whatever the status.
         let unread = String::from("{\"reason\":\"compiler-message\",\"message\":{}}\n");
-        assert!(diagnostics_in(&Report { messages: unread, succeeded: false }).is_err());
+        assert!(diagnostics_in(&Report { messages: unread, is_success: false }).is_err());
     }
 
     #[test]
