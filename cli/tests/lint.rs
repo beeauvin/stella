@@ -179,16 +179,34 @@ fn one_path_sizes() {
 }
 
 #[test]
-fn a_name_that_isnt_utf8() {
-    // A path that isn't UTF-8 is refused for its name, and shown with the bad byte escaped.
+fn a_path_that_isnt_utf8() {
+    // A byte that isn't UTF-8, in each part a path has: the file's name, its extension, a
+    // directory at the start, in the middle and after `./`, and behind a `/` or beside a `..`.
+    // Each is refused by the check that would refuse any other bad name there, and shown with
+    // the byte escaped. None stops the command any other way.
+    let name = "a source file's name, before `.stella`, must be lowercase letters and digits \
+                joined by single hyphens, like `hello-world`.";
+    let directory_name = "a directory's name must be lowercase letters and digits joined by \
+                          single hyphens, like `hello-world`.";
+    let extension = "a source file's name must end in `.stella`.";
+    let absolute = "the build path can't be established from an absolute path.";
+    let parent = "the build path can't be established from a path that uses `..`.";
     let directory = fresh_directory("not-utf8");
-    let path = OsStr::from_bytes(b"a\xFF.stella");
-    let expected = exits(
-        1,
-        "a\\xFF.stella: a source file's name, before `.stella`, must be lowercase letters and \
-         digits joined by single hyphens, like `hello-world`.\n",
-    );
-    assert_eq!(stella_with(&directory, &[OsStr::new("lint"), path]), expected);
+    for (path, shown, sentence) in [
+        (&b"a\xFF.stella"[..], "a\\xFF.stella", name),
+        (b"\xFF.stella", "\\xFF.stella", name),
+        (b"a.stella\xFF", "a.stella\\xFF", extension),
+        (b"\xFF", "\\xFF", extension),
+        (b"\xFF/a.stella", "\\xFF/a.stella", directory_name),
+        (b"a/\xFF/b.stella", "a/\\xFF/b.stella", directory_name),
+        (b"./\xFF/a.stella", "./\\xFF/a.stella", directory_name),
+        (b"/\xFF.stella", "/\\xFF.stella", absolute),
+        (b"\xFF/../a.stella", "\\xFF/../a.stella", parent),
+    ] {
+        let expected = exits(1, &format!("{shown}: {sentence}\n"));
+        let arguments = [OsStr::new("lint"), OsStr::from_bytes(path)];
+        assert_eq!(stella_with(&directory, &arguments), expected, "for {shown}");
+    }
 }
 
 #[test]

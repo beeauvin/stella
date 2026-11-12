@@ -71,7 +71,7 @@ as above. A path that isn't UTF-8 is refused, since no name in it can be
 lowercase kebab. Tested by [`one_path`](../../cli/tests/lint.rs),
 [`one_path_sizes`](../../cli/tests/lint.rs),
 [`named_symlinks_are_refused`](../../cli/tests/lint.rs) and
-[`a_name_that_isnt_utf8`](../../cli/tests/lint.rs).
+[`a_path_that_isnt_utf8`](../../cli/tests/lint.rs).
 
 Given no path, it checks every `.stella` file under the directory it runs in.
 Each refused file gets its first problem, with a blank line between messages,
