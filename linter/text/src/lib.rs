@@ -9,10 +9,9 @@
 //! the lexer can take one and trust everything the lint guarantees.
 
 #![forbid(unsafe_code)]
-#![warn(missing_docs)]
 
 mod problem;
 mod text;
 
-pub use problem::{Kind, Place, Problem};
+pub use problem::{Kind, Problem};
 pub use text::{LEVEL_SPACES, Text, lint};

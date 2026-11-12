@@ -10,14 +10,19 @@
 //! checks the steps run in order, so an earlier step's problem wins even when a later step's
 //! comes first in the file.
 
-use stella_linter_text::Kind::*;
-use stella_linter_text::{Kind, Place, Problem, lint};
-use stella_source::{Position, SOURCE_BYTES_MAX};
+use stella_linter_text::Kind::{
+    BidiControl, BlankLineAtEnd, ByteOrderMark, CarriageReturn, CommentNeedsSpace,
+    CommentSharesLine, ControlCharacter, IndentationNotFour, LineSeparator, NoFinalNewline,
+    NotAscii, NotUtf8, Tab, TrailingSpace,
+};
+use stella_linter_text::Problem::{FileEmpty, FileTooBig};
+use stella_linter_text::{Kind, Problem, lint};
+use stella_source::{Position, SOURCE_BYTES_MAX, usize_from_u32};
 
 /// Lints `source`, which must pass, and checks the `Text` holds it unchanged.
 fn accepts(source: &str) {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
-    assert_eq!(text.as_str(), source);
+    assert_eq!(text.as_str(), source, "a text holds its source unchanged");
 }
 
 /// Lints `bytes`, which must be refused with `problem`.
@@ -26,20 +31,15 @@ fn refuses(bytes: &[u8], problem: Problem) {
     assert_eq!(found, problem, "for {:?}", String::from_utf8_lossy(bytes));
 }
 
-/// Returns a problem at `line` and `column`.
-fn at(kind: Kind, line: u32, column: u32) -> Problem {
-    Problem { kind, place: Place::At(Position::new(line, column)) }
-}
-
-/// Returns a problem with the file as a whole.
-fn whole_file(kind: Kind) -> Problem {
-    Problem { kind, place: Place::File }
+/// Returns a problem of `kind` at `line` and `column`.
+const fn at(kind: Kind, line: u32, column: u32) -> Problem {
+    Problem::At { kind, position: Position::new(line, column) }
 }
 
 /// Returns a source of exactly `size` bytes: one long comment line.
 fn source_of_size(size: u32) -> String {
-    let source = format!("// {}\n", "x".repeat(size as usize - "// \n".len()));
-    assert_eq!(source.len(), size as usize);
+    let source = format!("// {}\n", "x".repeat(usize_from_u32(size) - "// \n".len()));
+    assert_eq!(source.len(), usize_from_u32(size), "the comment fills the size asked for");
     source
 }
 
@@ -47,7 +47,7 @@ fn source_of_size(size: u32) -> String {
 /// text page words it, or `None` when the character is fine in a comment. It isn't asked about
 /// `\n`, which ends a line.
 fn character_problem(character: char) -> Option<Kind> {
-    assert_ne!(character, '\n');
+    assert_ne!(character, '\n', "a `\\n` ends a line, so it's never a problem");
     match character {
         '\t' => Some(Tab),
         '\r' => Some(CarriageReturn),
@@ -65,6 +65,8 @@ fn character_problem(character: char) -> Option<Kind> {
 
 #[test]
 fn every_code_point_in_a_comment() {
+    // Each code point is put between `a` and `b` in a comment, where anything but the refused
+    // characters may go. The source is refused there, or passes, as the oracle says.
     for character in char::MIN..=char::MAX {
         if character == '\n' {
             continue;
@@ -79,6 +81,8 @@ fn every_code_point_in_a_comment() {
 
 #[test]
 fn every_code_point_in_code() {
+    // Each code point is put between `a` and `b` in code. A refused character is refused as it
+    // is in a comment, and of the rest only ASCII passes.
     for character in char::MIN..=char::MAX {
         if character == '\n' {
             continue;
@@ -94,6 +98,7 @@ fn every_code_point_in_code() {
 
 #[test]
 fn accepted_sources() {
+    // Each source passes, and its text comes back unchanged.
     for source in [
         "function main() returns Void {\n}\n",
         "// above\nfunction main() returns Void {\n    // inside\n}\n// below\n",
@@ -114,21 +119,23 @@ fn accepted_sources() {
 
 #[test]
 fn size() {
-    refuses(b"", whole_file(FileEmpty));
+    // An empty file and one a byte too big are refused whole, with no position.
+    refuses(b"", FileEmpty);
     let one_more = source_of_size(SOURCE_BYTES_MAX + 1);
-    refuses(one_more.as_bytes(), whole_file(FileTooBig));
+    refuses(one_more.as_bytes(), FileTooBig);
     // At the limit, every problem is still found and placed: on the last line a source can have,
     // just past the end of the longest line, or in a source of nothing but blank lines.
-    let newlines = "\n".repeat(SOURCE_BYTES_MAX as usize - 1);
+    let newlines = "\n".repeat(usize_from_u32(SOURCE_BYTES_MAX) - 1);
     refuses(format!("{newlines}\t").as_bytes(), at(Tab, SOURCE_BYTES_MAX, 1));
     refuses(&[newlines.as_bytes(), b"\xFF"].concat(), at(NotUtf8, SOURCE_BYTES_MAX, 1));
     refuses(format!("{newlines}\n").as_bytes(), at(BlankLineAtEnd, 1, 1));
-    let longest = "x".repeat(SOURCE_BYTES_MAX as usize);
+    let longest = "x".repeat(usize_from_u32(SOURCE_BYTES_MAX));
     refuses(longest.as_bytes(), at(NoFinalNewline, 1, SOURCE_BYTES_MAX + 1));
 }
 
 #[test]
 fn characters() {
+    // Each source holds a refused character, and is refused with its kind where it first is.
     for (source, problem) in [
         ("\u{FEFF}function main() returns Void {\n}\n", at(ByteOrderMark, 1, 1)),
         ("function main() returns Void {\r\n}\n", at(CarriageReturn, 1, 31)),
@@ -149,6 +156,7 @@ fn characters() {
 
 #[test]
 fn invalid_utf8() {
+    // Each row's bytes stop being UTF-8 somewhere, and are refused at the first byte that isn't.
     for (bytes, problem) in [
         (&b"// a\xFFb\n"[..], at(NotUtf8, 1, 5)),
         (b"// \xC3\xA9\xFF\n", at(NotUtf8, 1, 5)),
@@ -170,9 +178,9 @@ fn invalid_utf8() {
 #[test]
 fn lines() {
     // Every indentation up to five levels: only whole levels of four spaces pass.
-    for spaces in 0..=20 {
+    for spaces in 0_usize..=20 {
         let source = format!("function main() returns Void {{\n{}// x\n}}\n", " ".repeat(spaces));
-        if spaces % 4 == 0 {
+        if spaces.is_multiple_of(4) {
             accepts(&source);
         } else {
             refuses(source.as_bytes(), at(IndentationNotFour, 2, 1));
@@ -209,6 +217,8 @@ fn lines() {
 
 #[test]
 fn comments() {
+    // Each source writes a comment some way other than the one way, and is refused where it
+    // goes wrong.
     for (source, problem) in [
         ("//x\n", at(CommentNeedsSpace, 1, 3)),
         ("//\u{A0}x\n", at(CommentNeedsSpace, 1, 3)),
@@ -232,6 +242,7 @@ fn comments() {
 
 #[test]
 fn ascii() {
+    // Each source holds a character in code that isn't ASCII, and is refused at the first one.
     for (source, problem) in [
         ("function maín() returns Void {\n}\n", at(NotAscii('í'), 1, 12)),
         ("// a\nfunction maín() returns Void {\n}\n", at(NotAscii('í'), 2, 12)),
@@ -246,7 +257,9 @@ fn ascii() {
 
 #[test]
 fn the_steps_run_in_order() {
-    refuses(&[0xFF; SOURCE_BYTES_MAX as usize + 1], whole_file(FileTooBig));
+    // Each source has a problem for two steps, with the later step's first in the file. The
+    // earlier step's is the one reported.
+    refuses(&vec![0xFF; usize_from_u32(SOURCE_BYTES_MAX) + 1], FileTooBig);
     for (source, problem) in [
         ("function main() returns Void { \n\t// x\n}\n", at(Tab, 2, 1)),
         ("//x \n", at(TrailingSpace, 1, 4)),

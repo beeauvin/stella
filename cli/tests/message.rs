@@ -10,20 +10,16 @@
 //! and every code point is put before a problem to check the caret still lands under it. The rest
 //! is one table of whole messages.
 
-use stella_linter_text::Kind::*;
-use stella_linter_text::{Kind, Place, Problem};
+use stella_cli::{Place, message, shown};
+use stella_linter_text::Kind::{
+    BlankLineAtEnd, CarriageReturn, CommentSharesLine, NoFinalNewline, NotUtf8, Tab, TrailingSpace,
+};
+use stella_linter_text::{Kind, Problem};
 use stella_source::Position;
 
-use stella_cli::{message, shown};
-
-/// Returns a problem at `line` and `column`.
-fn at(kind: Kind, line: u32, column: u32) -> Problem {
-    Problem { kind, place: Place::At(Position::new(line, column)) }
-}
-
-/// Returns a problem with the file as a whole.
-fn whole_file(kind: Kind) -> Problem {
-    Problem { kind, place: Place::File }
+/// Returns where a problem at `line` and `column` is, and its kind.
+fn at(kind: Kind, line: u32, column: u32) -> (Place, Kind) {
+    (Place::At(Position::new(line, column)), kind)
 }
 
 /// Returns how `character` should be shown, worked out the way the compiler page words it.
@@ -63,14 +59,14 @@ fn the_caret_lands_after_every_code_point() {
             continue;
         }
         let source = format!("// a{character}b \n");
-        let problem = at(TrailingSpace, 1, 7);
+        let (place, kind) = at(TrailingSpace, 1, 7);
         let echo = format!("// a{}b ", shown_oracle(character));
         // The caret goes after `// a`, the character as it's shown, and `b`.
         let caret = " ".repeat(5 + shown_oracle(character).len());
         let expected =
             format!("x.stella:1:7: a line can't end in a space.\n    {echo}\n    {caret}^\n");
         assert_eq!(
-            message(b"x.stella", source.as_bytes(), problem.place, problem.kind),
+            message(b"x.stella", source.as_bytes(), place, kind),
             expected,
             "for {character:?}"
         );
@@ -92,7 +88,7 @@ fn whole_file_messages() {
         (
             b"big.stella",
             b"// x\n",
-            whole_file(FileTooBig).kind.to_string(),
+            Problem::FileTooBig.to_string(),
             "big.stella: this file is over 16,384 bytes, the most a source file can hold.\n",
         ),
         // A path is shown safely too.
@@ -111,7 +107,7 @@ fn whole_file_messages() {
 #[test]
 fn messages() {
     // A problem at a position shows its line, and a caret under its column.
-    for (source, problem, expected) in [
+    for (source, (place, kind), expected) in [
         (
             &b"// a\n// b\nfunction main() returns Void { // hi\n}\n"[..],
             at(CommentSharesLine, 3, 32),
@@ -159,10 +155,6 @@ fn messages() {
             "x.stella:2:1: a file can't end with a blank line.\n    \n    ^\n",
         ),
     ] {
-        assert_eq!(
-            message(b"x.stella", source, problem.place, problem.kind),
-            expected,
-            "for {problem:?}"
-        );
+        assert_eq!(message(b"x.stella", source, place, kind), expected, "for {kind:?}");
     }
 }

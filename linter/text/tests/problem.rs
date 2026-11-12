@@ -2,16 +2,30 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! Unit tests for the sentences problems print. Each sentence is pinned exactly, because people
-//! and tools both read them.
+//! Unit tests for the sentences the text lint's problems print. Each sentence is pinned exactly,
+//! because people and tools both read them.
 
-use stella_linter_text::Kind::*;
+use stella_linter_text::Kind::{
+    BidiControl, BlankLineAtEnd, ByteOrderMark, CarriageReturn, CommentNeedsSpace,
+    CommentSharesLine, ControlCharacter, IndentationNotFour, LineSeparator, NoFinalNewline,
+    NotAscii, NotUtf8, Tab, TrailingSpace,
+};
+use stella_linter_text::Problem;
+use stella_source::Position;
 
 #[test]
 fn sentences() {
+    // A problem with the file as a whole has a sentence of its own, and no position.
+    for (problem, sentence) in [
+        (Problem::FileEmpty, "this file is empty."),
+        (Problem::FileTooBig, "this file is over 16,384 bytes, the most a source file can hold."),
+    ] {
+        assert_eq!(problem.to_string(), sentence, "for {problem:?}");
+        assert_eq!(problem.position(), None, "for {problem:?}");
+    }
+    // Every kind of problem at a position, each with its sentence written out whole. A problem
+    // prints its kind's sentence, and says where it is.
     for (kind, sentence) in [
-        (FileEmpty, "this file is empty."),
-        (FileTooBig, "this file is over 16,384 bytes, the most a source file can hold."),
         (NotUtf8, "this isn't valid UTF-8."),
         (ByteOrderMark, "a byte-order mark (U+FEFF) can't appear in a source file."),
         (CarriageReturn, "`\\r` can't appear in a source file; lines end with `\\n` alone."),
@@ -48,5 +62,9 @@ fn sentences() {
         ),
     ] {
         assert_eq!(kind.to_string(), sentence, "for {kind:?}");
+        let position = Position::new(3, 32);
+        let problem = Problem::At { kind, position };
+        assert_eq!(problem.to_string(), sentence, "for {problem:?}");
+        assert_eq!(problem.position(), Some(position), "for {problem:?}");
     }
 }

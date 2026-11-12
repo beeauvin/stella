@@ -47,6 +47,7 @@ name = "stella-linter-text"
 version = "0.0.0"
 dependencies = [
  "stella-source",
+ "stella-test-support",
 ]
 
 [[package]]

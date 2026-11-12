@@ -15,7 +15,16 @@
 
 use std::fmt::{self, Write};
 
-use stella_linter_text::Place;
+use stella_source::Position;
+
+/// A place is either the file as a whole or one position in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// The problem is with the file as a whole, such as its name or its size.
+    File,
+    /// The problem is at one position: a character, or just past the end of a line.
+    At(Position),
+}
 
 /// Returns the message for a problem at `place` in `source`, the file at `path`, which `sentence`
 /// says. Every line of it ends in `\n`. A problem at a position must be one found in `source`,

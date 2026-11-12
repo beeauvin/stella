@@ -24,10 +24,10 @@ use std::os::unix::fs::{DirEntryExt, MetadataExt};
 use std::path::Path;
 use std::process::ExitCode;
 
-use stella_cli::{Found, WALK_ENTRIES_MAX, message, shown, walk};
+use stella_cli::{Found, Place, WALK_ENTRIES_MAX, message, shown, walk};
 use stella_lexer::{TokenBuffer, lex};
 use stella_linter_path::lint_path;
-use stella_linter_text::{Place, lint};
+use stella_linter_text::lint;
 use stella_linter_tokens::lint_tokens;
 use stella_source::SOURCE_BYTES_MAX;
 
@@ -170,7 +170,9 @@ fn lint_stored(path: &[u8], stored: &[u8], buffers: &mut Buffers) -> (u8, String
 /// and an earlier check's problem always comes first.
 fn check(source: &[u8], buffer: &mut TokenBuffer) -> Result<(), (Place, String)> {
     assert!(source.len() <= BUFFER_BYTES);
-    let text = lint(source).map_err(|problem| (problem.place, problem.kind.to_string()))?;
+    let text = lint(source).map_err(|problem| {
+        (problem.position().map_or(Place::File, Place::At), problem.to_string())
+    })?;
     // Only text that passed is lexed, so the text lint's limits hold from here on.
     assert!(source.len() <= SOURCE_BYTES_MAX as usize);
     let lexed = lex(text, buffer);

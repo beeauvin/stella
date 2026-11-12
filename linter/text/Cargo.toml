@@ -9,3 +9,9 @@ publish.workspace = true
 
 [dependencies]
 stella-source = { path = "../../source" }
+
+[dev-dependencies]
+stella-test-support = { path = "../../test-support" }
+
+[lints]
+workspace = true

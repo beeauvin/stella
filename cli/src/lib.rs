@@ -13,5 +13,5 @@
 mod message;
 mod walk;
 
-pub use message::{message, shown};
+pub use message::{Place, message, shown};
 pub use walk::{Found, TooManyEntries, WALK_ENTRIES_MAX, walk};

@@ -18,7 +18,7 @@
 //!    and code never holds `//`.
 //! 5. ASCII: every character on a line of code is ASCII.
 
-use stella_source::SOURCE_BYTES_MAX;
+use stella_source::{SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 
 use crate::problem::{Kind, Problem};
 
@@ -35,32 +35,45 @@ pub struct Text<'source> {
 
 impl<'source> Text<'source> {
     /// Returns the source, unchanged.
-    pub fn as_str(&self) -> &'source str {
+    #[must_use]
+    pub const fn as_str(&self) -> &'source str {
         self.source
     }
 }
 
 /// Checks a source file's bytes, step by step, and stops at the first step that fails.
+///
+/// # Errors
+///
+/// Returns the earliest problem in the first step that fails.
+///
+/// # Panics
+///
+/// Never, whatever the bytes. The assertions check the lint's own work, so one that fails is a
+/// bug in the compiler.
 pub fn lint(bytes: &[u8]) -> Result<Text<'_>, Problem> {
     lint_size(bytes)?;
     let source = lint_characters(bytes)?;
     lint_lines(source)?;
     lint_comments(source)?;
     lint_ascii(source)?;
-    // The lexer relies on what the steps found, so check the plainest of it on the way out.
-    assert!(source.len() <= SOURCE_BYTES_MAX as usize);
-    assert!(source.ends_with('\n'));
+    // The lexer relies on what the steps found, so the plainest of it is checked on the way out.
+    assert!(
+        source.len() <= usize_from_u32(SOURCE_BYTES_MAX),
+        "the size step refused anything larger"
+    );
+    assert!(source.ends_with('\n'), "the lines step refused a last line without its `\\n`");
     Ok(Text { source })
 }
 
 /// The first step: the file has at least one byte, and at most `SOURCE_BYTES_MAX`.
-fn lint_size(bytes: &[u8]) -> Result<(), Problem> {
+const fn lint_size(bytes: &[u8]) -> Result<(), Problem> {
     if bytes.is_empty() {
-        Err(Problem::whole_file(Kind::FileEmpty))
-    } else if bytes.len() <= SOURCE_BYTES_MAX as usize {
+        Err(Problem::FileEmpty)
+    } else if bytes.len() <= usize_from_u32(SOURCE_BYTES_MAX) {
         Ok(())
     } else {
-        Err(Problem::whole_file(Kind::FileTooBig))
+        Err(Problem::FileTooBig)
     }
 }
 
@@ -68,11 +81,14 @@ fn lint_size(bytes: &[u8]) -> Result<(), Problem> {
 /// Whichever problem comes first is the one reported, whatever its kind. Returns the bytes as
 /// text.
 fn lint_characters(bytes: &[u8]) -> Result<&str, Problem> {
-    assert!(!bytes.is_empty());
-    assert!(bytes.len() <= SOURCE_BYTES_MAX as usize);
+    assert!(!bytes.is_empty(), "the size step refused an empty file");
+    assert!(
+        bytes.len() <= usize_from_u32(SOURCE_BYTES_MAX),
+        "the size step refused anything larger"
+    );
     // The characters before the first invalid byte come before it, so a refused one among them
     // is the earlier problem.
-    let valid = bytes.utf8_chunks().next().expect("the bytes aren't empty").valid();
+    let valid = bytes.utf8_chunks().next().expect("bytes that aren't empty have a chunk").valid();
     let mut line: u32 = 1;
     let mut column: u32 = 1;
     for character in valid.chars() {
@@ -101,7 +117,7 @@ fn character_kind(character: char) -> Option<Kind> {
         '\t' => Some(Kind::Tab),
         '\r' => Some(Kind::CarriageReturn),
         '\u{0}'..='\u{1F}' | '\u{7F}'..='\u{9F}' => {
-            assert!(character.is_control());
+            assert!(character.is_control(), "these two ranges are Unicode's control characters");
             Some(Kind::ControlCharacter(character))
         }
         // These are Unicode's twelve `Bidi_Control` characters.
@@ -113,8 +129,10 @@ fn character_kind(character: char) -> Option<Kind> {
         '\u{2028}' | '\u{2029}' => Some(Kind::LineSeparator(character)),
         '\u{FEFF}' => Some(Kind::ByteOrderMark),
         _ => {
-            // Everything Unicode calls a control character has a kind above, or is `\n`.
-            assert!(!character.is_control());
+            assert!(
+                !character.is_control(),
+                "everything Unicode calls a control character has a kind above, or is `\\n`"
+            );
             None
         }
     }
@@ -123,17 +141,17 @@ fn character_kind(character: char) -> Option<Kind> {
 /// The third step: no line ends in a space, every line's indentation is a multiple of four
 /// spaces, and the file ends with exactly one `\n`, with no empty line before it.
 fn lint_lines(source: &str) -> Result<(), Problem> {
-    assert!(!source.is_empty());
+    assert!(!source.is_empty(), "the size step refused an empty file");
     // This is the first of the empty lines the file ends with so far, if it ends with any.
     let mut blank_line_first: Option<u32> = None;
     for (piece, line) in source.split_inclusive('\n').zip(1_u32..) {
-        assert!(line <= SOURCE_BYTES_MAX);
+        assert!(line <= SOURCE_BYTES_MAX, "every line before this one ended with its own `\\n`");
         let content = piece.strip_suffix('\n').unwrap_or(piece);
         // A line of only spaces trims to nothing, so it has no indentation, and its first column
         // starts a trailing space.
         let trimmed = content.trim_end_matches(' ');
         let indentation = trimmed.len() - trimmed.trim_start_matches(' ').len();
-        if indentation % LEVEL_SPACES as usize != 0 {
+        if !indentation.is_multiple_of(usize_from_u32(LEVEL_SPACES)) {
             return Err(Problem::at(Kind::IndentationNotFour, line, 1));
         }
         if trimmed.len() < content.len() {
@@ -159,19 +177,23 @@ fn lint_lines(source: &str) -> Result<(), Problem> {
 /// The fourth step: a comment's `//` is followed by a space or the end of its line, and a line of
 /// code never holds `//`.
 fn lint_comments(source: &str) -> Result<(), Problem> {
-    assert!(source.ends_with('\n'));
+    assert!(source.ends_with('\n'), "the lines step refused a last line without its `\\n`");
     for (content, line) in source.split_terminator('\n').zip(1_u32..) {
-        assert!(line <= SOURCE_BYTES_MAX);
-        // This is the kind of problem the line has, if any, and the byte it starts at.
+        assert!(line <= SOURCE_BYTES_MAX, "every line ends with its own `\\n`");
+        // This is the kind of problem the line has, if any, and what comes before it on the line.
         let problem = match comment_text(content) {
             Some(comment) => match comment.chars().next() {
                 None | Some(' ') => None,
-                Some(_) => Some((Kind::CommentNeedsSpace, content.len() - comment.len())),
+                Some(_) => {
+                    let before = content.strip_suffix(comment);
+                    let before = before.expect("a comment's text runs to the end of its line");
+                    Some((Kind::CommentNeedsSpace, before))
+                }
             },
-            None => content.find("//").map(|index| (Kind::CommentSharesLine, index)),
+            None => content.split_once("//").map(|(before, _)| (Kind::CommentSharesLine, before)),
         };
-        if let Some((kind, index)) = problem {
-            return Err(Problem::at(kind, line, column_after(&content[..index])));
+        if let Some((kind, before)) = problem {
+            return Err(Problem::at(kind, line, column_after(before)));
         }
     }
     Ok(())
@@ -179,15 +201,16 @@ fn lint_comments(source: &str) -> Result<(), Problem> {
 
 /// The last step: every character on a line of code is ASCII.
 fn lint_ascii(source: &str) -> Result<(), Problem> {
-    assert!(source.ends_with('\n'));
+    assert!(source.ends_with('\n'), "the lines step refused a last line without its `\\n`");
     for (content, line) in source.split_terminator('\n').zip(1_u32..) {
-        assert!(line <= SOURCE_BYTES_MAX);
+        assert!(line <= SOURCE_BYTES_MAX, "every line ends with its own `\\n`");
         if comment_text(content).is_some() {
             continue;
         }
-        let found = content.char_indices().find(|&(_, character)| !character.is_ascii());
-        if let Some((index, character)) = found {
-            let column = column_after(&content[..index]);
+        // A column counts code points, so the first one that isn't ASCII is at one more than the
+        // number before it.
+        let found = content.chars().zip(1_u32..).find(|&(character, _)| !character.is_ascii());
+        if let Some((character, column)) = found {
             return Err(Problem::at(Kind::NotAscii(character), line, column));
         }
     }
@@ -197,14 +220,12 @@ fn lint_ascii(source: &str) -> Result<(), Problem> {
 /// Returns a comment's text, everything after its `//`, or `None` when the line is code. A line
 /// is a comment when it starts with `//` after its indentation.
 fn comment_text(content: &str) -> Option<&str> {
-    assert!(!content.contains('\n'));
+    assert!(!content.contains('\n'), "a line's content stops before its `\\n`");
     content.trim_start_matches(' ').strip_prefix("//")
 }
 
 /// Returns the column just after `prefix`, which starts a line: one more than its code points.
 fn column_after(prefix: &str) -> u32 {
-    assert!(!prefix.contains('\n'));
-    let count = u32::try_from(prefix.chars().count()).expect("a line is shorter than a source");
-    assert!(count <= SOURCE_BYTES_MAX);
-    count + 1
+    assert!(!prefix.contains('\n'), "a line's content stops before its `\\n`");
+    u32_from_usize(prefix.chars().count()) + 1
 }
