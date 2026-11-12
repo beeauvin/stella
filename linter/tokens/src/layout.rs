@@ -95,16 +95,16 @@ pub fn lint_tokens<'source, 'buffer>(
         tokens.len() <= usize_from_u32(TOKENS_MAX),
         "the lexer makes no more tokens than a source can hold"
     );
-    lint_lines(tokens)?;
-    lint_braces(tokens)?;
-    lint_within_lines(tokens)?;
+    lint_tokens_lines(tokens)?;
+    lint_tokens_braces(tokens)?;
+    lint_tokens_within_lines(tokens)?;
     Ok(Layout { tokens: lexed })
 }
 
 /// The first step: `{` ends its line and doesn't start it, `}` is the only token on its line, and
 /// a line of code ends with `{` or `}`. The tokens are looked at in order, so the first problem
 /// found is the earliest.
-fn lint_lines(tokens: &[Token]) -> Result<(), Problem> {
+fn lint_tokens_lines(tokens: &[Token]) -> Result<(), Problem> {
     for (index, token) in tokens.iter().enumerate() {
         assert!(!token.span().is_empty(), "a token is at least one character");
         // Whether this token comes after another on its line, and whether it comes before one.
@@ -157,7 +157,7 @@ fn lint_lines(tokens: &[Token]) -> Result<(), Problem> {
 /// The second step: every `}` closes a `{` before it, and every `{` is closed. A `}` with nothing
 /// open is found in order, and it always comes before any `{` left open, so it's the earliest
 /// problem. Otherwise the earliest is the outermost `{` left open.
-fn lint_braces(tokens: &[Token]) -> Result<(), Problem> {
+fn lint_tokens_braces(tokens: &[Token]) -> Result<(), Problem> {
     // Every `{` is a token, so the depth is at most `TOKENS_MAX`. That's looser than any source
     // reaches, since a line that opens a block is at least three bytes, but it's true.
     let mut depth: u32 = 0;
@@ -195,7 +195,7 @@ fn lint_braces(tokens: &[Token]) -> Result<(), Problem> {
 /// The last step: each line's indentation, and the spaces between its tokens, in one pass, so the
 /// first problem found is the earliest. The first two steps passed, so a `}` always closes a `{`,
 /// and two tokens on a line are never a pair with `}` in it, or with `{` first.
-fn lint_within_lines(tokens: &[Token]) -> Result<(), Problem> {
+fn lint_tokens_within_lines(tokens: &[Token]) -> Result<(), Problem> {
     // This is how many braces are open before the token being looked at.
     let mut depth: u32 = 0;
     for (index, token) in tokens.iter().enumerate() {
