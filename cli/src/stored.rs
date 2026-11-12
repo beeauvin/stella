@@ -100,7 +100,7 @@ pub fn search_for_stored(root: &Path, typed: SourcePath<'_>) -> Result<Vec<u8>, 
         if metadata.file_type().is_symlink() {
             return Err(SearchFailure::Symlink);
         }
-        let name = stored_name(part, FileId::of(&metadata), &mut entries_count)?;
+        let name = search_for_stored_name(part, FileId::of(&metadata), &mut entries_count)?;
         assert!(!name.is_empty(), "an entry has a name");
         if !stored.is_empty() {
             stored.push(b'/');
@@ -156,7 +156,7 @@ enum Closeness {
 ///
 /// The part was there when it was looked at, so if no entry is it, it's gone since, and it's
 /// missing.
-fn stored_name(
+fn search_for_stored_name(
     part: Part<'_>,
     reached: FileId,
     entries_count: &mut u32,

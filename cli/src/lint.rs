@@ -171,7 +171,7 @@ impl<'root> Linter<'root> {
             Ok(source) => source,
             Err(failure) => return Outcome::Failed(message(typed, Place::File, failure)),
         };
-        match check(source, &mut self.tokens, &mut self.nodes) {
+        match lint_stored_source(source, &mut self.tokens, &mut self.nodes) {
             Ok(()) => Outcome::Passed,
             Err(Refusal { position, sentence }) => {
                 let place = match position {
@@ -223,7 +223,11 @@ impl Refusal {
 
 /// Checks `source`'s text, then its tokens, lexed into `tokens`, then their layout, and nests
 /// them into `nodes`. Stops at the first check that fails, and returns its refusal.
-fn check(source: &[u8], tokens: &mut TokenBuffer, nodes: &mut NodeBuffer) -> Result<(), Refusal> {
+fn lint_stored_source(
+    source: &[u8],
+    tokens: &mut TokenBuffer,
+    nodes: &mut NodeBuffer,
+) -> Result<(), Refusal> {
     let text = stella_linter_text::lint(source).map_err(|problem| Refusal {
         position: problem.position(),
         sentence: problem.to_string(),

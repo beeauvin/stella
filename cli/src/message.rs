@@ -52,7 +52,7 @@ pub fn message(path: &[u8], place: Place<'_>, sentence: impl fmt::Display) -> St
                 .split(|&byte| byte == b'\n')
                 .nth(line_index)
                 .expect("a problem's line is in its source");
-            let (echo, caret_width) = echo(source_line, position.column());
+            let (echo, caret_width) = message_echo(source_line, position.column());
             let caret = " ".repeat(caret_width);
             let (line, column) = (position.line(), position.column());
             format!("{path}:{line}:{column}: {sentence}\n    {echo}\n    {caret}^\n")
@@ -78,7 +78,7 @@ pub fn shown(bytes: &[u8]) -> String {
 }
 
 /// Returns `line` shown safely, and how far into it the caret goes to sit under `column`.
-fn echo(line: &[u8], column: u32) -> (String, usize) {
+fn message_echo(line: &[u8], column: u32) -> (String, usize) {
     let mut echo = String::with_capacity(line.len());
     let mut caret_index = None;
     let mut units_count: u32 = 0;

@@ -120,7 +120,11 @@ impl Fixture {
 pub(crate) fn fixtures(directory: &Path) -> Result<Vec<Fixture>, String> {
     let mut found = Vec::new();
     for origin in [Origin::Rust, Origin::Rustdoc, Origin::Clippy] {
-        add(&mut found, &directory.join("lints").join(origin.name()), &Kind::Lint(origin))?;
+        fixtures_add(
+            &mut found,
+            &directory.join("lints").join(origin.name()),
+            &Kind::Lint(origin),
+        )?;
     }
     let groups = directory.join("groups");
     for group in entries_in(&groups, FIXTURES_MAX)? {
@@ -128,20 +132,20 @@ pub(crate) fn fixtures(directory: &Path) -> Result<Vec<Fixture>, String> {
             let path = groups.join(group.name);
             return Err(format!("{} isn't a group's directory.", path.display()));
         }
-        add(&mut found, &groups.join(&group.name), &Kind::Group(group.name))?;
+        fixtures_add(&mut found, &groups.join(&group.name), &Kind::Group(group.name))?;
     }
-    add(&mut found, &directory.join("settings"), &Kind::Setting)?;
-    add(&mut found, &directory.join("warnings"), &Kind::Warning)?;
-    add(&mut found, &directory.join("allowed"), &Kind::Allowed)?;
-    add(&mut found, &directory.join("clean"), &Kind::Clean)?;
+    fixtures_add(&mut found, &directory.join("settings"), &Kind::Setting)?;
+    fixtures_add(&mut found, &directory.join("warnings"), &Kind::Warning)?;
+    fixtures_add(&mut found, &directory.join("allowed"), &Kind::Allowed)?;
+    fixtures_add(&mut found, &directory.join("clean"), &Kind::Clean)?;
     assert!(found.len() <= FIXTURES_MAX, "the search stopped at the bound");
-    refuse_one_name_twice(&found)?;
+    fixtures_refuse_name_twice(&found)?;
     Ok(found)
 }
 
 /// Refuses two of `fixtures` that would be built as one crate, which a file `x.rs` beside a
 /// directory `x` would be, each answering for the other.
-fn refuse_one_name_twice(fixtures: &[Fixture]) -> Result<(), String> {
+fn fixtures_refuse_name_twice(fixtures: &[Fixture]) -> Result<(), String> {
     let mut crates: Vec<(String, &Path)> =
         fixtures.iter().map(|fixture| (fixture.crate_directory(), fixture.place())).collect();
     crates.sort();
@@ -161,7 +165,7 @@ fn refuse_one_name_twice(fixtures: &[Fixture]) -> Result<(), String> {
 }
 
 /// Adds every fixture in `directory`, each of `kind`, to `found`, sorted by name.
-fn add(found: &mut Vec<Fixture>, directory: &Path, kind: &Kind) -> Result<(), String> {
+fn fixtures_add(found: &mut Vec<Fixture>, directory: &Path, kind: &Kind) -> Result<(), String> {
     for entry in entries_in(directory, FIXTURES_MAX)? {
         let path = directory.join(&entry.name);
         let kind = kind.clone();

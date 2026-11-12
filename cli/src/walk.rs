@@ -61,6 +61,13 @@ impl Find {
             Self::Unreadable { directory, .. } => directory,
         }
     }
+
+    /// Returns a find for `directory`, which couldn't be read for `error`. The empty path is the
+    /// root, called `.`.
+    fn unreadable(directory: Vec<u8>, error: Reason) -> Self {
+        let directory = if directory.is_empty() { b".".to_vec() } else { directory };
+        Self::Unreadable { directory, error }
+    }
 }
 
 /// The walk looked at `WALK_ENTRIES_MAX` entries, and there were more.
@@ -94,7 +101,7 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
         let entries = match list(&directory_path(root, &directory)) {
             Ok(entries) => entries,
             Err(error) => {
-                finds.push(unreadable(directory, error));
+                finds.push(Find::unreadable(directory, error));
                 continue;
             }
         };
@@ -107,7 +114,7 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
                         // and the command then ends with the status for what it couldn't check.
                         // The rest of the listing is left: after a read that failed, nothing
                         // says it's all there, and a second find would only say the same.
-                        finds.push(unreadable(directory.clone(), error));
+                        finds.push(Find::unreadable(directory.clone(), error));
                         break;
                     }
                 };
@@ -150,13 +157,6 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
         "every find was counted as an entry, but for the directory the walk started in"
     );
     Ok(finds)
-}
-
-/// Returns a find for `directory`, which couldn't be read for `error`. The empty path is the
-/// root, called `.`.
-fn unreadable(directory: Vec<u8>, error: Reason) -> Find {
-    let directory = if directory.is_empty() { b".".to_vec() } else { directory };
-    Find::Unreadable { directory, error }
 }
 
 /// Returns the path to read `directory` by, which is relative to `root`. The empty path is the

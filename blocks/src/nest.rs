@@ -310,7 +310,7 @@ pub fn nest<'source, 'buffer>(
                 end_node_index: u32_from_usize(buffer.nodes.len()),
                 close_token_index: u32_from_usize(line_token_index),
             };
-            open_index = close_block(&mut buffer.nodes, opener_index, block);
+            open_index = nest_close_block(&mut buffer.nodes, opener_index, block);
         } else {
             assert_line(line, depth);
             let room = buffer.nodes.len() < usize_from_u32(NODES_MAX);
@@ -376,7 +376,7 @@ fn assert_line(line: &[Token], depth: u32) {
 
 /// Closes the block the node at `opener_index` opens, as `block`, now that every node in it is in
 /// `nodes`. Returns the innermost node whose block is still open, which is the opener's parent.
-fn close_block(nodes: &mut [Node], opener_index: u32, block: Block) -> Option<u32> {
+fn nest_close_block(nodes: &mut [Node], opener_index: u32, block: Block) -> Option<u32> {
     assert_eq!(
         usize_from_u32(block.end_node_index),
         nodes.len(),
