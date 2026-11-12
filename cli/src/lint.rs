@@ -12,10 +12,11 @@
 
 use std::io::{self, Write};
 use std::path::Path;
+use std::str;
 
 use stella_blocks::{Blocks, NodeBuffer, nest};
 use stella_lexer::{TokenBuffer, lex};
-use stella_linter_path::lint_path;
+use stella_linter_path::{Problem, SourcePath, lint_path};
 use stella_linter_tokens::lint_tokens;
 use stella_source::Position;
 
@@ -82,9 +83,7 @@ impl<'root> Linter<'root> {
     /// is read. Its message shows the path as it was typed, except where the path as it's stored
     /// is what's refused.
     pub fn lint_one(&mut self, typed: &[u8]) -> Outcome {
-        // A path that isn't UTF-8 can't be kebab, so it's refused like any other bad name.
-        let typed_text = String::from_utf8_lossy(typed);
-        let typed_path = match lint_path(&typed_text) {
+        let typed_path = match lint_path_bytes(typed) {
             Ok(typed_path) => typed_path,
             Err(problem) => return Outcome::Refused(message(typed, Place::File, problem)),
         };
@@ -148,6 +147,9 @@ impl<'root> Linter<'root> {
                 messages_count += 1;
             }
         }
+        let said_once_each =
+            usize::try_from(messages_count).is_ok_and(|count| count <= finds.len());
+        assert!(said_once_each, "each find says one message at most");
         let silent = messages_count == 0;
         assert_eq!(status == Status::Passed, silent, "only a program that passes says nothing");
         Ok(status)
@@ -158,12 +160,13 @@ impl<'root> Linter<'root> {
     /// path as it was typed.
     fn lint_stored(&mut self, program: ProgramPaths<'_>) -> Outcome {
         let ProgramPaths { typed, stored } = program;
-        let stored_text = String::from_utf8_lossy(stored);
-        let stored_path = match lint_path(&stored_text) {
+        let stored_path = match lint_path_bytes(stored) {
             Ok(stored_path) => stored_path,
             Err(problem) => return Outcome::Refused(message(stored, Place::File, problem)),
         };
         let file = self.root.join(stored_path.normalized());
+        // Joining a path that's absolute, or that climbs with `..`, would leave the root.
+        assert!(file.starts_with(self.root), "a path that passed the lint stays under the root");
         let source = match read(&file, &mut self.source) {
             Ok(source) => source,
             Err(failure) => return Outcome::Failed(message(typed, Place::File, failure)),
@@ -179,6 +182,19 @@ impl<'root> Linter<'root> {
             }
         }
     }
+}
+
+/// Lints `path`, in the bytes it was typed or stored in.
+///
+/// A path that passes was UTF-8 as it came, so the path that's returned is those very bytes. One
+/// that isn't UTF-8 is linted with U+FFFD in place of each byte that isn't. No name may hold
+/// that, so the path is refused by whichever check meets it first, like any other bad name.
+fn lint_path_bytes(path: &[u8]) -> Result<SourcePath<'_>, Problem> {
+    if let Ok(text) = str::from_utf8(path) {
+        return lint_path(text);
+    }
+    let replaced = String::from_utf8_lossy(path);
+    Err(lint_path(&replaced).expect_err("no path that passes holds U+FFFD"))
 }
 
 /// A program's paths are the two it goes by. Each is named, so the two can't be given the wrong
