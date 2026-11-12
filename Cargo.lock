@@ -21,11 +21,13 @@ version = "0.0.0"
 name = "stella-cli"
 version = "0.0.0"
 dependencies = [
+ "stella-blocks",
  "stella-lexer",
  "stella-linter-path",
  "stella-linter-text",
  "stella-linter-tokens",
  "stella-source",
+ "stella-test-support",
 ]
 
 [[package]]

@@ -10,7 +10,7 @@
 //!    line of code ends with `{` or `}`. Each is found at the first token at fault, or for a line
 //!    that ends some other way, just past its last token. A `{` that neither ends its line nor
 //!    has a token before it is refused for not ending it. Which tokens can come before a `{` is
-//!    for the grammar to say, later.
+//!    for the grammar to say, once it's built.
 //! 2. The braces: every `}` closes a `{` before it, and every `{` is closed. A `}` with nothing
 //!    open always comes before any `{` left open, so the first such `}` is the earliest problem.
 //!    Otherwise it's the outermost `{` left open.

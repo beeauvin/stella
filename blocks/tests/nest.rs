@@ -44,7 +44,7 @@ const CLOSES_BACK_OUT: &str = "a {\n    b {\n        c {\n            d {\n     
                                }\n    }\n    e {\n    }\n    // f\n}\ng {\n    // h\n}\n";
 
 thread_local! {
-    /// Each test lexes and nests every source it tries into these buffers, as the command will.
+    /// Each test lexes and nests every source it tries into these buffers, as the command does.
     static BUFFERS: RefCell<(TokenBuffer, LineBuffer)> =
         RefCell::new((TokenBuffer::new(), LineBuffer::new()));
 }
@@ -407,7 +407,7 @@ fn the_largest_sources() {
 
 #[test]
 fn one_buffer_serves_every_source() {
-    // The same buffers serve every source in turn, as they will in the command, so each source's
+    // The same buffers serve every source in turn, as they do in the command, so each source's
     // lines replace the last one's, however many more or fewer there were.
     let mut examples = Examples::new();
     let most_lines = "//\n".repeat(5_461);

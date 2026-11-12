@@ -9,8 +9,8 @@
 //! and a `}` is alone on its line, that the braces pair up, and that each line is indented one
 //! level for each block it's in. That leaves nothing for it to refuse. It returns the lines as
 //! `Blocks`, each in the block it's in, and anything that goes wrong on the way is a bug in the
-//! compiler, caught by an assertion. Only `nest` can make `Blocks`, so the grammar can take them
-//! and trust them in turn.
+//! compiler, caught by an assertion. Only `nest` can make `Blocks`, so the grammar, which isn't
+//! built yet, can take them and trust them in turn.
 
 #![forbid(unsafe_code)]
 

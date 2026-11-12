@@ -7,14 +7,15 @@
 
 use std::ffi::OsStr;
 use std::fs;
-use std::io::Read;
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::io::Read as _;
+use std::os::unix::ffi::OsStrExt as _;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use stella_cli::WALK_ENTRIES_MAX;
-use stella_source::SOURCE_BYTES_MAX;
+use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
+use stella_test_support::{Lock, fifo, write};
 
 /// This is the smallest program, which passes.
 const GOOD: &[u8] = b"function main() returns Void {\n}\n";
@@ -93,60 +94,24 @@ fn stella_with(directory: &Path, arguments: &[&OsStr]) -> Run {
 
 /// Returns a new, empty directory for one test, or one row of a table, to work in.
 fn fresh_directory(name: &str) -> PathBuf {
-    let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("lint").join(name);
-    if path.exists() {
-        fs::remove_dir_all(&path).expect("remove an old test directory");
-    }
-    fs::create_dir_all(&path).expect("make a test directory");
-    path
+    let parent = Path::new(env!("CARGO_TARGET_TMPDIR")).join("lint");
+    stella_test_support::fresh_directory(&parent, name)
 }
 
-/// Writes `contents` to `path` under `directory`, making any directories it needs.
-fn write(directory: &Path, path: &str, contents: &[u8]) {
-    let path = directory.join(path);
-    fs::create_dir_all(path.parent().expect("a file is in a directory")).expect("make directories");
-    fs::write(path, contents).expect("write a file");
-}
-
-/// Makes a FIFO at `path`. Std has no way to, so this runs `mkfifo`.
-fn fifo(path: &Path) {
-    let status = Command::new("/usr/bin/mkfifo").arg(path).status().expect("run mkfifo");
-    assert!(status.success(), "mkfifo {}", path.display());
-}
-
-/// A lock takes away a file's or directory's permissions until it's dropped. So even a test that
-/// fails can't leave behind a directory the next run can't remove.
-struct Lock {
-    path: PathBuf,
-}
-
-impl Lock {
-    /// Sets `path`'s permissions to `mode` until the lock is dropped.
-    fn new(path: PathBuf, mode: u32) -> Lock {
-        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).expect("lock");
-        Lock { path }
-    }
-}
-
-impl Drop for Lock {
-    fn drop(&mut self) {
-        // A test may have failed already, so this mustn't panic too.
-        let _ = fs::set_permissions(&self.path, fs::Permissions::from_mode(0o755));
-    }
-}
-
-/// Writes `files` into a new directory for `name`, then checks that `stella lint path` there does
-/// what's `expected`.
-fn lints_one(name: &str, files: &[(&str, &[u8])], path: &str, expected: Run) {
+/// Returns a new directory for `name` that holds `files`, each a path and its contents, for
+/// `stella lint` to be given one path in.
+fn directory_with(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
     let directory = fresh_directory(&format!("one-path-{name}"));
     for (file, contents) in files {
         write(&directory, file, contents);
     }
-    assert_eq!(stella(&directory, &["lint", path]), expected, "for {name}");
+    directory
 }
 
 #[test]
 fn one_path() {
+    // Given one path, the command lints that program: it passes in silence, is refused with a
+    // message at the path as it was given, or isn't there.
     for (name, files, path, expected) in [
         ("passes", &[("hello.stella", GOOD)][..], "hello.stella", exits(0, "")),
         (
@@ -181,16 +146,17 @@ fn one_path() {
             exits(2, "./hello.stella: this file doesn't exist.\n"),
         ),
     ] {
-        lints_one(name, files, path, expected);
+        assert_eq!(stella(&directory_with(name, files), &["lint", path]), expected, "for {name}");
     }
 }
 
 #[test]
 fn one_path_sizes() {
+    // The largest source passes, and an empty file and one a byte too big are refused whole.
     let too_big_message =
         "big.stella: this file is over 16,384 bytes, the most a source file can hold.\n";
-    let largest = format!("// {}\n", "x".repeat(SOURCE_BYTES_MAX as usize - "// \n".len()));
-    let too_big = vec![b'x'; SOURCE_BYTES_MAX as usize + 1];
+    let largest = format!("// {}\n", "x".repeat(usize_from_u32(SOURCE_BYTES_MAX) - "// \n".len()));
+    let too_big = vec![b'x'; usize_from_u32(SOURCE_BYTES_MAX) + 1];
     for (name, files, path, expected) in [
         ("largest", &[("hello.stella", largest.as_bytes())][..], "hello.stella", exits(0, "")),
         (
@@ -201,12 +167,13 @@ fn one_path_sizes() {
         ),
         ("too-big", &[("big.stella", &too_big)], "big.stella", exits(1, too_big_message)),
     ] {
-        lints_one(name, files, path, expected);
+        assert_eq!(stella(&directory_with(name, files), &["lint", path]), expected, "for {name}");
     }
 }
 
 #[test]
 fn a_name_that_isnt_utf8() {
+    // A path that isn't UTF-8 is refused for its name, and shown with the bad byte escaped.
     let directory = fresh_directory("not-utf8");
     let path = OsStr::from_bytes(b"a\xFF.stella");
     let expected = exits(
@@ -219,6 +186,7 @@ fn a_name_that_isnt_utf8() {
 
 #[test]
 fn not_a_file() {
+    // A directory and a FIFO named as programs aren't files, and the command says so at once.
     let directory = fresh_directory("not-a-file");
     fs::create_dir(directory.join("folder.stella")).expect("make a directory");
     // A FIFO isn't a file either, and the answer comes at once, with nothing writing to it.
@@ -231,6 +199,8 @@ fn not_a_file() {
 
 #[test]
 fn an_unreadable_file() {
+    // A file whose permissions forbid reading it is a failure, not a refusal, with the reason
+    // the system gives.
     let directory = fresh_directory("unreadable-file");
     write(&directory, "hello.stella", GOOD);
     let _lock = Lock::new(directory.join("hello.stella"), 0o000);
@@ -309,7 +279,8 @@ fn names_are_checked_as_stored() {
             exits(1, &format!("\\u{{212A}}ey.stella: {NAME_NOT_KEBAB}\n")),
         ),
     ] {
-        lints_one(&format!("as-stored-{name}"), files, path, expected);
+        let directory = directory_with(&format!("as-stored-{name}"), files);
+        assert_eq!(stella(&directory, &["lint", path]), expected, "for {name}");
     }
     // A file with two names is checked by the one it's named by, in whichever order they're
     // listed. A kebab name for the file never stands in for the name that was typed.
@@ -388,7 +359,7 @@ fn a_named_path_is_bounded() {
     // are looked at in all. Here the start directory holds one, `programs`, and `programs` holds
     // the rest.
     let directory = fresh_directory("named-bounded");
-    let entries_max = WALK_ENTRIES_MAX as usize;
+    let entries_max = usize_from_u32(WALK_ENTRIES_MAX);
     write(&directory, "programs/hello.stella", GOOD);
     for index in 0..entries_max - 2 {
         write(&directory, &format!("programs/{index}.txt"), b"");
@@ -402,6 +373,8 @@ fn a_named_path_is_bounded() {
 
 #[test]
 fn every_program_in_a_tree() {
+    // Given no path, the command lints every `.stella` file under the directory, skips what
+    // isn't source, and prints each refused file's first problem in the order of their paths.
     let directory = fresh_directory("tree");
     // A program that passes comes first, so the first message has nothing before it.
     write(&directory, "0.stella", GOOD);
@@ -478,25 +451,45 @@ fn code_that_cant_be_lexed() {
     // Code that passes the text lint is lexed, and a character that can't start a token is
     // refused at its line and column.
     let message = format!("hello.stella{UNEXPECTED_MESSAGE}");
-    lints_one("lexed", &[("hello.stella", UNEXPECTED)], "hello.stella", exits(1, &message));
+    assert_eq!(
+        stella(
+            &directory_with("lexed", &[("hello.stella", UNEXPECTED)]),
+            &["lint", "hello.stella"]
+        ),
+        exits(1, &message),
+        "for lexed"
+    );
     // The path is shown as it was given.
     let message = format!("./hello.stella{UNEXPECTED_MESSAGE}");
-    lints_one(
-        "lexed-as-given",
-        &[("hello.stella", UNEXPECTED)],
-        "./hello.stella",
+    assert_eq!(
+        stella(
+            &directory_with("lexed-as-given", &[("hello.stella", UNEXPECTED)]),
+            &["lint", "./hello.stella"]
+        ),
         exits(1, &message),
+        "for lexed-as-given"
     );
     // A name that breaks its shape is refused at the character that breaks it.
     let camel: &[u8] = b"function myFunction() returns Void {\n}\n";
     let message = "hello.stella:1:12: a name must be lowercase letters and digits joined by \
                    single underscores, like `my_function`.\n    \
                    function myFunction() returns Void {\n               ^\n";
-    lints_one("camel-case", &[("hello.stella", camel)], "hello.stella", exits(1, message));
+    assert_eq!(
+        stella(
+            &directory_with("camel-case", &[("hello.stella", camel)]),
+            &["lint", "hello.stella"]
+        ),
+        exits(1, message),
+        "for camel-case"
+    );
     // The text lint runs first, so its problem wins, even when the lexer's is earlier in the file.
     let both: &[u8] = b"function main() returns Void { ;\n} \n";
     let text_first = "hello.stella:2:2: a line can't end in a space.\n    } \n     ^\n";
-    lints_one("text-first", &[("hello.stella", both)], "hello.stella", exits(1, text_first));
+    assert_eq!(
+        stella(&directory_with("text-first", &[("hello.stella", both)]), &["lint", "hello.stella"]),
+        exits(1, text_first),
+        "for text-first"
+    );
     // Linting every file lexes each one, and the worst status still wins.
     let directory = fresh_directory("lexed-tree");
     write(&directory, "a.stella", GOOD);
@@ -518,31 +511,58 @@ fn code_that_cant_be_lexed() {
 fn code_in_another_layout() {
     // Code that lexes is checked for the one layout, and refused at the first character at fault.
     let message = format!("hello.stella{EMPTY_BODY_MESSAGE}");
-    lints_one("laid-out", &[("hello.stella", EMPTY_BODY)], "hello.stella", exits(1, &message));
+    assert_eq!(
+        stella(
+            &directory_with("laid-out", &[("hello.stella", EMPTY_BODY)]),
+            &["lint", "hello.stella"]
+        ),
+        exits(1, &message),
+        "for laid-out"
+    );
     // The path is shown as it was given.
     let message = format!("./hello.stella{EMPTY_BODY_MESSAGE}");
-    lints_one(
-        "laid-out-as-given",
-        &[("hello.stella", EMPTY_BODY)],
-        "./hello.stella",
+    assert_eq!(
+        stella(
+            &directory_with("laid-out-as-given", &[("hello.stella", EMPTY_BODY)]),
+            &["lint", "./hello.stella"]
+        ),
         exits(1, &message),
+        "for laid-out-as-given"
     );
     // A space where none goes is refused at the space.
     let spaced: &[u8] = b"function main () returns Void {\n}\n";
     let message = "hello.stella:1:14: no space can go between a name and `(`.\n    \
                    function main () returns Void {\n                 ^\n";
-    lints_one("spaced", &[("hello.stella", spaced)], "hello.stella", exits(1, message));
+    assert_eq!(
+        stella(&directory_with("spaced", &[("hello.stella", spaced)]), &["lint", "hello.stella"]),
+        exits(1, message),
+        "for spaced"
+    );
     // A space that's missing is refused at the token that needs one before it, as the layout
     // page shows.
     let unspaced: &[u8] = b"function main() returns Void{\n}\n";
     let message = "hello.stella:1:29: one space must go between a type's name and `{`.\n    \
                    function main() returns Void{\n                                ^\n";
-    lints_one("unspaced", &[("hello.stella", unspaced)], "hello.stella", exits(1, message));
+    assert_eq!(
+        stella(
+            &directory_with("unspaced", &[("hello.stella", unspaced)]),
+            &["lint", "hello.stella"]
+        ),
+        exits(1, message),
+        "for unspaced"
+    );
     // The lexer runs first, so its problem wins, even when the layout's is earlier in the line.
     let both: &[u8] = b"function main() returns Void { ;}\n";
     let lexed_first = "hello.stella:1:32: `;` can't start a token.\n    \
                        function main() returns Void { ;}\n                                   ^\n";
-    lints_one("lexed-first", &[("hello.stella", both)], "hello.stella", exits(1, lexed_first));
+    assert_eq!(
+        stella(
+            &directory_with("lexed-first", &[("hello.stella", both)]),
+            &["lint", "hello.stella"]
+        ),
+        exits(1, lexed_first),
+        "for lexed-first"
+    );
     // Linting every file checks each one's layout, and the worst status still wins.
     let directory = fresh_directory("laid-out-tree");
     write(&directory, "a.stella", GOOD);
@@ -563,6 +583,7 @@ fn code_in_another_layout() {
 
 #[test]
 fn every_program_passes() {
+    // When every program in a tree passes, the command says nothing and exits with 0.
     let directory = fresh_directory("all-pass");
     write(&directory, "hello.stella", GOOD);
     write(&directory, "programs/hello.stella", GOOD);
@@ -571,6 +592,7 @@ fn every_program_passes() {
 
 #[test]
 fn no_programs() {
+    // A tree with no source in it, apart from what the walk skips, is a failure with a message.
     let directory = fresh_directory("none");
     write(&directory, "notes.txt", b"");
     write(&directory, "target/hello.stella", GOOD);
@@ -580,6 +602,8 @@ fn no_programs() {
 
 #[test]
 fn symlinks_are_skipped() {
+    // The walk never follows a symlink, to a file or to a directory, so neither a bad file
+    // behind one nor a loop is reached.
     let directory = fresh_directory("symlinks");
     write(&directory, "hello.stella", GOOD);
     write(&directory, ".hidden/bad.stella", b"\t");
@@ -613,8 +637,10 @@ fn unreadable_directories() {
 
 #[test]
 fn the_walk_is_bounded() {
+    // The walk looks at exactly 10,000 entries and passes, and at one more and fails. What's
+    // under a directory it skips doesn't count.
     let directory = fresh_directory("bounded");
-    let entries_max = WALK_ENTRIES_MAX as usize;
+    let entries_max = usize_from_u32(WALK_ENTRIES_MAX);
     // The start directory holds five entries: a program, `.git`, `target`, `a` and `b`.
     write(&directory, "hello.stella", GOOD);
     // What's under `.git` and `target` doesn't count, however much there is.
@@ -660,7 +686,7 @@ fn stderr_that_cant_be_written() {
         stderr.read_exact(&mut start).expect("read the start of the message");
         assert_eq!(&start, b"wide.stella:1:8193:", "for {arguments:?}");
         drop(stderr);
-        assert_eq!(child.wait().expect("wait for stella").code(), Some(2), "for {arguments:?}");
+        assert_eq!(child.wait().expect("wait for stella").code(), Some(2_i32), "for {arguments:?}");
     }
     // A stderr open only for reading can't be written either.
     let read_only = fs::File::open("/dev/null").expect("open /dev/null");
@@ -672,7 +698,7 @@ fn stderr_that_cant_be_written() {
         .stderr(read_only)
         .status()
         .expect("run stella");
-    assert_eq!(status.code(), Some(2));
+    assert_eq!(status.code(), Some(2_i32));
 }
 
 #[test]
@@ -682,7 +708,7 @@ fn a_closed_stderr() {
     // shell does.
     let directory = fresh_directory("closed-stderr");
     write(&directory, "hello.stella", GOOD);
-    for (path, expected) in [("hello.stella", 0), ("Hello.stella", 1)] {
+    for (path, expected) in [("hello.stella", 0_i32), ("Hello.stella", 1_i32)] {
         let status = Command::new("/bin/sh")
             .args(["-c", "exec \"$0\" lint \"$1\" 2>&-", env!("CARGO_BIN_EXE_stella"), path])
             .current_dir(&directory)
@@ -697,6 +723,8 @@ fn a_closed_stderr() {
 
 #[test]
 fn misuse() {
+    // Each wrong way to call the command exits with 2, says what's wrong, and ends with the
+    // usage line.
     let directory = fresh_directory("misuse");
     write(&directory, "hello.stella", GOOD);
     for (arguments, sentence) in [

@@ -14,43 +14,79 @@
 //! is still checked.
 
 use std::ffi::OsStr;
+use std::fmt;
 use std::fs;
-use std::os::unix::ffi::OsStrExt;
+use std::io;
+use std::os::unix::ffi::OsStrExt as _;
+use std::path::{Path, PathBuf};
 
-/// This is the most entries the walk looks at, counting files and directories alike, skipped ones
-/// included, but not the directory the command runs in. It's far more than a program's directory
-/// holds, and it keeps the walk bounded.
+use stella_source::usize_from_u32;
+
+/// This is the most entries the walk looks at.
+///
+/// It counts files and directories alike, skipped ones included, but not the directory the walk
+/// starts in. It's far more than a program's directory holds, and it keeps the walk bounded.
 pub const WALK_ENTRIES_MAX: u32 = 10_000;
 
-/// A find is something the walk found. Its path is relative to the directory the command runs in.
+const _: () = assert!(
+    WALK_ENTRIES_MAX == 10_000,
+    "`TooManyEntries`'s sentence names the bound, so a new bound needs a new sentence"
+);
+
+/// A find is something the walk found. Its path is relative to the directory the walk started in.
 #[derive(Debug)]
 pub enum Found {
-    /// This is a `.stella` source file.
+    /// This is a `.stella` source file, by its path as it's stored.
     Source(Vec<u8>),
-    /// This is a directory the walk couldn't read. The directory the command runs in is called
+    /// This is a directory the walk couldn't read. The directory the walk started in is called
     /// `.`.
     Unreadable {
         /// This is the directory's path.
         directory: Vec<u8>,
         /// This is why it couldn't be read.
-        error: std::io::Error,
+        error: io::Error,
     },
 }
 
+impl Found {
+    /// Returns the find's path, which it's sorted by.
+    fn path(&self) -> &[u8] {
+        match self {
+            Self::Source(path) => path,
+            Self::Unreadable { directory, .. } => directory,
+        }
+    }
+}
+
 /// The walk looked at `WALK_ENTRIES_MAX` entries, and there were more.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TooManyEntries;
 
-/// Returns everything the walk found under the directory the command runs in, sorted by the bytes
-/// of its path.
-pub fn walk() -> Result<Vec<Found>, TooManyEntries> {
+/// It displays as the sentence that says so.
+impl fmt::Display for TooManyEntries {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("there are more than 10,000 files and directories under this directory.")
+    }
+}
+
+/// Returns everything the walk finds under `root`, the directory the command runs in, sorted by
+/// the bytes of its path.
+///
+/// # Errors
+///
+/// Returns `TooManyEntries` when there are more than `WALK_ENTRIES_MAX` entries to look at.
+///
+/// # Panics
+///
+/// Never, whatever the directory holds. The assertions check the walk's own work.
+pub fn walk(root: &Path) -> Result<Vec<Found>, TooManyEntries> {
     let mut found = Vec::new();
-    // These are the directories still to read, by their paths relative to the directory the
-    // command runs in, which is the empty path.
+    // These are the directories still to read, by their paths relative to the root, which is the
+    // empty path.
     let mut directories: Vec<Vec<u8>> = vec![Vec::new()];
     let mut entries_count: u32 = 0;
     while let Some(directory) = directories.pop() {
-        let entries = match fs::read_dir(read_dir_path(&directory)) {
+        let entries = match fs::read_dir(directory_path(root, &directory)) {
             Ok(entries) => entries,
             Err(error) => {
                 found.push(unreadable(directory, error));
@@ -71,63 +107,55 @@ pub fn walk() -> Result<Vec<Found>, TooManyEntries> {
                 return Err(TooManyEntries);
             }
             let name = name.as_bytes();
-            if name.starts_with(b".") {
-                continue;
-            }
-            if name == b"target" {
+            if name.starts_with(b".") || name == b"target" {
                 continue;
             }
             let path = joined(&directory, name);
-            // A symlink is neither a directory nor a file here, so it's never followed.
             if file_type.is_dir() {
                 directories.push(path);
-                assert!(directories.len() <= WALK_ENTRIES_MAX as usize);
-            } else if file_type.is_file() {
-                if !name.ends_with(b".stella") {
-                    continue;
-                }
-                // A source's path is relative, and no part of it was skipped.
-                assert!(!path.starts_with(b"."));
-                assert!(!path.starts_with(b"/"));
+                let bounded = directories.len() <= usize_from_u32(WALK_ENTRIES_MAX);
+                assert!(bounded, "every directory still to read was counted as an entry");
+                continue;
+            }
+            #[expect(
+                clippy::filetype_is_file,
+                reason = "TS-STRICT-LINTS: only a regular file is a source. A symlink, a FIFO or \
+                          a socket is neither a directory nor a file here, so it's never followed"
+            )]
+            let is_source = file_type.is_file() && name.ends_with(b".stella");
+            if is_source {
+                assert!(!path.starts_with(b"."), "every name that starts with `.` was skipped");
+                assert!(!path.starts_with(b"/"), "a find's path is relative to the root");
                 found.push(Found::Source(path));
             }
         }
     }
-    found.sort_by(|one, other| found_path(one).cmp(found_path(other)));
+    found.sort_by(|one, other| one.path().cmp(other.path()));
     // Some filesystems can list a name twice if it's renamed away and back while the walk reads
     // its directory, so a path found twice is kept once.
-    found.dedup_by(|one, other| found_path(one) == found_path(other));
-    assert!(entries_count <= WALK_ENTRIES_MAX);
-    // Every find has a path of its own, in order.
-    assert!(found.windows(2).all(|pair| found_path(&pair[0]) < found_path(&pair[1])));
+    found.dedup_by(|one, other| one.path() == other.path());
+    assert!(entries_count <= WALK_ENTRIES_MAX, "the walk stopped at the bound");
+    let in_order = found.is_sorted_by(|one, other| one.path() < other.path());
+    assert!(in_order, "every find has a path of its own, and they're sorted");
     Ok(found)
 }
 
 /// Returns a find for `directory`, which couldn't be read for `error`. The empty path is the
-/// directory the command runs in, called `.`.
-fn unreadable(directory: Vec<u8>, error: std::io::Error) -> Found {
+/// root, called `.`.
+fn unreadable(directory: Vec<u8>, error: io::Error) -> Found {
     let directory = if directory.is_empty() { b".".to_vec() } else { directory };
-    assert!(!directory.starts_with(b"/"));
+    assert!(!directory.starts_with(b"/"), "a find's path is relative to the root");
     Found::Unreadable { directory, error }
 }
 
-/// Returns the path to read `directory` by, where the empty path is the directory the command runs
-/// in.
-fn read_dir_path(directory: &[u8]) -> &OsStr {
-    if directory.is_empty() { OsStr::new(".") } else { OsStr::from_bytes(directory) }
+/// Returns the path to read `directory` by, which is relative to `root`. The empty path is the
+/// root itself.
+fn directory_path(root: &Path, directory: &[u8]) -> PathBuf {
+    if directory.is_empty() { root.to_path_buf() } else { root.join(OsStr::from_bytes(directory)) }
 }
 
-/// Returns the path of `name` in `directory`, where the empty path is the directory the command
-/// runs in.
+/// Returns the path of `name` in `directory`, where the empty path is the root.
 fn joined(directory: &[u8], name: &[u8]) -> Vec<u8> {
-    assert!(!name.is_empty());
+    assert!(!name.is_empty(), "an entry has a name");
     if directory.is_empty() { name.to_vec() } else { [directory, b"/", name].concat() }
-}
-
-/// Returns the path a find is sorted by.
-fn found_path(found: &Found) -> &[u8] {
-    match found {
-        Found::Source(path) => path,
-        Found::Unreadable { directory, .. } => directory,
-    }
 }

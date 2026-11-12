@@ -6,7 +6,7 @@
 //!
 //! The tokens lint is the check after the lexer. `lint_tokens` takes the `Tokens` the lexer made,
 //! so it can trust everything the text lint and the lexer guarantee, and returns them as a
-//! `Layout`, or the first problem in them. Only `lint_tokens` can make a `Layout`, so the parser
+//! `Layout`, or the first problem in them. Only `lint_tokens` can make a `Layout`, so nesting
 //! can take one and trust that the code is laid out the one way and that its braces pair up.
 
 #![forbid(unsafe_code)]
