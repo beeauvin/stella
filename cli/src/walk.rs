@@ -174,10 +174,9 @@ struct Entry<'walk> {
 }
 
 impl Entry<'_> {
-    /// Returns the entry's path, relative to the root.
+    /// Returns the entry's path, relative to the root. The name is whatever the filesystem
+    /// listed, so nothing is asserted of it.
     fn path(self) -> Vec<u8> {
-        assert!(!self.name.is_empty(), "an entry has a name");
-        assert!(!self.name.contains(&b'/'), "an entry's name is one part of a path");
         if self.directory.is_empty() {
             self.name.to_vec()
         } else {

@@ -15,7 +15,7 @@ use std::path::Path;
 
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
 
-use crate::message::reason;
+use crate::unreached::Unreached;
 
 /// This is how many bytes a source buffer holds: one more than the largest source.
 const BUFFER_BYTES: usize = usize_from_u32(SOURCE_BYTES_MAX) + 1;
@@ -55,21 +55,18 @@ impl Default for SourceBuffer {
 /// Unread says why a file couldn't be read.
 #[derive(Debug)]
 pub enum Unread {
-    /// Nothing is at the path.
-    Missing,
+    /// The file couldn't be reached: nothing is there, or it can't be looked at, opened or read.
+    Unreached(Unreached),
     /// What's at the path isn't a regular file: it's a directory, say, or a FIFO.
     NotAFile,
-    /// The file couldn't be looked at, opened or read.
-    Unreadable(io::Error),
 }
 
 /// It displays as the sentence that says what's wrong.
 impl fmt::Display for Unread {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Missing => f.write_str("this file doesn't exist."),
+            Self::Unreached(unreached) => unreached.fmt(f),
             Self::NotAFile => f.write_str("this isn't a file."),
-            Self::Unreadable(error) => write!(f, "this file can't be read: {}.", reason(error)),
         }
     }
 }
@@ -98,15 +95,14 @@ pub fn read<'buffer>(
     // the next, and even then a directory on the way could be swapped. Only someone who can
     // already write where the program is could do either, so the gap is left open rather than
     // closed halfway.
-    let metadata = fs::metadata(path).map_err(|error| match error.kind() {
-        io::ErrorKind::NotFound => Unread::Missing,
-        _ => Unread::Unreadable(error),
-    })?;
+    let metadata =
+        fs::metadata(path).map_err(|error| Unread::Unreached(Unreached::from_looking(error)))?;
     if !metadata.is_file() {
         return Err(Unread::NotAFile);
     }
-    let mut file = File::open(path).map_err(Unread::Unreadable)?;
-    let length = fill(&mut file, &mut buffer.bytes).map_err(Unread::Unreadable)?;
+    let unreadable = |error| Unread::Unreached(Unreached::Unreadable(error));
+    let mut file = File::open(path).map_err(unreadable)?;
+    let length = fill(&mut file, &mut buffer.bytes).map_err(unreadable)?;
     assert!(length <= BUFFER_BYTES, "a fill writes no more than the buffer holds");
     // Only what this read wrote is returned, never what an earlier file left further on.
     Ok(&buffer.bytes[..length])

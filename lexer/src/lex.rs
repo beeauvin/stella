@@ -166,11 +166,14 @@ impl<'source, 'buffer> Tokens<'source, 'buffer> {
     ///
     /// # Panics
     ///
-    /// Panics if `token` isn't in this source: one from another source can reach past this
-    /// source's end or into the middle of a character. One that happens to fit gives some other
-    /// text, which nothing here can tell.
+    /// Panics if `token` isn't one of this source's tokens. A token only means something in the
+    /// source it was lexed from, and one from another source is a bug, even when it would fit.
     #[must_use]
     pub fn text(&self, token: &Token) -> &'source str {
+        // The tokens are in the order they're in the source, so this one is found by its start.
+        let found = self.tokens.binary_search_by_key(&token.start_index, |own| own.start_index);
+        let is_own = found.is_ok_and(|index| self.tokens[index] == *token);
+        assert!(is_own, "a token is one of its source's tokens");
         let source = self.text.as_str();
         let span = token.span();
         assert!(span.end <= source.len(), "a token is in its source");

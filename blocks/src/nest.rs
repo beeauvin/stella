@@ -179,10 +179,15 @@ impl<'source, 'buffer> Blocks<'source, 'buffer> {
     ///
     /// # Panics
     ///
-    /// Panics if `node` isn't one of these nodes: one from another source can reach past these
-    /// tokens' end. One that happens to fit gives some other tokens, which nothing here can tell.
+    /// Panics if `node` isn't one of these nodes. A node only means something in the source it
+    /// was nested from, and one from another source is a bug, even when it would fit.
     #[must_use]
     pub fn tokens_of(&self, node: &Node) -> &'buffer [Token] {
+        // The nodes are in the order they're in the source, so this one is found by its start.
+        let found =
+            self.nodes.binary_search_by_key(&node.first_token_index, |own| own.first_token_index);
+        let is_own = found.is_ok_and(|index| self.nodes[index] == *node);
+        assert!(is_own, "a node is one of its source's nodes");
         let tokens = self.tokens.as_slice();
         let span = node.token_span();
         assert!(span.end <= tokens.len(), "a node's tokens are among its source's");
@@ -289,9 +294,10 @@ pub fn nest<'source, 'buffer>(
     let mut open_index: Option<u32> = None;
     let mut depth: u32 = 0;
     // The index of the first token on the line being nested.
-    let mut start: usize = 0;
-    while start < tokens.len() {
-        let line = &tokens[start..start + count_on_first_line(&tokens[start..])];
+    let mut line_token_index: usize = 0;
+    while line_token_index < tokens.len() {
+        let rest = &tokens[line_token_index..];
+        let line = &rest[..count_on_first_line(rest)];
         if line[0].kind() == BraceClose {
             assert_eq!(line.len(), 1, "a `}}` is alone on its line");
             assert!(depth > 0, "the braces pair up, so a `}}` closes a block that's open");
@@ -302,7 +308,7 @@ pub fn nest<'source, 'buffer>(
                 open_index.expect("a block is open, since the depth was more than none");
             let block = Block {
                 end_node_index: u32_from_usize(buffer.nodes.len()),
-                close_token_index: u32_from_usize(start),
+                close_token_index: u32_from_usize(line_token_index),
             };
             open_index = close_block(&mut buffer.nodes, opener_index, block);
         } else {
@@ -310,8 +316,8 @@ pub fn nest<'source, 'buffer>(
             let room = buffer.nodes.len() < usize_from_u32(NODES_MAX);
             assert!(room, "every node is at least two bytes, so there's room for each");
             buffer.nodes.push(Node {
-                first_token_index: u32_from_usize(start),
-                end_token_index: u32_from_usize(start + line.len()),
+                first_token_index: u32_from_usize(line_token_index),
+                end_token_index: u32_from_usize(line_token_index + line.len()),
                 parent_index: open_index,
                 block: None,
             });
@@ -322,9 +328,9 @@ pub fn nest<'source, 'buffer>(
         }
         assert_eq!(open_index.is_some(), depth > 0, "a node's block is open when any block is");
         assert!(depth <= NODES_MAX, "every block that's open was opened by a node");
-        start += line.len();
+        line_token_index += line.len();
     }
-    assert_eq!(start, tokens.len(), "every token was nested");
+    assert_eq!(line_token_index, tokens.len(), "every token was nested");
     assert!(open_index.is_none(), "the braces pair up, so no block is left open");
     assert_eq!(depth, 0, "the braces pair up, so no block is left open");
     assert_eq!(buffer.nodes.capacity(), capacity_before, "the buffer never grows");
@@ -397,14 +403,15 @@ fn close_block(nodes: &mut [Node], opener_index: u32, block: Block) -> Option<u3
 fn assert_nested(nodes: &[Node], tokens: &[Token]) {
     assert!(nodes.len() <= usize_from_u32(NODES_MAX), "the buffer has room for every node");
     // The index of the token just past the node before, so the nodes come in order.
-    let mut after: usize = 0;
+    let mut end_token_index_before: usize = 0;
     for (index, node) in nodes.iter().enumerate() {
         let index = u32_from_usize(index);
         let span = node.token_span();
-        assert!(span.start >= after, "the nodes come in the order they're in the source");
-        after = span.end;
-        assert!(after <= tokens.len(), "a node's tokens are among its source's");
-        let ends_with_open = tokens[after - 1].kind() == BraceOpen;
+        let in_order = span.start >= end_token_index_before;
+        assert!(in_order, "the nodes come in the order they're in the source");
+        end_token_index_before = span.end;
+        assert!(span.end <= tokens.len(), "a node's tokens are among its source's");
+        let ends_with_open = tokens[span.end - 1].kind() == BraceOpen;
         assert_eq!(node.block.is_some(), ends_with_open, "a node opens a block with a `{{`");
         if let Some(parent_index) = node.parent_index {
             assert!(parent_index < index, "a node comes after its parent");

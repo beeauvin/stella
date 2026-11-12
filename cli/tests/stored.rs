@@ -15,7 +15,7 @@ use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use stella_cli::{Unstored, stored};
+use stella_cli::{Unreached, Unstored, stored};
 use stella_linter_path::lint_path;
 use stella_test_support::{Lock, Scratch, write};
 
@@ -231,7 +231,10 @@ fn what_cant_be_found_says_why() {
     let unstored = |typed: &str| stored_of(&directory, typed).expect_err("it can't be found");
     for typed in ["missing.stella", "missing/hello.stella"] {
         let missing = unstored(typed);
-        assert!(matches!(missing, Unstored::Missing), "for {typed}: {missing:?}");
+        assert!(
+            matches!(missing, Unstored::Unreached(Unreached::Missing)),
+            "for {typed}: {missing:?}"
+        );
         assert_eq!(missing.to_string(), "this file doesn't exist.", "for {typed}");
     }
     for (typed, kind, sentence) in [
@@ -247,7 +250,7 @@ fn what_cant_be_found_says_why() {
         ),
     ] {
         let unreadable = unstored(typed);
-        let Unstored::Unreadable(error) = &unreadable else {
+        let Unstored::Unreached(Unreached::Unreadable(error)) = &unreadable else {
             unreachable!("{typed} can't be looked at, but: {unreadable:?}");
         };
         assert_eq!(error.kind(), kind, "for {typed}");
@@ -296,5 +299,5 @@ fn a_path_through_a_mount_point_is_found() {
     stores(&directory, "volume/programs/hello.stella", "volume/programs/hello.stella");
     // The volume tells names apart by case, so a name in another case reaches nothing there.
     let missing = stored_of(&directory, "volume/shout.stella").expect_err("nothing is there");
-    assert!(matches!(missing, Unstored::Missing), "{missing:?}");
+    assert!(matches!(missing, Unstored::Unreached(Unreached::Missing)), "{missing:?}");
 }

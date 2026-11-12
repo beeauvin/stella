@@ -813,7 +813,21 @@ fn one_buffer_for_every_source() {
 }
 
 #[test]
-#[should_panic(expected = "a token is in its source")]
+#[should_panic(expected = "a token is one of its source's tokens")]
+fn text_of_a_token_that_would_fit_another_source_is_a_bug() {
+    // The name in the first source would fit in the second, where the bytes it spans are the
+    // second's name and the space after it. It still isn't one of the second's tokens.
+    let (mut first_buffer, mut second_buffer) = (TokenBuffer::new(), TokenBuffer::new());
+    let first = lint(b"ab {\n}\n").expect("source should pass");
+    let second = lint(b"a {\n}\n").expect("source should pass");
+    let first = lex(first, &mut first_buffer).expect("source should lex");
+    let second = lex(second, &mut second_buffer).expect("source should lex");
+    let name = first.as_slice().first().expect("the source has tokens");
+    let _: &str = second.text(name);
+}
+
+#[test]
+#[should_panic(expected = "a token is one of its source's tokens")]
 fn text_of_a_token_from_a_longer_source_is_a_bug() {
     // A token only means something in the source it was lexed from. Here the last token of a
     // longer source is asked of a shorter one, which it reaches past the end of.

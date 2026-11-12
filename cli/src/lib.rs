@@ -24,6 +24,7 @@ mod read;
 mod run;
 mod status;
 mod stored;
+mod unreached;
 mod walk;
 
 pub use arguments::{Command, Misuse, USAGE, command};
@@ -32,5 +33,6 @@ pub use message::{Place, message, shown};
 pub use read::{READ_INTERRUPTIONS_MAX, SourceBuffer, Unread, fill, read};
 pub use run::run;
 pub use status::Status;
-pub use stored::{Unstored, stored};
+pub use stored::{STORED_ENTRIES_MAX, Unstored, stored};
+pub use unreached::Unreached;
 pub use walk::{Find, TooManyEntries, WALK_ENTRIES_MAX, walk};

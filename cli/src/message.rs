@@ -80,22 +80,22 @@ pub fn shown(bytes: &[u8]) -> String {
 /// Returns `line` shown safely, and how far into it the caret goes to sit under `column`.
 fn echo(line: &[u8], column: u32) -> (String, usize) {
     let mut echo = String::with_capacity(line.len());
-    let mut caret = None;
+    let mut caret_index = None;
     let mut units_count: u32 = 0;
     for unit in units(line) {
         units_count += 1;
         if units_count == column {
-            caret = Some(echo.len());
+            caret_index = Some(echo.len());
         }
         push_shown(&mut echo, unit);
     }
     // Past every unit is one column more, just past the end of the line.
-    let caret = caret.unwrap_or_else(|| {
+    let caret_index = caret_index.unwrap_or_else(|| {
         assert_eq!(column, units_count + 1, "a problem's column is in its line or just past it");
         echo.len()
     });
-    assert!(caret <= echo.len(), "the caret is under the line, or just past its end");
-    (echo, caret)
+    assert!(caret_index <= echo.len(), "the caret is under the line, or just past its end");
+    (echo, caret_index)
 }
 
 /// A unit is one column's worth of bytes: a character, or a byte that isn't UTF-8.

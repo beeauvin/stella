@@ -16,7 +16,6 @@ use std::path::Path;
 use stella_blocks::{NodeBuffer, nest};
 use stella_lexer::{TokenBuffer, lex};
 use stella_linter_path::lint_path;
-use stella_linter_text::lint;
 use stella_linter_tokens::lint_tokens;
 use stella_source::Position;
 
@@ -79,29 +78,28 @@ impl<'root> Linter<'root> {
         Self { root, source, tokens, nodes }
     }
 
-    /// Lints the program at `path`, as it was typed. The path is checked before the file is read.
-    /// Its message shows the path as it was typed, except where the path as it's stored is what's
-    /// refused.
-    pub fn lint_one(&mut self, path: &[u8]) -> Outcome {
+    /// Lints the program at `typed`, a path as it was typed. The path is checked before the file
+    /// is read. Its message shows the path as it was typed, except where the path as it's stored
+    /// is what's refused.
+    pub fn lint_one(&mut self, typed: &[u8]) -> Outcome {
         // A path that isn't UTF-8 can't be kebab, so it's refused like any other bad name.
-        let typed = String::from_utf8_lossy(path);
-        let source_path = match lint_path(&typed) {
-            Ok(source_path) => source_path,
-            Err(problem) => return Outcome::Refused(message(path, Place::File, problem)),
+        let typed_text = String::from_utf8_lossy(typed);
+        let typed_path = match lint_path(&typed_text) {
+            Ok(typed_path) => typed_path,
+            Err(problem) => return Outcome::Refused(message(typed, Place::File, problem)),
         };
         // On macOS, which ignores case, `hello.stella` can name `Hello.stella`, so the path is
         // found as it's stored before it's checked again.
-        match stored(self.root, source_path) {
-            Ok(as_stored) => self.lint_stored(Named { typed: path, stored: &as_stored }),
+        match stored(self.root, typed_path) {
+            Ok(as_stored) => self.lint_stored(Named { typed, stored: &as_stored }),
             Err(unstored @ Unstored::Symlink) => {
-                Outcome::Refused(message(path, Place::File, unstored))
+                Outcome::Refused(message(typed, Place::File, unstored))
             }
             Err(
-                unstored @ (Unstored::Missing
-                | Unstored::Unreadable(_)
+                unstored @ (Unstored::Unreached(_)
                 | Unstored::DirectoryUnreadable(_)
                 | Unstored::TooManyEntries),
-            ) => Outcome::Failed(message(path, Place::File, unstored)),
+            ) => Outcome::Failed(message(typed, Place::File, unstored)),
         }
     }
 
@@ -160,7 +158,7 @@ impl<'root> Linter<'root> {
     /// blocks. A problem with the path is shown at the path as it's stored, and any other at the
     /// path as it was typed.
     fn lint_stored(&mut self, program: Named<'_>) -> Outcome {
-        let Named { typed: path, stored } = program;
+        let Named { typed, stored } = program;
         let stored_text = String::from_utf8_lossy(stored);
         let stored_path = match lint_path(&stored_text) {
             Ok(stored_path) => stored_path,
@@ -169,7 +167,7 @@ impl<'root> Linter<'root> {
         let file = self.root.join(stored_path.normalized());
         let source = match read(&file, &mut self.source) {
             Ok(source) => source,
-            Err(unread) => return Outcome::Failed(message(path, Place::File, unread)),
+            Err(unread) => return Outcome::Failed(message(typed, Place::File, unread)),
         };
         match check(source, &mut self.tokens, &mut self.nodes) {
             Ok(()) => Outcome::Passed,
@@ -178,7 +176,7 @@ impl<'root> Linter<'root> {
                     Some(position) => Place::At { source, position },
                     None => Place::File,
                 };
-                Outcome::Refused(message(path, place, sentence))
+                Outcome::Refused(message(typed, place, sentence))
             }
         }
     }
@@ -211,7 +209,7 @@ impl Refusal {
 /// Checks `source`'s text, then its tokens, lexed into `tokens`, then their layout, and nests
 /// them into `nodes`. Stops at the first check that fails, and returns its refusal.
 fn check(source: &[u8], tokens: &mut TokenBuffer, nodes: &mut NodeBuffer) -> Result<(), Refusal> {
-    let text = lint(source).map_err(|problem| Refusal {
+    let text = stella_linter_text::lint(source).map_err(|problem| Refusal {
         position: problem.position(),
         sentence: problem.to_string(),
     })?;

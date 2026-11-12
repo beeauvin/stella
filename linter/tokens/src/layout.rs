@@ -40,6 +40,25 @@ use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 
 use crate::problem::{Kind, Neighbors, Problem};
 
+/// A pair is two tokens, one right after the other in the source. Each is named, so the two
+/// can't be given the wrong way round.
+#[derive(Clone, Copy)]
+struct Pair<'tokens> {
+    /// The token that comes first.
+    first: &'tokens Token,
+    /// The token right after it.
+    second: &'tokens Token,
+}
+
+impl Pair<'_> {
+    /// Says whether the two tokens are on the same line.
+    fn is_on_one_line(self) -> bool {
+        let (first, second) = (self.first.position().line(), self.second.position().line());
+        assert!(first <= second, "tokens come in the order they're in the source");
+        first == second
+    }
+}
+
 /// A layout is tokens laid out the one way, whose braces pair up.
 ///
 /// Only `lint_tokens` makes one, so holding a `Layout` proves the source passed the text lint,
@@ -89,9 +108,12 @@ fn lint_lines(tokens: &[Token]) -> Result<(), Problem> {
     for (index, token) in tokens.iter().enumerate() {
         assert!(!token.span().is_empty(), "a token is at least one character");
         // Whether a token comes before this one on its line, and whether one comes after it.
-        let before =
-            index.checked_sub(1).is_some_and(|previous| same_line(&tokens[previous], token));
-        let after = tokens.get(index + 1).is_some_and(|next| same_line(token, next));
+        let before = index.checked_sub(1).is_some_and(|previous| {
+            Pair { first: &tokens[previous], second: token }.is_on_one_line()
+        });
+        let after = tokens
+            .get(index + 1)
+            .is_some_and(|next| Pair { first: token, second: next }.is_on_one_line());
         let kind = match (token.kind(), before, after) {
             // Of the two problems a `{` can have, not ending its line is the one reported.
             (BraceOpen, true | false, true) => Some(Kind::BraceOpenNotLast),
@@ -122,11 +144,11 @@ fn lint_lines(tokens: &[Token]) -> Result<(), Problem> {
                 // it.
                 let column = column_after(token);
                 let position = Position::on_line(token.position().line()).at_column(column);
-                return Err(at(Kind::LineEndsWithoutBrace, position));
+                return Err(problem(Kind::LineEndsWithoutBrace, position));
             }
         };
         if let Some(kind) = kind {
-            return Err(at(kind, token.position()));
+            return Err(problem(kind, token.position()));
         }
     }
     Ok(())
@@ -151,7 +173,7 @@ fn lint_braces(tokens: &[Token]) -> Result<(), Problem> {
             }
             BraceClose => {
                 if depth == 0 {
-                    return Err(at(Kind::BraceClosesNothing, token.position()));
+                    return Err(problem(Kind::BraceClosesNothing, token.position()));
                 }
                 depth -= 1;
                 if depth == 0 {
@@ -165,7 +187,7 @@ fn lint_braces(tokens: &[Token]) -> Result<(), Problem> {
         assert_eq!(outermost.is_some(), depth > 0, "an outermost `{{` is open when any is");
     }
     match outermost {
-        Some(position) => Err(at(Kind::BraceNeverClosed, position)),
+        Some(position) => Err(problem(Kind::BraceNeverClosed, position)),
         None => Ok(()),
     }
 }
@@ -177,10 +199,11 @@ fn lint_within_lines(tokens: &[Token]) -> Result<(), Problem> {
     // This is how many braces are open before the token being looked at.
     let mut depth: u32 = 0;
     for (index, token) in tokens.iter().enumerate() {
-        let previous = index.checked_sub(1).map(|previous| &tokens[previous]);
-        let found = match previous.filter(|previous| same_line(previous, token)) {
+        let pair =
+            index.checked_sub(1).map(|previous| Pair { first: &tokens[previous], second: token });
+        let found = match pair.filter(|pair| pair.is_on_one_line()) {
             None => indentation_problem(token, depth),
-            Some(previous) => gap_problem(previous, token),
+            Some(pair) => gap_problem(pair),
         };
         if let Some(problem) = found {
             return Err(problem);
@@ -218,13 +241,14 @@ fn indentation_problem(token: &Token, depth: u32) -> Option<Problem> {
     // is. Indentation is spaces, so either way the column is the lesser.
     let column = token.position().column().min(wanted);
     let position = Position::on_line(token.position().line()).at_column(column);
-    Some(at(Kind::IndentationNotDepth(level), position))
+    Some(problem(Kind::IndentationNotDepth(level), position))
 }
 
-/// Returns the problem with the spaces between `previous` and `token`, one right after the other
-/// on a line: none when there are as many as go there.
-fn gap_problem(previous: &Token, token: &Token) -> Option<Problem> {
-    assert!(same_line(previous, token), "a gap is between two tokens on one line");
+/// Returns the problem with the spaces between the tokens of `pair`, which are on one line: none
+/// when there are as many as go there.
+fn gap_problem(pair: Pair<'_>) -> Option<Problem> {
+    assert!(pair.is_on_one_line(), "a gap is between two tokens on one line");
+    let Pair { first: previous, second: token } = pair;
     // A comment is a whole line, so both of these are code. Code is ASCII, so a column is a
     // byte, and the gap can be counted either way.
     assert_ne!(previous.kind(), Comment, "the lexer makes a comment of a whole line");
@@ -251,14 +275,14 @@ fn gap_problem(previous: &Token, token: &Token) -> Option<Problem> {
     match gap_count.cmp(&wanted_count) {
         Ordering::Equal => None,
         // The second token is where the space should be.
-        Ordering::Less => Some(at(Kind::SpaceMissing(neighbors), token.position())),
+        Ordering::Less => Some(problem(Kind::SpaceMissing(neighbors), token.position())),
         Ordering::Greater if wanted_count == 0 => {
             let position = Position::on_line(line).at_column(first_space_column);
-            Some(at(Kind::SpaceUnwanted(neighbors), position))
+            Some(problem(Kind::SpaceUnwanted(neighbors), position))
         }
         Ordering::Greater => {
             let position = Position::on_line(line).at_column(first_space_column + 1);
-            Some(at(Kind::SpacesExtra(neighbors), position))
+            Some(problem(Kind::SpacesExtra(neighbors), position))
         }
     }
 }
@@ -292,15 +316,9 @@ const fn spaces_wanted(neighbors: Neighbors) -> u32 {
     }
 }
 
-/// Says whether `first` and `second`, which come one right after the other, are on the same line.
-fn same_line(first: &Token, second: &Token) -> bool {
-    assert!(first.position().line() <= second.position().line(), "tokens come in order");
-    first.position().line() == second.position().line()
-}
-
 /// Returns the problem `kind` at `position`, which is a character on a line of the source, or
 /// just past the last token of one.
-fn at(kind: Kind, position: Position) -> Problem {
+fn problem(kind: Kind, position: Position) -> Problem {
     assert!(
         position.column() <= SOURCE_BYTES_MAX,
         "every line ends with a `\\n`, so just past a line's last token is still in the source"

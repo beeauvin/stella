@@ -13,7 +13,7 @@ use std::io::{self, Read};
 use std::iter::repeat_n;
 use std::path::PathBuf;
 
-use stella_cli::{READ_INTERRUPTIONS_MAX, SourceBuffer, Unread, fill, read};
+use stella_cli::{READ_INTERRUPTIONS_MAX, SourceBuffer, Unreached, Unread, fill, read};
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
 use stella_test_support::{Lock, Scratch, fifo, write};
 
@@ -188,7 +188,7 @@ fn what_cant_be_read_says_why() {
         read(&directory.join(name), &mut buffer).map(<[u8]>::len).expect_err("it can't be read")
     };
     let missing = unread("missing.stella");
-    assert!(matches!(missing, Unread::Missing), "{missing:?}");
+    assert!(matches!(missing, Unread::Unreached(Unreached::Missing)), "{missing:?}");
     assert_eq!(missing.to_string(), "this file doesn't exist.");
     for name in ["folder.stella", "pipe.stella"] {
         let not_a_file = unread(name);
@@ -196,11 +196,14 @@ fn what_cant_be_read_says_why() {
         assert_eq!(not_a_file.to_string(), "this isn't a file.", "for {name}");
     }
     let locked = unread("locked.stella");
-    assert!(matches!(locked, Unread::Unreadable(_)), "{locked:?}");
+    assert!(matches!(locked, Unread::Unreached(Unreached::Unreadable(_))), "{locked:?}");
     assert_eq!(locked.to_string(), "this file can't be read: Permission denied (os error 13).");
     // A file where a directory should be can't be looked through.
     let through_a_file = unread("file/hello.stella");
-    assert!(matches!(through_a_file, Unread::Unreadable(_)), "{through_a_file:?}");
+    assert!(
+        matches!(through_a_file, Unread::Unreached(Unreached::Unreadable(_))),
+        "{through_a_file:?}"
+    );
     let sentence = "this file can't be read: Not a directory (os error 20).";
     assert_eq!(through_a_file.to_string(), sentence);
 }

@@ -34,10 +34,15 @@ use std::path::Path;
 use stella_linter_path::SourcePath;
 
 use crate::message::reason;
+use crate::unreached::Unreached;
 use crate::walk::WALK_ENTRIES_MAX;
 
+/// This is the most entries the search looks at, across every directory on the way to one
+/// path. It's the walk's bound, so the compiler has one number for how far it looks.
+pub const STORED_ENTRIES_MAX: u32 = WALK_ENTRIES_MAX;
+
 const _: () = assert!(
-    WALK_ENTRIES_MAX == 10_000,
+    STORED_ENTRIES_MAX == 10_000,
     "`TooManyEntries`'s sentence names the bound, so a new bound needs a new sentence"
 );
 
@@ -46,13 +51,12 @@ const _: () = assert!(
 pub enum Unstored {
     /// A part of the path is a symlink.
     Symlink,
-    /// A part of the path names nothing, or did when it was looked at and has gone since.
-    Missing,
-    /// A part of the path couldn't be looked at.
-    Unreadable(io::Error),
+    /// A part of the path couldn't be reached: it names nothing, or did when it was looked at
+    /// and has gone since, or it can't be looked at.
+    Unreached(Unreached),
     /// A directory on the way couldn't be listed.
     DirectoryUnreadable(io::Error),
-    /// The directories on the way hold more than `WALK_ENTRIES_MAX` entries between them.
+    /// The directories on the way hold more than `STORED_ENTRIES_MAX` entries between them.
     TooManyEntries,
 }
 
@@ -63,8 +67,7 @@ impl fmt::Display for Unstored {
             Self::Symlink => f.write_str(
                 "the build path can't be established from a path that goes through a symlink.",
             ),
-            Self::Missing => f.write_str("this file doesn't exist."),
-            Self::Unreadable(error) => write!(f, "this file can't be read: {}.", reason(error)),
+            Self::Unreached(unreached) => unreached.fmt(f),
             Self::DirectoryUnreadable(error) => {
                 let reason = reason(error);
                 write!(f, "a directory on the way to this file can't be read: {reason}.")
@@ -76,8 +79,8 @@ impl fmt::Display for Unstored {
     }
 }
 
-/// Returns `path` with each name in it as it's stored under `root`, the directory the command
-/// runs in.
+/// Returns `typed`, a path as it was typed, with each name in it as it's stored under `root`,
+/// the directory the command runs in.
 ///
 /// # Errors
 ///
@@ -88,19 +91,16 @@ impl fmt::Display for Unstored {
 ///
 /// Never, whatever the path or the filesystem holds. The assertions check this function's own
 /// work.
-pub fn stored(root: &Path, path: SourcePath<'_>) -> Result<Vec<u8>, Unstored> {
+pub fn stored(root: &Path, typed: SourcePath<'_>) -> Result<Vec<u8>, Unstored> {
     let mut stored: Vec<u8> = Vec::new();
     // This counts the entries looked at across every directory on the way, to keep it bounded.
     let mut entries_count: u32 = 0;
-    for typed in path.normalized().split('/') {
+    for typed in typed.normalized().split('/') {
         assert!(!typed.is_empty(), "the path lint refuses an empty part");
         let directory = root.join(OsStr::from_bytes(&stored));
         let part = Part { directory: &directory, typed };
-        let metadata =
-            fs::symlink_metadata(directory.join(typed)).map_err(|error| match error.kind() {
-                io::ErrorKind::NotFound => Unstored::Missing,
-                _ => Unstored::Unreadable(error),
-            })?;
+        let metadata = fs::symlink_metadata(directory.join(typed))
+            .map_err(|error| Unstored::Unreached(Unreached::from_looking(error)))?;
         if metadata.file_type().is_symlink() {
             return Err(Unstored::Symlink);
         }
@@ -112,7 +112,7 @@ pub fn stored(root: &Path, path: SourcePath<'_>) -> Result<Vec<u8>, Unstored> {
         stored.extend_from_slice(&name);
     }
     assert!(!stored.is_empty(), "a path has at least one part");
-    assert!(entries_count <= WALK_ENTRIES_MAX, "the search stopped at the bound");
+    assert!(entries_count <= STORED_ENTRIES_MAX, "the search stopped at the bound");
     Ok(stored)
 }
 
@@ -159,18 +159,18 @@ enum Closeness {
 /// directory lists its entries in.
 ///
 /// The part was there when it was looked at, so if no entry is it, it's gone since, and it's
-/// `Unstored::Missing`.
+/// missing.
 fn stored_name(
     part: Part<'_>,
     reached: FileId,
     entries_count: &mut u32,
 ) -> Result<Vec<u8>, Unstored> {
-    assert!(*entries_count <= WALK_ENTRIES_MAX, "the search stops at the bound");
+    assert!(*entries_count <= STORED_ENTRIES_MAX, "the search stops at the bound");
     let mut found: Option<(Vec<u8>, Closeness)> = None;
     for entry in fs::read_dir(part.directory).map_err(Unstored::DirectoryUnreadable)? {
         let entry = entry.map_err(Unstored::DirectoryUnreadable)?;
         *entries_count += 1;
-        if *entries_count > WALK_ENTRIES_MAX {
+        if *entries_count > STORED_ENTRIES_MAX {
             return Err(Unstored::TooManyEntries);
         }
         let name = entry.file_name();
@@ -181,8 +181,8 @@ fn stored_name(
             found = Some((name.as_bytes().to_vec(), closeness));
         }
     }
-    assert!(*entries_count <= WALK_ENTRIES_MAX, "the search stopped at the bound");
-    let (name, _) = found.ok_or(Unstored::Missing)?;
+    assert!(*entries_count <= STORED_ENTRIES_MAX, "the search stopped at the bound");
+    let (name, _) = found.ok_or(Unstored::Unreached(Unreached::Missing))?;
     Ok(name)
 }
 

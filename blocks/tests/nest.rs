@@ -536,6 +536,21 @@ fn children() {
 }
 
 #[test]
+#[should_panic(expected = "a node is one of its source's nodes")]
+fn tokens_of_a_node_from_another_source_is_a_bug() {
+    // The first source's node holds two tokens. They'd fit among the second's three, but the
+    // second's node holds all three, so the first's isn't one of its nodes.
+    let (mut token_buffer, mut node_buffer) = (TokenBuffer::new(), NodeBuffer::new());
+    let text = lint(b"a {\n}\n").expect("source should pass the text lint");
+    let tokens = lex(text, &mut token_buffer).expect("source should lex");
+    let layout = lint_tokens(tokens).expect("source should be laid out the one way");
+    let other = nest(layout, &mut node_buffer).nodes()[0];
+    with_blocks("a b {\n}\n", |blocks| {
+        let _: &[Token] = blocks.tokens_of(&other);
+    });
+}
+
+#[test]
 #[should_panic(expected = "opens no block")]
 fn children_of_a_line_that_opens_no_block() {
     // Asking for the children of a line that opens no block is a bug, caught when it's asked.
