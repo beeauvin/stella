@@ -118,19 +118,19 @@ pub fn fifo(path: &Path) {
     assert!(status.success(), "nothing is at {} yet, so a FIFO can be made there", path.display());
 }
 
-/// A lock takes away a file's or directory's permissions until it's dropped, when it puts back
+/// A mode guard gives a file or directory other permissions until it's dropped, when it puts back
 /// the ones it found.
 ///
 /// So even a test that fails can't leave behind a directory the next run can't remove.
 #[derive(Debug)]
-pub struct Lock {
+pub struct ModeGuard {
     path: PathBuf,
-    /// The permissions the path had before the lock, which dropping it puts back.
+    /// The permissions the path had before the guard, which dropping it puts back.
     permissions_before: fs::Permissions,
 }
 
-impl Lock {
-    /// Sets the permissions of what's at `path` to `mode` until the lock is dropped.
+impl ModeGuard {
+    /// Sets the permissions of what's at `path` to `mode` until the guard is dropped.
     ///
     /// # Panics
     ///
@@ -145,10 +145,10 @@ impl Lock {
     }
 }
 
-impl Drop for Lock {
+impl Drop for ModeGuard {
     fn drop(&mut self) {
         // A test may have failed already, so this mustn't panic too. If the permissions can't be
         // put back, the next run's `Scratch::fresh` says so when it can't remove the directory.
-        _ = fs::set_permissions(&self.path, self.permissions_before.clone());
+        let _: io::Result<()> = fs::set_permissions(&self.path, self.permissions_before.clone());
     }
 }

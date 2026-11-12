@@ -72,5 +72,5 @@ fn below_zero_is_a_bug() {
 #[test]
 #[should_panic(expected = "there's nothing to pick from")]
 fn picking_from_nothing_is_a_bug() {
-    _ = Rng::new(1).pick(&[]);
+    let _: &str = Rng::new(1).pick(&[]);
 }

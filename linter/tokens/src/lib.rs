@@ -11,8 +11,8 @@
 
 #![forbid(unsafe_code)]
 
-mod layout;
-mod problem;
-
 pub use layout::{Layout, lint_tokens};
 pub use problem::{Kind, Neighbors, Problem};
+
+mod layout;
+mod problem;

@@ -12,8 +12,8 @@
 
 #![forbid(unsafe_code)]
 
-mod lex;
-mod problem;
-
 pub use lex::{TOKENS_MAX, Token, TokenBuffer, TokenKind, Tokens, lex};
 pub use problem::{Kind, Problem};
+
+mod lex;
+mod problem;

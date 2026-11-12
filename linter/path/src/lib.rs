@@ -11,8 +11,8 @@
 
 #![forbid(unsafe_code)]
 
-mod path;
-mod problem;
-
 pub use path::{SourcePath, lint_path};
 pub use problem::Problem;
+
+mod path;
+mod problem;

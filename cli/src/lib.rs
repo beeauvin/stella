@@ -17,16 +17,6 @@
 
 #![forbid(unsafe_code)]
 
-mod arguments;
-mod lint;
-mod message;
-mod read;
-mod run;
-mod status;
-mod stored;
-mod unreached;
-mod walk;
-
 pub use arguments::{Command, Misuse, USAGE, command};
 pub use lint::{Linter, Outcome};
 pub use message::{Place, message, shown};
@@ -36,3 +26,13 @@ pub use status::Status;
 pub use stored::{STORED_ENTRIES_MAX, Unstored, stored};
 pub use unreached::Unreached;
 pub use walk::{Find, TooManyEntries, WALK_ENTRIES_MAX, walk};
+
+mod arguments;
+mod lint;
+mod message;
+mod read;
+mod run;
+mod status;
+mod stored;
+mod unreached;
+mod walk;

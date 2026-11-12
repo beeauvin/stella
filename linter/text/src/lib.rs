@@ -10,8 +10,8 @@
 
 #![forbid(unsafe_code)]
 
-mod problem;
-mod text;
-
 pub use problem::{Kind, Problem};
 pub use text::{LEVEL_SPACES, Text, lint};
+
+mod problem;
+mod text;

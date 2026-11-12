@@ -12,8 +12,8 @@
 
 #![forbid(unsafe_code)]
 
-mod count;
-mod position;
-
 pub use count::{SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 pub use position::{OnLine, Position};
+
+mod count;
+mod position;

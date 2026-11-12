@@ -161,12 +161,12 @@ fn messages() {
 #[should_panic(expected = "a problem's line is in its source")]
 fn a_position_past_the_last_line_is_a_bug() {
     // A source of one line has no third line to show.
-    _ = message(b"x.stella", at(b"}", 3, 1), Tab);
+    let _: String = message(b"x.stella", at(b"}", 3, 1), Tab);
 }
 
 #[test]
 #[should_panic(expected = "a problem's column is in its line or just past it")]
 fn a_position_past_the_end_of_its_line_is_a_bug() {
     // The line is one character, so column 2 is just past it, and column 3 is nowhere.
-    _ = message(b"x.stella", at(b"}", 1, 3), Tab);
+    let _: String = message(b"x.stella", at(b"}", 1, 3), Tab);
 }

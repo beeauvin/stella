@@ -14,7 +14,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use stella_cli::{Find, TooManyEntries, walk};
-use stella_test_support::{Lock, Scratch, fifo, write};
+use stella_test_support::{ModeGuard, Scratch, fifo, write};
 
 /// Returns a new, empty directory for one test to work in.
 fn fresh_directory(name: &str) -> PathBuf {
@@ -98,7 +98,7 @@ fn a_directory_that_cant_be_read_is_found_too() {
     write(&directory, "hello.stella", b"");
     write(&directory, "locked/inside.stella", b"");
     write(&directory, "programs/a.stella", b"");
-    let lock = Lock::new(directory.join("locked"), 0o000);
+    let guard = ModeGuard::new(directory.join("locked"), 0o000);
     let walked = walk(&directory).expect("the directory holds few entries");
     let [first, unreadable, last] = walked.as_slice() else {
         unreachable!("the walk finds a source, the locked directory and a source: {walked:?}");
@@ -115,9 +115,9 @@ fn a_directory_that_cant_be_read_is_found_too() {
     );
     assert_eq!(locked, b"locked");
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-    drop(lock);
+    drop(guard);
     // When it's the directory the walk starts in, it's called `.`.
-    let _lock = Lock::new(directory.clone(), 0o100);
+    let _guard = ModeGuard::new(directory.clone(), 0o100);
     assert_eq!(found(&directory), [(String::from("."), false)]);
 }
 

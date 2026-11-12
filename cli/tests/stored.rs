@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use stella_cli::{Unreached, Unstored, stored};
 use stella_linter_path::lint_path;
-use stella_test_support::{Lock, Scratch, write};
+use stella_test_support::{ModeGuard, Scratch, write};
 
 /// This is a program that passes, though nothing here reads it.
 const GOOD: &[u8] = b"function main() returns Void {\n}\n";
@@ -226,8 +226,8 @@ fn what_cant_be_found_says_why() {
     write(&directory, "file", b"");
     write(&directory, "locked/hello.stella", GOOD);
     write(&directory, "listless/hello.stella", GOOD);
-    let _locked = Lock::new(directory.join("locked"), 0o000);
-    let _listless = Lock::new(directory.join("listless"), 0o100);
+    let _locked = ModeGuard::new(directory.join("locked"), 0o000);
+    let _listless = ModeGuard::new(directory.join("listless"), 0o100);
     let unstored = |typed: &str| stored_of(&directory, typed).expect_err("it can't be found");
     for typed in ["missing.stella", "missing/hello.stella"] {
         let missing = unstored(typed);

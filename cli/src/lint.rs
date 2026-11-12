@@ -13,7 +13,7 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use stella_blocks::{NodeBuffer, nest};
+use stella_blocks::{Blocks, NodeBuffer, nest};
 use stella_lexer::{TokenBuffer, lex};
 use stella_linter_path::lint_path;
 use stella_linter_tokens::lint_tokens;
@@ -220,6 +220,6 @@ fn check(source: &[u8], tokens: &mut TokenBuffer, nodes: &mut NodeBuffer) -> Res
     // Nothing reads the blocks yet, since the grammar isn't built. They're still nested, so every
     // program that's linted goes through nesting's assertions, and a layout that nesting can't
     // hold stops here, where it's found, rather than when the grammar first meets it.
-    _ = nest(layout, nodes);
+    let _: Blocks<'_, '_> = nest(layout, nodes);
     Ok(())
 }

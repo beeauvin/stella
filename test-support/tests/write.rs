@@ -73,5 +73,5 @@ fn slice_returns_the_part_at_a_range() {
 #[should_panic(expected = "starts and ends between characters")]
 fn slicing_inside_a_character_is_a_bug() {
     // `é` is two bytes, so byte 3 is in the middle of it.
-    _ = slice("a é b", 2..3);
+    let _: &str = slice("a é b", 2..3);
 }

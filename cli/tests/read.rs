@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use stella_cli::{READ_INTERRUPTIONS_MAX, SourceBuffer, Unreached, Unread, fill, read};
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
-use stella_test_support::{Lock, Scratch, fifo, write};
+use stella_test_support::{ModeGuard, Scratch, fifo, write};
 
 /// One answer a scripted reader gives to a read.
 #[derive(Clone, Copy)]
@@ -182,7 +182,7 @@ fn what_cant_be_read_says_why() {
     fifo(&directory.join("pipe.stella"));
     write(&directory, "locked.stella", b"// x\n");
     write(&directory, "file", b"");
-    let _lock = Lock::new(directory.join("locked.stella"), 0o000);
+    let _guard = ModeGuard::new(directory.join("locked.stella"), 0o000);
     let mut buffer = SourceBuffer::new();
     let mut unread = |name: &str| {
         read(&directory.join(name), &mut buffer).map(<[u8]>::len).expect_err("it can't be read")

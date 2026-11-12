@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use stella_cli::{STORED_ENTRIES_MAX, WALK_ENTRIES_MAX};
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
-use stella_test_support::{Lock, Scratch, fifo, write};
+use stella_test_support::{ModeGuard, Scratch, fifo, write};
 
 /// This is the smallest program, which passes.
 const GOOD: &[u8] = b"function main() returns Void {\n}\n";
@@ -208,7 +208,7 @@ fn an_unreadable_file() {
     // the system gives.
     let directory = fresh_directory("unreadable-file");
     write(&directory, "hello.stella", GOOD);
-    let _lock = Lock::new(directory.join("hello.stella"), 0o000);
+    let _guard = ModeGuard::new(directory.join("hello.stella"), 0o000);
     // The path is shown as it was given.
     for path in ["hello.stella", "./hello.stella"] {
         let sentence = "this file can't be read: Permission denied (os error 13).";
@@ -226,8 +226,8 @@ fn unreadable_paths() {
     write(&directory, "locked/hello.stella", GOOD);
     write(&directory, "listless/hello.stella", GOOD);
     write(&directory, "file", b"");
-    let _locked = Lock::new(directory.join("locked"), 0o000);
-    let _listless = Lock::new(directory.join("listless"), 0o100);
+    let _locked = ModeGuard::new(directory.join("locked"), 0o000);
+    let _listless = ModeGuard::new(directory.join("listless"), 0o100);
     let listless =
         "a directory on the way to this file can't be read: Permission denied (os error 13).";
     for (path, sentence) in [
@@ -438,7 +438,7 @@ fn the_worst_status_wins() {
         let directory = fresh_directory(&format!("worst-{refused}"));
         write(&directory, refused, COMMENT_SHARES_LINE);
         write(&directory, unreadable, GOOD);
-        let _lock = Lock::new(directory.join(unreadable), 0o000);
+        let _guard = ModeGuard::new(directory.join(unreadable), 0o000);
         let refusal = format!("{refused}{COMMENT_SHARES_LINE_MESSAGE}");
         let failure =
             format!("{unreadable}: this file can't be read: Permission denied (os error 13).\n");
@@ -501,7 +501,7 @@ fn code_that_cant_be_lexed() {
     write(&directory, "b.stella", UNEXPECTED);
     write(&directory, "c.stella", GOOD);
     write(&directory, "d.stella", GOOD);
-    let _lock = Lock::new(directory.join("d.stella"), 0o000);
+    let _guard = ModeGuard::new(directory.join("d.stella"), 0o000);
     let expected = exits(
         2,
         &format!(
@@ -574,7 +574,7 @@ fn code_in_another_layout() {
     write(&directory, "b.stella", EMPTY_BODY);
     write(&directory, "c.stella", UNEXPECTED);
     write(&directory, "d.stella", GOOD);
-    let _lock = Lock::new(directory.join("d.stella"), 0o000);
+    let _guard = ModeGuard::new(directory.join("d.stella"), 0o000);
     let expected = exits(
         2,
         &format!(
@@ -624,7 +624,7 @@ fn unreadable_directories() {
     let directory = fresh_directory("unreadable-directory");
     write(&directory, "hello.stella", COMMENT_SHARES_LINE);
     write(&directory, "locked/hello.stella", GOOD);
-    let lock = Lock::new(directory.join("locked"), 0o000);
+    let guard = ModeGuard::new(directory.join("locked"), 0o000);
     let expected = exits(
         2,
         &format!(
@@ -633,9 +633,9 @@ fn unreadable_directories() {
         ),
     );
     assert_eq!(stella(&directory, &["lint"]), expected);
-    drop(lock);
+    drop(guard);
     // When it's the directory the walk starts in, it's called `.`.
-    let _lock = Lock::new(directory.clone(), 0o100);
+    let _guard = ModeGuard::new(directory.clone(), 0o100);
     let expected = exits(2, ".: this directory can't be read: Permission denied (os error 13).\n");
     assert_eq!(stella(&directory, &["lint"]), expected);
 }

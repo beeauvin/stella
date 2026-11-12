@@ -5,7 +5,7 @@
 //! Unit tests for examples. They come back in the order they were added, each with the line that
 //! added it, and a test can't pass by adding examples and never checking them.
 
-use stella_test_support::{EXAMPLES_MAX, Examples};
+use stella_test_support::{EXAMPLES_MAX, Example, Examples};
 
 #[test]
 fn examples_come_back_in_order_with_where_they_were_added() {
@@ -27,7 +27,7 @@ fn examples_come_back_in_order_with_where_they_were_added() {
 #[test]
 #[should_panic(expected = "a test tries at least one example")]
 fn taking_no_examples_is_a_bug() {
-    _ = Examples::<()>::new().take();
+    let _: Vec<Example<()>> = Examples::<()>::new().take();
 }
 
 #[test]

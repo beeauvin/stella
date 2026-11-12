@@ -9,7 +9,7 @@ use std::fs;
 use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
-use stella_test_support::{Lock, Scratch, fifo, write};
+use stella_test_support::{ModeGuard, Scratch, fifo, write};
 
 /// Returns a new, empty directory for one test to work in.
 fn fresh_directory(name: &str) -> PathBuf {
@@ -46,8 +46,8 @@ fn fifo_makes_a_fifo() {
 }
 
 #[test]
-fn a_lock_holds_until_its_dropped() {
-    // While the lock is held the file has the mode it was given. Once it's dropped the file has
+fn a_mode_guard_holds_until_its_dropped() {
+    // While the guard is held the file has the mode it was given. Once it's dropped the file has
     // the mode it had before, whatever that was, so it can be read and removed again.
     let directory = fresh_directory("lock");
     write(&directory, "locked.txt", b"x");
@@ -57,9 +57,9 @@ fn a_lock_holds_until_its_dropped() {
     for mode_before in [0o640, 0o755] {
         fs::set_permissions(&path, fs::Permissions::from_mode(mode_before))
             .expect("a test's own file takes the permissions it's given");
-        let lock = Lock::new(path.clone(), 0o000);
+        let guard = ModeGuard::new(path.clone(), 0o000);
         assert_eq!(mode(&path), 0o000);
-        drop(lock);
+        drop(guard);
         assert_eq!(mode(&path), mode_before);
     }
 }

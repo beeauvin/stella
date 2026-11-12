@@ -837,7 +837,7 @@ fn text_of_a_token_from_a_longer_source_is_a_bug() {
     let longer = lex(longer, &mut longer_buffer).expect("source should lex");
     let shorter = lex(shorter, &mut shorter_buffer).expect("source should lex");
     let last = longer.as_slice().last().expect("the smallest program has tokens");
-    _ = shorter.text(last);
+    let _: &str = shorter.text(last);
 }
 
 #[test]

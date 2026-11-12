@@ -555,7 +555,7 @@ fn tokens_of_a_node_from_another_source_is_a_bug() {
 fn children_of_a_line_that_opens_no_block() {
     // Asking for the children of a line that opens no block is a bug, caught when it's asked.
     with_blocks("// a\n", |blocks| {
-        _ = blocks.children(0);
+        let _: Children<'_> = blocks.children(0);
     });
 }
 
