@@ -61,7 +61,9 @@ small fixture for each lint the workspace claims to enforce, and fails unless
 that lint is what's reported.
 
 The lints are strict on purpose, and they're declared once, in the root
-`Cargo.toml` and `clippy.toml`. Every crate inherits them.
+`Cargo.toml` and `clippy.toml`. Every crate inherits them. Each enforces a rule
+with a short code, like `TS-BOUNDED`, and
+[the rules the code is held to](docs/rules.md) says what each one means.
 
 ## How it's laid out
 

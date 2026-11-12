@@ -8,7 +8,8 @@
 //! link to a page leads to a page. Another holds every crate to what no tool makes it do: be a
 //! member of the workspace, inherit its lints, forbid `unsafe`, and carry the license. A third
 //! holds together what the repository says in more than one place: the Rust it's pinned to, the
-//! command that runs everything, and what Git is told to keep.
+//! command that runs everything, and what Git is told to keep. A fourth holds the rules page to
+//! the rules the code cites.
 //!
 //! They're in `tests/`, so they run with every `cargo test`. This library holds only what they
 //! share: where the repository is, and how to read it.
@@ -16,13 +17,27 @@
 #![forbid(unsafe_code)]
 
 use std::env;
-use std::fs::File;
+use std::ffi::OsStr;
+use std::fs::{self, File};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 /// This is the most bytes of a file a test reads. It's many times the longest page, manifest or
 /// source file in the repository, and it bounds what one read can hold.
 pub const TEXT_BYTES_MAX: u64 = 1024 * 1024;
+
+/// This is the most files and directories one walk looks at. It's far more than the repository
+/// holds, and it keeps a walk bounded.
+pub const ENTRIES_MAX: usize = 10_000;
+
+/// Which files a walk is looking for.
+#[derive(Clone, Copy, Debug)]
+pub enum Wanted {
+    /// Files with exactly this name.
+    Named(&'static str),
+    /// Files with this extension.
+    WithExtension(&'static str),
+}
 
 /// Returns the repository's root, which holds this crate's directory.
 ///
@@ -88,4 +103,45 @@ pub fn members_in(manifest: &str) -> Vec<String> {
     };
     // The array's strings are between its quotes, so they're every second piece.
     array.split('"').skip(1).step_by(2).map(String::from).collect()
+}
+
+/// Returns every file under `directory` that's `wanted`, sorted by path.
+///
+/// It doesn't go into `target` or into anything whose name starts with `.`, where nothing
+/// authored lives that a test here reads. It walks with a stack rather than recursion.
+///
+/// # Panics
+///
+/// Panics if a directory can't be read, holds a name that isn't UTF-8, or the walk passes
+/// `ENTRIES_MAX`. A walk that quietly found less would let the tests that lean on it pass.
+#[must_use]
+pub fn files_under(directory: &Path, wanted: Wanted) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut directories = vec![directory.to_path_buf()];
+    let mut seen_count: usize = 0;
+    while let Some(next) = directories.pop() {
+        for entry in fs::read_dir(&next).expect("a directory of the repository can be read") {
+            let path = entry.expect("an entry of the repository can be read").path();
+            seen_count += 1;
+            assert!(seen_count <= ENTRIES_MAX, "more than {ENTRIES_MAX} entries in the repository");
+            let name = path.file_name().and_then(OsStr::to_str);
+            let name = name.expect("everything in the repository has a name that's UTF-8");
+            if name.starts_with('.') || name == "target" {
+                continue;
+            }
+            let is_wanted = match wanted {
+                Wanted::Named(wanted_name) => name == wanted_name,
+                Wanted::WithExtension(extension) => path.extension() == Some(OsStr::new(extension)),
+            };
+            if path.is_dir() {
+                directories.push(path);
+            } else if is_wanted {
+                found.push(path);
+            } else {
+                // Any other file isn't one that was asked for.
+            }
+        }
+    }
+    found.sort();
+    found
 }

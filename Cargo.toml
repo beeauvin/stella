@@ -24,7 +24,8 @@ repository = "https://github.com/voxstella/stella"
 publish = false
 
 # One set of lints for every crate, which a crate inherits with `[lints] workspace = true`. Each
-# line names the Tiger Style rule it enforces, or `hygiene` where it enforces none in particular.
+# line names the rule it enforces, or `hygiene` where it enforces none in particular. What each
+# rule means is in `docs/rules.md`.
 # The groups are denied whole at a lower priority, so a line that names one lint overrides its
 # group.
 [workspace.lints.rust]

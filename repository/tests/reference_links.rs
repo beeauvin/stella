@@ -12,20 +12,15 @@
 //! there, and the front page links every other page.
 
 use std::ffi::OsStr;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use stella_repository::{root, text_of};
+use stella_repository::{Wanted, files_under, root, text_of};
 use stella_test_support::slice;
-
-/// This is the most files the walk will look at. It's far more than the repository holds, and
-/// it keeps the walk bounded.
-const FILES_MAX: usize = 10_000;
 
 /// Returns every page of the reference, each with its text.
 fn pages() -> Vec<(PathBuf, String)> {
     let reference = root().join("docs/reference");
-    let pages: Vec<(PathBuf, String)> = files_with_extension(&reference, "md")
+    let pages: Vec<(PathBuf, String)> = files_under(&reference, Wanted::WithExtension("md"))
         .into_iter()
         .map(|page| {
             let text = text_of(&page);
@@ -35,30 +30,6 @@ fn pages() -> Vec<(PathBuf, String)> {
     // A walk that silently found nothing would let every test here pass.
     assert!(!pages.is_empty(), "found no pages in {}", reference.display());
     pages
-}
-
-/// Returns every file under `directory` whose name ends in `.` and `extension`. It walks with a
-/// stack rather than recursion, and it stops with a panic past `FILES_MAX`.
-fn files_with_extension(directory: &Path, extension: &str) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut directories = vec![directory.to_path_buf()];
-    let mut seen_count: usize = 0;
-    while let Some(next) = directories.pop() {
-        for entry in fs::read_dir(&next).expect("a directory of the repository can be read") {
-            let path = entry.expect("an entry of the repository can be read").path();
-            seen_count += 1;
-            let under = directory.display();
-            assert!(seen_count <= FILES_MAX, "more than {FILES_MAX} files under {under}");
-            if path.is_dir() {
-                directories.push(path);
-            } else if path.extension() == Some(OsStr::new(extension)) {
-                found.push(path);
-            } else {
-                // Any other file isn't one that was asked for.
-            }
-        }
-    }
-    found
 }
 
 /// Returns every test link in `text`, as the test it names and its file: [`name`](file.rs). Any
@@ -190,14 +161,11 @@ fn every_test_link_in_the_reference_leads_to_that_test() {
         );
         for (name, target) in links.expect("no Rust file is named outside a test link") {
             let file = page.parent().expect("a page is in a directory").join(target);
-            let tests = fs::read_to_string(&file);
-            let unread = tests.as_ref().err();
+            // The read below says so too, but not which page's link led there.
+            assert!(file.is_file(), "{page_name}: `{name}` links to {target}, which isn't there");
+            let tests = text_of(&file);
             assert!(
-                unread.is_none(),
-                "{page_name}: `{name}` links to {target}, which can't be read: {unread:?}"
-            );
-            assert!(
-                test_names(&tests.expect("the file was read")).contains(&name),
+                test_names(&tests).contains(&name),
                 "{page_name}: `{name}` links to {target}, which has no test of that name",
             );
             links_count += 1;

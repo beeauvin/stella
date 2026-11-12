@@ -11,15 +11,9 @@
 //! tested with it. These tests hold every crate to all four, and every source file to carrying
 //! the license.
 
-use std::ffi::OsStr;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use stella_repository::{members, members_in, root, text_of};
-
-/// This is the most files and directories a walk here will look at. It's far more than the
-/// repository holds, and it keeps the walk bounded.
-const ENTRIES_MAX: usize = 10_000;
+use stella_repository::{Wanted, files_under, members, members_in, root, text_of};
 
 /// These are the lines every source file starts with.
 const LICENSE: &str = "\
@@ -37,49 +31,6 @@ const INHERITED: [&str; 6] = [
     "repository.workspace = true",
     "publish.workspace = true",
 ];
-
-/// Which files a walk is looking for.
-#[derive(Clone, Copy)]
-enum Wanted {
-    /// Files with exactly this name.
-    Named(&'static str),
-    /// Files with this extension.
-    WithExtension(&'static str),
-}
-
-/// Returns every file under `directory` that's `wanted`, sorted by path. It doesn't go into
-/// `target` or into anything whose name starts with `.`, where no crate lives. It walks with a
-/// stack rather than recursion, and it stops with a panic past `ENTRIES_MAX`.
-fn files_under(directory: &Path, wanted: Wanted) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut directories = vec![directory.to_path_buf()];
-    let mut seen_count: usize = 0;
-    while let Some(next) = directories.pop() {
-        for entry in fs::read_dir(&next).expect("a directory of the repository can be read") {
-            let path = entry.expect("an entry of the repository can be read").path();
-            seen_count += 1;
-            assert!(seen_count <= ENTRIES_MAX, "more than {ENTRIES_MAX} entries in the repository");
-            let name = path.file_name().and_then(OsStr::to_str);
-            let name = name.expect("everything in the repository has a name that's UTF-8");
-            if name.starts_with('.') || name == "target" {
-                continue;
-            }
-            let is_wanted = match wanted {
-                Wanted::Named(wanted_name) => name == wanted_name,
-                Wanted::WithExtension(extension) => path.extension() == Some(OsStr::new(extension)),
-            };
-            if path.is_dir() {
-                directories.push(path);
-            } else if is_wanted {
-                found.push(path);
-            } else {
-                // Any other file isn't one that was asked for.
-            }
-        }
-    }
-    found.sort();
-    found
-}
 
 /// Says whether `manifest`, a crate's manifest, inherits the workspace's lints: whether it has a
 /// `[lints]` table whose first line is `workspace = true`.
@@ -176,6 +127,28 @@ fn no_file_switches_a_lint_off_for_a_whole_crate_or_module() {
         let text = text_of(&source);
         let blanket = blanket_lint(&text);
         assert!(blanket.is_none(), "{} holds {blanket:?}", source.display());
+    }
+}
+
+#[test]
+fn no_line_is_wider_than_the_formatter_keeps_code() {
+    // The formatter wraps code at the width `rustfmt.toml` sets, but it can't wrap a comment or
+    // a string, and it never sees a manifest. So every line of every source file and manifest is
+    // measured against that same width here.
+    let rustfmt = text_of(&root().join("rustfmt.toml"));
+    let width = rustfmt.split('\n').find_map(|line| line.strip_prefix("max_width = "));
+    let width = width.and_then(|width| width.parse::<usize>().ok());
+    let width = width.expect("rustfmt.toml sets `max_width` to a number");
+    for extension in ["rs", "toml"] {
+        let files = files_under(&root(), Wanted::WithExtension(extension));
+        assert!(!files.is_empty(), "found no .{extension} files in the repository");
+        for file in files {
+            for (line, number) in text_of(&file).split('\n').zip(1_u32..) {
+                let columns_count = line.chars().count();
+                let name = file.display();
+                assert!(columns_count <= width, "{name}:{number} is {columns_count} columns wide");
+            }
+        }
     }
 }
 

@@ -441,10 +441,8 @@ mod tests {
         assert_eq!(failures_in(defaults, &[]), [""; 0]);
         assert_eq!(
             failures_in(defaults, &[own]),
-            [
-                "under Clippy's own settings, `settings-too_many_lines` should pass, and was reported \
-             as clippy::too_many_lines."
-            ]
+            ["under Clippy's own settings, `settings-too_many_lines` should pass, and was \
+                 reported as clippy::too_many_lines."]
         );
     }
 
