@@ -1,5 +1,42 @@
-/target
-/.build
+# Everything is ignored unless a line below lets it through. A directory is let
+# through first, then what's in it, because Git won't look inside a directory
+# it ignores.
+*
 
-# Documentation
-docs/.obsidian/workspace.json
+# The root's own files.
+!/.gitignore
+!/Cargo.lock
+!/Cargo.toml
+!/clippy.toml
+!/license.md
+!/mise.toml
+!/readme.md
+!/rustfmt.toml
+
+# The workflows GitHub runs.
+!/.github/
+!/.github/**
+
+# The crates.
+!/blocks/
+!/blocks/**
+!/checks/
+!/checks/**
+!/cli/
+!/cli/**
+!/lexer/
+!/lexer/**
+!/linter/
+!/linter/**
+!/source/
+!/source/**
+!/test-support/
+!/test-support/**
+
+# The documentation, which is also an Obsidian vault.
+!/docs/
+!/docs/**
+
+# What the lines above let through, but nobody wrote.
+.DS_Store
+/docs/.obsidian/workspace.json
