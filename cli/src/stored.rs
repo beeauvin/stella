@@ -37,10 +37,10 @@ use crate::walk::WALK_ENTRIES_MAX;
 
 /// This is the most entries the search looks at, across every directory on the way to one
 /// path. It's the walk's bound, so the compiler has one number for how far it looks.
-pub const STORED_ENTRIES_MAX: u32 = WALK_ENTRIES_MAX;
+pub const SEARCH_ENTRIES_MAX: u32 = WALK_ENTRIES_MAX;
 
 const _: () = assert!(
-    STORED_ENTRIES_MAX == 10_000,
+    SEARCH_ENTRIES_MAX == 10_000,
     "`TooManyEntries`'s sentence names the bound, so a new bound needs a new sentence"
 );
 
@@ -54,7 +54,7 @@ pub enum SearchFailure {
     Access(AccessFailure),
     /// A directory on the way couldn't be listed.
     DirectoryUnreadable(Reason),
-    /// The directories on the way hold more than `STORED_ENTRIES_MAX` entries between them.
+    /// The directories on the way hold more than `SEARCH_ENTRIES_MAX` entries between them.
     TooManyEntries,
 }
 
@@ -88,7 +88,7 @@ impl fmt::Display for SearchFailure {
 ///
 /// Never, whatever the path or the filesystem holds. The assertions check this function's own
 /// work.
-pub fn stored(root: &Path, typed: SourcePath<'_>) -> Result<Vec<u8>, SearchFailure> {
+pub fn search_for_stored(root: &Path, typed: SourcePath<'_>) -> Result<Vec<u8>, SearchFailure> {
     let mut stored: Vec<u8> = Vec::new();
     // This counts the entries looked at across every directory on the way, to keep it bounded.
     let mut entries_count: u32 = 0;
@@ -108,7 +108,7 @@ pub fn stored(root: &Path, typed: SourcePath<'_>) -> Result<Vec<u8>, SearchFailu
         stored.extend_from_slice(&name);
     }
     assert!(!stored.is_empty(), "a path has at least one part");
-    assert!(entries_count <= STORED_ENTRIES_MAX, "the search stopped at the bound");
+    assert!(entries_count <= SEARCH_ENTRIES_MAX, "the search stopped at the bound");
     Ok(stored)
 }
 
@@ -161,12 +161,12 @@ fn stored_name(
     reached: FileId,
     entries_count: &mut u32,
 ) -> Result<Vec<u8>, SearchFailure> {
-    assert!(*entries_count <= STORED_ENTRIES_MAX, "the search stops at the bound");
+    assert!(*entries_count <= SEARCH_ENTRIES_MAX, "the search stops at the bound");
     let mut found: Option<(Vec<u8>, Closeness)> = None;
     for entry in list(part.directory).map_err(SearchFailure::DirectoryUnreadable)? {
         let entry = entry.map_err(SearchFailure::DirectoryUnreadable)?;
         *entries_count += 1;
-        if *entries_count > STORED_ENTRIES_MAX {
+        if *entries_count > SEARCH_ENTRIES_MAX {
             return Err(SearchFailure::TooManyEntries);
         }
         let name = entry.name();
@@ -177,7 +177,7 @@ fn stored_name(
             found = Some((name.as_bytes().to_vec(), closeness));
         }
     }
-    assert!(*entries_count <= STORED_ENTRIES_MAX, "the search stopped at the bound");
+    assert!(*entries_count <= SEARCH_ENTRIES_MAX, "the search stopped at the bound");
     let (name, _) = found.ok_or(SearchFailure::Access(AccessFailure::Missing))?;
     Ok(name)
 }

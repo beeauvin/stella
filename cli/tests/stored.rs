@@ -17,7 +17,7 @@ use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use stella_cli::{AccessFailure, SearchFailure, stored};
+use stella_cli::{AccessFailure, SearchFailure, search_for_stored};
 use stella_linter_path::lint_path;
 use stella_test_support::{ModeGuard, Scratch, write};
 
@@ -78,7 +78,7 @@ fn fresh_directory(name: &str) -> PathBuf {
 
 /// Returns `typed`, which must pass the path lint, as it's stored under `root`.
 fn stored_of(root: &Path, typed: &str) -> Result<Vec<u8>, SearchFailure> {
-    stored(root, lint_path(typed).expect("the typed path should pass the path lint"))
+    search_for_stored(root, lint_path(typed).expect("the typed path should pass the path lint"))
 }
 
 /// Checks that `typed` is stored under `root` as `expected`.

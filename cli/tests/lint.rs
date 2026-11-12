@@ -16,7 +16,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use stella_cli::{STORED_ENTRIES_MAX, WALK_ENTRIES_MAX};
+use stella_cli::{SEARCH_ENTRIES_MAX, WALK_ENTRIES_MAX};
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
 use stella_test_support::{ModeGuard, Scratch, fifo, write};
 
@@ -366,7 +366,7 @@ fn a_named_path_is_bounded() {
     // are looked at in all. Here the start directory holds one, `programs`, and `programs` holds
     // the rest.
     let directory = fresh_directory("named-bounded");
-    let entries_max = usize_from_u32(STORED_ENTRIES_MAX);
+    let entries_max = usize_from_u32(SEARCH_ENTRIES_MAX);
     write(&directory, "programs/hello.stella", GOOD);
     for index in 0..entries_max - 2 {
         write(&directory, &format!("programs/{index}.txt"), b"");

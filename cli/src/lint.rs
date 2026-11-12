@@ -22,7 +22,7 @@ use stella_source::Position;
 use crate::message::{Place, message};
 use crate::read::{SourceBuffer, read};
 use crate::status::Status;
-use crate::stored::{SearchFailure, stored};
+use crate::stored::{SearchFailure, search_for_stored};
 use crate::walk::{Find, walk};
 
 /// An outcome is what linting one program came to.
@@ -90,7 +90,7 @@ impl<'root> Linter<'root> {
         };
         // On macOS, which ignores case, `hello.stella` can name `Hello.stella`, so the path is
         // found as it's stored before it's checked again.
-        match stored(self.root, typed_path) {
+        match search_for_stored(self.root, typed_path) {
             Ok(as_stored) => self.lint_stored(ProgramPaths { typed, stored: &as_stored }),
             Err(failure @ SearchFailure::Symlink) => {
                 Outcome::Refused(message(typed, Place::File, failure))
