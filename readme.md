@@ -1,6 +1,6 @@
 # Stella
 
-![license](https://img.shields.io/github/license/beeauvin/stella)
+![license](https://img.shields.io/github/license/voxstella/stella)
 
 Stella is a small, correct systems language for software that knows its limits.
 
