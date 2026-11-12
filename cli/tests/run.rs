@@ -31,12 +31,12 @@ fn fresh_directory(name: &str) -> PathBuf {
 }
 
 /// A writer that takes a few writes and then fails every one, and counts those it took.
-struct Closing {
+struct ClosingWriter {
     writes_left: u32,
     writes_taken: u32,
 }
 
-impl Write for Closing {
+impl Write for ClosingWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.writes_left == 0 {
             return Err(io::Error::from(io::ErrorKind::BrokenPipe));
@@ -54,14 +54,14 @@ impl Write for Closing {
 /// A writer that holds what it's given until it's flushed, as a buffered stderr does. A flush can
 /// be made to fail, as it does when stderr can't be written.
 #[derive(Default)]
-struct Holding {
+struct HoldingWriter {
     held: Vec<u8>,
     written: Vec<u8>,
     flushes_count: u32,
     flush_fails: bool,
 }
 
-impl Write for Holding {
+impl Write for HoldingWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.held.extend_from_slice(buf);
         Ok(buf.len())
@@ -147,7 +147,7 @@ fn a_message_that_cant_be_written_is_an_error() {
         (&["lint"], 3, 3),
     ] {
         let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
-        let mut stderr = Closing { writes_left, writes_taken: 0 };
+        let mut stderr = ClosingWriter { writes_left, writes_taken: 0 };
         let error = run(&arguments, &directory, &mut stderr).expect_err("the write fails");
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe, "for {arguments:?}");
         assert_eq!(stderr.writes_taken, writes_taken, "for {arguments:?}");
@@ -169,7 +169,7 @@ fn everything_said_is_flushed_before_the_run_ends() {
         [(&["lint", "a.stella"][..], one, 1), (&["bild"], misuse, 1), (&["lint"], both, 2)]
     {
         let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
-        let mut stderr = Holding::default();
+        let mut stderr = HoldingWriter::default();
         let status = run(&arguments, &directory, &mut stderr).expect("the writer takes it all");
         assert_ne!(status, Status::Passed, "for {arguments:?}");
         assert_eq!(stderr.held, b"", "for {arguments:?}");
@@ -187,7 +187,7 @@ fn a_flush_that_fails_is_an_error() {
     write(&directory, "good.stella", GOOD);
     for arguments in [&["lint", "a.stella"][..], &["bild"], &["lint"], &["lint", "good.stella"]] {
         let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
-        let mut stderr = Holding { flush_fails: true, ..Holding::default() };
+        let mut stderr = HoldingWriter { flush_fails: true, ..HoldingWriter::default() };
         let error = run(&arguments, &directory, &mut stderr).expect_err("the flush fails");
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe, "for {arguments:?}");
     }

@@ -54,19 +54,19 @@ pub enum Find {
 }
 
 impl Find {
+    /// Returns a find for `directory`, which couldn't be read for `error`. The empty path is the
+    /// root, called `.`.
+    fn unreadable(directory: Vec<u8>, error: Reason) -> Self {
+        let directory = if directory.is_empty() { b".".to_vec() } else { directory };
+        Self::Unreadable { directory, error }
+    }
+
     /// Returns the find's path, which it's sorted by.
     fn path(&self) -> &[u8] {
         match self {
             Self::Source(path) => path,
             Self::Unreadable { directory, .. } => directory,
         }
-    }
-
-    /// Returns a find for `directory`, which couldn't be read for `error`. The empty path is the
-    /// root, called `.`.
-    fn unreadable(directory: Vec<u8>, error: Reason) -> Self {
-        let directory = if directory.is_empty() { b".".to_vec() } else { directory };
-        Self::Unreadable { directory, error }
     }
 }
 

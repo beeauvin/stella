@@ -18,7 +18,7 @@ use stella_blocks::{Blocks, NodeBuffer, nest};
 use stella_lexer::{TokenBuffer, lex};
 use stella_linter_path::{Problem, SourcePath, lint_path};
 use stella_linter_tokens::lint_tokens;
-use stella_source::Position;
+use stella_source::{Position, usize_from_u32};
 
 use crate::message::{Place, message};
 use crate::read::{SourceBuffer, read};
@@ -147,8 +147,7 @@ impl<'root> Linter<'root> {
                 messages_count += 1;
             }
         }
-        let said_once_each =
-            usize::try_from(messages_count).is_ok_and(|count| count <= finds.len());
+        let said_once_each = usize_from_u32(messages_count) <= finds.len();
         assert!(said_once_each, "each find says one message at most");
         let silent = messages_count == 0;
         assert_eq!(status == Status::Passed, silent, "only a program that passes says nothing");
@@ -164,9 +163,13 @@ impl<'root> Linter<'root> {
             Ok(stored_path) => stored_path,
             Err(problem) => return Outcome::Refused(message(stored, Place::File, problem)),
         };
-        let file = self.root.join(stored_path.normalized());
-        // Joining a path that's absolute, or that climbs with `..`, would leave the root.
-        assert!(file.starts_with(self.root), "a path that passed the lint stays under the root");
+        // Joining a path that's absolute would put the root aside, and one that climbs with `..`
+        // would leave it. The path lint refuses both, and the file is read on its word.
+        let normalized = stored_path.normalized();
+        assert!(!normalized.starts_with('/'), "a path that passed the lint isn't absolute");
+        let climbs = normalized.split('/').any(|part| part == "..");
+        assert!(!climbs, "a path that passed the lint never climbs with `..`");
+        let file = self.root.join(normalized);
         let source = match read(&file, &mut self.source) {
             Ok(source) => source,
             Err(failure) => return Outcome::Failed(message(typed, Place::File, failure)),

@@ -118,7 +118,7 @@ fn a_path_stored_as_typed_comes_back_as_typed() {
     let directory = fresh_directory("as-typed");
     write(&directory, "hello.stella", GOOD);
     write(&directory, "programs/examples/hello-world.stella", GOOD);
-    // Other entries beside them, a look-alike in another case included, are never taken instead.
+    // Other entries beside them, a source and a file that isn't one, are never taken instead.
     write(&directory, "programs/examples/other.stella", GOOD);
     write(&directory, "notes.txt", b"");
     stores(&directory, "hello.stella", "hello.stella");
