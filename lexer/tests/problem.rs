@@ -5,10 +5,11 @@
 //! Unit tests for the sentences the lexer's problems print. Each sentence is pinned exactly,
 //! because people and tools both read them.
 
-use stella_lexer::Kind::*;
+use stella_lexer::Kind::{NameNotSnakeCase, TypeNameNotPascalCase, Unexpected};
 
 #[test]
 fn sentences() {
+    // Every kind of problem the lexer has, each with its sentence written out whole.
     for (kind, sentence) in [
         (Unexpected(';'), "`;` can't start a token."),
         (Unexpected('9'), "`9` can't start a token."),

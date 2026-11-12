@@ -16,12 +16,17 @@
 //! them.
 
 use std::cell::RefCell;
+use std::fmt::Debug;
+use std::ops::Range;
 
 use stella_lexer::Kind::{NameNotSnakeCase, TypeNameNotPascalCase, Unexpected};
-use stella_lexer::TokenKind::*;
+use stella_lexer::TokenKind::{
+    BraceClose, BraceOpen, Comment, Function, Name, ParenClose, ParenOpen, Returns, TypeName,
+};
 use stella_lexer::{Kind, Problem, TOKENS_MAX, TokenBuffer, TokenKind, Tokens, lex};
 use stella_linter_text::lint;
-use stella_source::{Position, SOURCE_BYTES_MAX};
+use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
+use stella_test_support::Rng;
 
 /// An expected token: its kind, its line and column, and its text.
 type Expected<'source> = (TokenKind, u32, u32, &'source str);
@@ -41,9 +46,9 @@ thread_local! {
 fn tokens(source: &str) -> Vec<Expected<'_>> {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
     BUFFER.with_borrow_mut(|buffer| {
-        let tokens = lex(text, buffer);
-        let tokens = tokens.unwrap_or_else(|problem| panic!("{source:?} should lex: {problem:?}"));
-        expected_of(source, &tokens)
+        let lexed = lex(text, buffer);
+        assert!(lexed.is_ok(), "{source:?} should lex: {:?}", lexed.as_ref().err());
+        expected_of(source, &lexed.expect("it lexed, as just asserted"))
     })
 }
 
@@ -58,9 +63,10 @@ fn expected_of<'source>(
         .iter()
         .map(|token| {
             let text = tokens.text(token);
-            let start = token.start as usize;
-            assert_eq!(text.as_ptr(), source[start..].as_ptr(), "{text:?} starts at its start");
-            assert_eq!(text.len(), token.length as usize, "{text:?} is its length");
+            let start = usize_from_u32(token.start);
+            let at_start = source.as_bytes()[start..].as_ptr();
+            assert_eq!(text.as_ptr(), at_start, "{text:?} starts at its start");
+            assert_eq!(text.len(), usize_from_u32(token.length), "{text:?} is its length");
             (token.kind, token.position.line(), token.position.column(), text)
         })
         .collect();
@@ -80,13 +86,18 @@ fn assert_in_place(source: &str, found: &[Expected<'_>]) {
         let start = start.expect("a token's text is in the source");
         assert!(start + text.len() <= source.len(), "a token's text is in the source");
         assert!(start >= index, "tokens come in order, and don't overlap");
-        assert_passed_over(&source[index..start]);
-        advance(&source[index..start], &mut line, &mut column);
+        assert_passed_over(slice(source, index..start));
+        advance(slice(source, index..start), &mut line, &mut column);
         assert_eq!((token_line, token_column), (line, column), "for {text:?}");
         advance(text, &mut line, &mut column);
         index = start + text.len();
     }
-    assert_passed_over(&source[index..]);
+    assert_passed_over(slice(source, index..source.len()));
+}
+
+/// Returns the part of `text` at `range`, which starts and ends between characters.
+fn slice(text: &str, range: Range<usize>) -> &str {
+    text.get(range).expect("the range starts and ends between characters")
 }
 
 /// Checks that `passed`, which the lexer passed over, is only spaces and line ends.
@@ -115,11 +126,12 @@ fn lexes(source: &str, expected: &[Expected<'_>]) {
     assert_eq!(tokens(source), expected, "for {source:?}");
 }
 
-/// Lints `source`, which must pass, and then lexes it, which must refuse it with `kind` at `line`
-/// and `column`. The oracle must agree first, so every example checks it too.
-fn refuses(source: &str, kind: Kind, line: u32, column: u32) {
+/// Lints `source`, which must pass, and then lexes it, which must refuse it as `refusal` says.
+/// The oracle must agree first, so every example checks it too.
+fn refuses(source: &str, refusal: Refusal) {
+    let (kind, line, column) = refusal;
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
-    assert_eq!(oracle(source), Err((kind, line, column)), "the oracle, for {source:?}");
+    assert_eq!(oracle(source), Err(refusal), "the oracle, for {source:?}");
     let lexed =
         BUFFER.with_borrow_mut(|buffer| lex(text, buffer).map(|tokens| tokens.as_slice().len()));
     let found = lexed.expect_err("source should be refused");
@@ -128,7 +140,7 @@ fn refuses(source: &str, kind: Kind, line: u32, column: u32) {
 
 /// Returns the tokens of the smallest program's first line, `function main() returns Void {`,
 /// when it's line `line`.
-fn first_line(line: u32) -> [Expected<'static>; 7] {
+const fn first_line(line: u32) -> [Expected<'static>; 7] {
     [
         (Function, line, 1, "function"),
         (Name, line, 10, "main"),
@@ -142,6 +154,7 @@ fn first_line(line: u32) -> [Expected<'static>; 7] {
 
 #[test]
 fn the_smallest_program() {
+    // The smallest program is eight tokens, each with its kind, its place and its text.
     lexes(
         "function main() returns Void {\n}\n",
         &[
@@ -217,11 +230,11 @@ fn words() {
     lexes("ab\ncd\n", &[(Name, 1, 1, "ab"), (Name, 2, 1, "cd")]);
     // A word that runs on is still one word, so its shape is checked whole: `myName` is one
     // word, refused, not `my` and then `Name`.
-    refuses("myName\n", NameNotSnakeCase, 1, 3);
+    refuses("myName\n", (NameNotSnakeCase, 1, 3));
     // The longest word fills the largest source, and either shape can.
-    let longest = "a".repeat(SOURCE_BYTES_MAX as usize - 1);
+    let longest = "a".repeat(usize_from_u32(SOURCE_BYTES_MAX) - 1);
     lexes(&format!("{longest}\n"), &[(Name, 1, 1, &longest)]);
-    let longest = format!("A{}", "a".repeat(SOURCE_BYTES_MAX as usize - 2));
+    let longest = format!("A{}", "a".repeat(usize_from_u32(SOURCE_BYTES_MAX) - 2));
     lexes(&format!("{longest}\n"), &[(TypeName, 1, 1, &longest)]);
 }
 
@@ -258,11 +271,11 @@ fn names() {
         ("HTTPRequest", TypeNameNotPascalCase, 2),
         ("MyTYpe", TypeNameNotPascalCase, 4),
     ] {
-        refuses(&format!("{name}\n"), kind, 1, column);
+        refuses(&format!("{name}\n"), (kind, 1, column));
     }
     // A name is placed where it is, after the tokens before it.
-    refuses("function myFunction() returns Void {\n}\n", NameNotSnakeCase, 1, 12);
-    refuses("function main() returns VOID {\n}\n", TypeNameNotPascalCase, 1, 26);
+    refuses("function myFunction() returns Void {\n}\n", (NameNotSnakeCase, 1, 12));
+    refuses("function main() returns VOID {\n}\n", (TypeNameNotPascalCase, 1, 26));
 }
 
 #[test]
@@ -277,7 +290,7 @@ fn every_short_word() {
     for length in 1..=5_u32 {
         for number in 0..4_u32.pow(length) {
             let word: String = (0..length)
-                .map(|place| alphabet[(number / 4_u32.pow(place) % 4) as usize])
+                .map(|place| alphabet[usize_from_u32(number / 4_u32.pow(place) % 4)])
                 .collect();
             if word.starts_with(['a', 'A']) {
                 sources.push(format!("{word}\n"));
@@ -298,13 +311,14 @@ fn every_short_word() {
     for (source, expected) in checks {
         match expected {
             Ok(found) => lexes(source, &found),
-            Err((kind, line, column)) => refuses(source, kind, line, column),
+            Err(refusal) => refuses(source, refusal),
         }
     }
 }
 
 #[test]
 fn keywords() {
+    // Each keyword alone is that keyword, and nothing else is.
     lexes("function\n", &[(Function, 1, 1, "function")]);
     lexes("returns\n", &[(Returns, 1, 1, "returns")]);
     // A keyword is a whole word, matched by case, so none of these is one. Each is a name of its
@@ -333,7 +347,7 @@ fn keywords() {
         ("returns_", NameNotSnakeCase, 8),
         ("functionReturns", NameNotSnakeCase, 9),
     ] {
-        refuses(&format!("{word}\n"), kind, 1, column);
+        refuses(&format!("{word}\n"), (kind, 1, column));
     }
     // Keywords are reserved, so a keyword is never a name, even where a name would go.
     lexes(
@@ -430,8 +444,9 @@ fn every_printable_character() {
         let at_start = format!("a {character}b\n");
         let in_name = format!("a{character}b\n");
         let in_type = format!("A{character}b\n");
-        let (here, started) = (&in_name[1..2], &at_start[2..4]);
-        let (named, typed) = (&in_name[..3], &in_type[..3]);
+        // What each token's text should be: the character, alone or in a word with `a`, `A` or `b`.
+        let (here, started) = (&String::from(character), &format!("{character}b"));
+        let (named, typed) = (&format!("a{character}b"), &format!("A{character}b"));
         match role(character) {
             Role::Lowercase => {
                 lexes(&at_start, &[(Name, 1, 1, "a"), (Name, 1, 3, started)]);
@@ -440,18 +455,18 @@ fn every_printable_character() {
             }
             Role::Capital => {
                 lexes(&at_start, &[(Name, 1, 1, "a"), (TypeName, 1, 3, started)]);
-                refuses(&in_name, NameNotSnakeCase, 1, 2);
-                refuses(&in_type, TypeNameNotPascalCase, 1, 2);
+                refuses(&in_name, (NameNotSnakeCase, 1, 2));
+                refuses(&in_type, (TypeNameNotPascalCase, 1, 2));
             }
             Role::Digit => {
-                refuses(&at_start, Unexpected(character), 1, 3);
+                refuses(&at_start, (Unexpected(character), 1, 3));
                 lexes(&in_name, &[(Name, 1, 1, named)]);
                 lexes(&in_type, &[(TypeName, 1, 1, typed)]);
             }
             Role::Underscore => {
-                refuses(&at_start, Unexpected(character), 1, 3);
+                refuses(&at_start, (Unexpected(character), 1, 3));
                 lexes(&in_name, &[(Name, 1, 1, named)]);
-                refuses(&in_type, TypeNameNotPascalCase, 1, 2);
+                refuses(&in_type, (TypeNameNotPascalCase, 1, 2));
             }
             Role::Symbol(kind) => {
                 lexes(&at_start, &[(Name, 1, 1, "a"), (kind, 1, 3, here), (Name, 1, 4, "b")]);
@@ -464,9 +479,9 @@ fn every_printable_character() {
                 lexes(&in_type, &[(TypeName, 1, 1, "A"), (Name, 1, 3, "b")]);
             }
             Role::Refused => {
-                refuses(&at_start, Unexpected(character), 1, 3);
-                refuses(&in_name, Unexpected(character), 1, 2);
-                refuses(&in_type, Unexpected(character), 1, 2);
+                refuses(&at_start, (Unexpected(character), 1, 3));
+                refuses(&in_name, (Unexpected(character), 1, 2));
+                refuses(&in_type, (Unexpected(character), 1, 2));
             }
         }
     }
@@ -482,7 +497,7 @@ fn every_printable_character_in_context() {
         let indented = format!("    {character}b\n");
         let after_symbol = format!("({character}b\n");
         let after_comment = format!("// café\na {character}b\n");
-        let (here, word) = (&start[..1], &start[..2]);
+        let (here, word) = (&String::from(character), &format!("{character}b"));
         match role(character) {
             Role::Lowercase | Role::Capital => {
                 let kind = if role(character) == Role::Capital { TypeName } else { Name };
@@ -492,10 +507,10 @@ fn every_printable_character_in_context() {
                 lexes(&after_comment, &[comment, (Name, 2, 1, "a"), (kind, 2, 3, word)]);
             }
             Role::Digit | Role::Underscore | Role::Refused => {
-                refuses(&start, Unexpected(character), 1, 1);
-                refuses(&indented, Unexpected(character), 1, 5);
-                refuses(&after_symbol, Unexpected(character), 1, 2);
-                refuses(&after_comment, Unexpected(character), 2, 3);
+                refuses(&start, (Unexpected(character), 1, 1));
+                refuses(&indented, (Unexpected(character), 1, 5));
+                refuses(&after_symbol, (Unexpected(character), 1, 2));
+                refuses(&after_comment, (Unexpected(character), 2, 3));
             }
             Role::Symbol(kind) => {
                 lexes(&start, &[(kind, 1, 1, here), (Name, 1, 2, "b")]);
@@ -518,38 +533,40 @@ fn every_printable_character_in_context() {
 #[test]
 fn the_first_problem_wins() {
     // Lexing stops at the first problem in the file.
-    refuses("function main() returns Void { ; @\n}\n", Unexpected(';'), 1, 32);
-    refuses("a;b\nc@d\n", Unexpected(';'), 1, 2);
-    refuses("a\nc@d;\n", Unexpected('@'), 2, 2);
+    refuses("function main() returns Void { ; @\n}\n", (Unexpected(';'), 1, 32));
+    refuses("a;b\nc@d\n", (Unexpected(';'), 1, 2));
+    refuses("a\nc@d;\n", (Unexpected('@'), 2, 2));
     // Comments and blank lines before it are passed over, and still counted.
     let source = "// ;\n\nfunction main() returns Void {\n    // @\n    #\n}\n";
-    refuses(source, Unexpected('#'), 5, 5);
+    refuses(source, (Unexpected('#'), 5, 5));
     // A word can hold a digit or `_`, but can't start with one.
-    refuses("9lives\n", Unexpected('9'), 1, 1);
-    refuses("_main\n", Unexpected('_'), 1, 1);
-    refuses("main 2\n", Unexpected('2'), 1, 6);
+    refuses("9lives\n", (Unexpected('9'), 1, 1));
+    refuses("_main\n", (Unexpected('_'), 1, 1));
+    refuses("main 2\n", (Unexpected('2'), 1, 6));
     // Names aren't kebab, as file names are, so `-` can't be in a word.
-    refuses("my-name\n", Unexpected('-'), 1, 3);
-    refuses("function main() returns Void {\n    \"hello\"\n}\n", Unexpected('"'), 2, 5);
+    refuses("my-name\n", (Unexpected('-'), 1, 3));
+    refuses("function main() returns Void {\n    \"hello\"\n}\n", (Unexpected('"'), 2, 5));
     // A lone `/` is code, since only `//` starts a comment.
-    refuses("function main() returns Void { /\n}\n", Unexpected('/'), 1, 32);
-    refuses("`\n", Unexpected('`'), 1, 1);
+    refuses("function main() returns Void { /\n}\n", (Unexpected('/'), 1, 32));
+    refuses("`\n", (Unexpected('`'), 1, 1));
     // A name's shape is a problem like any other, and whichever comes first in the file wins.
-    refuses("myName ;\n", NameNotSnakeCase, 1, 3);
-    refuses("; myName\n", Unexpected(';'), 1, 1);
-    refuses("my;Name\n", Unexpected(';'), 1, 3);
-    refuses("Void_ myName\n", TypeNameNotPascalCase, 1, 5);
+    refuses("myName ;\n", (NameNotSnakeCase, 1, 3));
+    refuses("; myName\n", (Unexpected(';'), 1, 1));
+    refuses("my;Name\n", (Unexpected(';'), 1, 3));
+    refuses("Void_ myName\n", (TypeNameNotPascalCase, 1, 5));
 }
 
 #[test]
 fn the_most_tokens() {
-    let size = SOURCE_BYTES_MAX as usize;
+    // Three sources of the largest size, each the most of something: tokens, lines with a token,
+    // and bytes in one token.
+    let size = usize_from_u32(SOURCE_BYTES_MAX);
     // Every token is at least one character, so the largest source holds a token in every byte
     // but its last `\n`. That's the most a buffer has room for.
     assert_eq!(TOKENS_MAX, SOURCE_BYTES_MAX - 1);
     let one_line = format!("{}\n", "(".repeat(size - 1));
     let found = tokens(&one_line);
-    assert_eq!(found.len(), TOKENS_MAX as usize);
+    assert_eq!(found.len(), usize_from_u32(TOKENS_MAX));
     for (token, column) in found.iter().zip(1_u32..) {
         assert_eq!(*token, (ParenOpen, 1, column, "("));
     }
@@ -562,7 +579,7 @@ fn the_most_tokens() {
     }
     // The longest comment is still one token.
     let comment = format!("// {}\n", "x".repeat(size - "// \n".len()));
-    lexes(&comment, &[(Comment, 1, 1, &comment[..size - 1])]);
+    lexes(&comment, &[(Comment, 1, 1, comment.trim_end_matches('\n'))]);
 }
 
 #[test]
@@ -572,7 +589,7 @@ fn one_buffer_for_every_source() {
     // refused source's, or a few. And they're always in the same room, since the buffer is made
     // once and never grows.
     let mut buffer = TokenBuffer::new();
-    let largest = format!("{}\n", "(".repeat(TOKENS_MAX as usize));
+    let largest = format!("{}\n", "(".repeat(usize_from_u32(TOKENS_MAX)));
     let smallest = "function main() returns Void {\n}\n";
     let refused = "function main() returns Void { ;\n}\n";
     let mut smallest_tokens = first_line(1).to_vec();
@@ -592,12 +609,26 @@ fn one_buffer_for_every_source() {
             }
             Ok(tokens) => {
                 let found = expected_of(source, &tokens);
-                assert_eq!(found.len(), TOKENS_MAX as usize);
+                assert_eq!(found.len(), usize_from_u32(TOKENS_MAX));
                 assert!(found.iter().all(|&(kind, line, ..)| (kind, line) == (ParenOpen, 1)));
             }
             Err(problem) => assert_eq!((source, problem), (refused, refusal)),
         }
     }
+}
+
+#[test]
+#[should_panic(expected = "a token is in its source")]
+fn text_of_a_token_from_a_longer_source_is_a_bug() {
+    // A token only means something in the source it was lexed from. Here the last token of a
+    // longer source is asked of a shorter one, which it reaches past the end of.
+    let (mut longer_buffer, mut shorter_buffer) = (TokenBuffer::new(), TokenBuffer::new());
+    let longer = lint(b"function main() returns Void {\n}\n").expect("source should pass");
+    let shorter = lint(b"// x\n").expect("source should pass");
+    let longer = lex(longer, &mut longer_buffer).expect("source should lex");
+    let shorter = lex(shorter, &mut shorter_buffer).expect("source should lex");
+    let last = longer.as_slice().last().expect("the smallest program has tokens");
+    _ = shorter.text(last);
 }
 
 // Fuzzing against an oracle, seeded so a failing case replays.
@@ -607,14 +638,15 @@ fn one_buffer_for_every_source() {
 fn oracle(source: &str) -> Result<Vec<Expected<'_>>, Refusal> {
     let mut found = Vec::new();
     for (content, line) in source.split_terminator('\n').zip(1_u32..) {
-        let indentation = content.len() - content.trim_start_matches(' ').len();
-        let column = |index: usize| u32::try_from(index).expect("a line is short") + 1;
-        if content[indentation..].starts_with("//") {
-            found.push((Comment, line, column(indentation), &content[indentation..]));
+        let code = content.trim_start_matches(' ');
+        let indentation = content.len() - code.len();
+        let column = |index: usize| u32_from_usize(index) + 1;
+        if code.starts_with("//") {
+            found.push((Comment, line, column(indentation), code));
             continue;
         }
-        // The text lint lets only ASCII into code, so a character is a byte.
-        assert!(content.is_ascii());
+        assert!(content.is_ascii(), "the text lint lets only ASCII into code");
+        // So a character is a byte.
         let characters: Vec<char> = content.chars().collect();
         let mut index = 0;
         while index < characters.len() {
@@ -622,7 +654,7 @@ fn oracle(source: &str) -> Result<Vec<Expected<'_>>, Refusal> {
             match first {
                 Role::Space => index += 1,
                 Role::Symbol(kind) => {
-                    found.push((kind, line, column(index), &content[index..=index]));
+                    found.push((kind, line, column(index), slice(content, index..index + 1)));
                     index += 1;
                 }
                 Role::Lowercase | Role::Capital => {
@@ -630,7 +662,7 @@ fn oracle(source: &str) -> Result<Vec<Expected<'_>>, Refusal> {
                     while end < characters.len() && in_word(role(characters[end])) {
                         end += 1;
                     }
-                    let word = &content[index..end];
+                    let word = slice(content, index..end);
                     if let Some((kind, at)) = shape_problem(word) {
                         return Err((kind, line, column(index + at)));
                     }
@@ -653,7 +685,7 @@ fn oracle(source: &str) -> Result<Vec<Expected<'_>>, Refusal> {
 }
 
 /// Says whether a character with this role can go on with a word.
-fn in_word(role: Role) -> bool {
+const fn in_word(role: Role) -> bool {
     matches!(role, Role::Lowercase | Role::Capital | Role::Digit | Role::Underscore)
 }
 
@@ -679,32 +711,6 @@ fn shape_problem(word: &str) -> Option<(Kind, usize)> {
             _ => false,
         });
         broken.map(|index| (TypeNameNotPascalCase, index))
-    }
-}
-
-/// This is a small deterministic generator, xorshift64*, as the path lint's tests use.
-struct Rng {
-    state: u64,
-}
-
-impl Rng {
-    /// Returns the next number in the sequence.
-    fn next(&mut self) -> u64 {
-        self.state ^= self.state >> 12;
-        self.state ^= self.state << 25;
-        self.state ^= self.state >> 27;
-        self.state.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    }
-
-    /// Returns a number from 0 up to, but not including, `count`.
-    fn below(&mut self, count: u64) -> u64 {
-        assert!(count > 0);
-        self.next() % count
-    }
-
-    /// Returns one of `choices`.
-    fn pick<'a>(&mut self, choices: &[&'a str]) -> &'a str {
-        choices[self.below(choices.len() as u64) as usize]
     }
 }
 
@@ -781,32 +787,39 @@ fn random_source(rng: &mut Rng) -> String {
 /// another case.
 fn near_keyword(rng: &mut Rng) -> String {
     let keyword = rng.pick(&["function", "returns"]);
-    let length = keyword.len() as u64;
     match rng.below(4) {
         0 => String::from(keyword),
-        1 => String::from(&keyword[..=rng.below(length - 1) as usize]),
+        1 => keyword.chars().take(1 + rng.below(keyword.len() - 1)).collect(),
         2 => format!("{keyword}{}", rng.pick(&["s", "2", "_", "x"])),
         _ => {
-            let index = rng.below(length) as usize;
-            let upper = keyword[index..=index].to_ascii_uppercase();
-            format!("{}{upper}{}", &keyword[..index], &keyword[index + 1..])
+            let capital = rng.below(keyword.len());
+            let letters = keyword.chars().enumerate();
+            letters
+                .map(
+                    |(index, letter)| {
+                        if index == capital { letter.to_ascii_uppercase() } else { letter }
+                    },
+                )
+                .collect()
         }
     }
 }
 
 /// Adds one to the count for `counted`, which must have one.
-fn count<T: PartialEq + std::fmt::Debug>(counts: &mut [(T, u32)], counted: &T) {
-    let (_, count) = counts
-        .iter_mut()
-        .find(|(each, _)| each == counted)
-        .unwrap_or_else(|| panic!("{counted:?} is counted"));
+fn count<T: PartialEq + Debug>(counts: &mut [(T, u32)], counted: &T) {
+    let found = counts.iter_mut().find(|(each, _)| each == counted);
+    assert!(found.is_some(), "{counted:?} has a count");
+    let (_, count) = found.expect("it has a count, as just asserted");
     *count += 1;
 }
 
 #[test]
 fn fuzz_against_the_oracle() {
-    let mut rng = Rng { state: 0x4C45_5845_5200_0001 };
-    let sources: Vec<String> = (0..30_000).map(|_| random_source(&mut rng)).collect();
+    // 30,000 random sources, each lexed and checked against what the oracle says of it. Every
+    // kind of token and of problem is counted, so the test fails if the sources stop reaching one.
+    let mut rng = Rng::new(0x4C45_5845_5200_0001);
+    let sources: Vec<String> =
+        std::iter::repeat_with(|| random_source(&mut rng)).take(30_000).collect();
     let mut skipped_count: u32 = 0;
     let kinds =
         [Function, Returns, Name, TypeName, ParenOpen, ParenClose, BraceOpen, BraceClose, Comment];
@@ -844,7 +857,7 @@ fn fuzz_against_the_oracle() {
     for (source, expected) in checks {
         match expected {
             Ok(found) => lexes(source, &found),
-            Err((kind, line, column)) => refuses(source, kind, line, column),
+            Err(refusal) => refuses(source, refusal),
         }
     }
 }

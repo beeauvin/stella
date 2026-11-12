@@ -8,8 +8,10 @@ use std::fmt;
 
 use stella_source::Position;
 
-/// A problem is one thing the lexer refused, and where it is. The lexer only reads characters, so
-/// a problem is always at a position, never with the file as a whole.
+/// A problem is the one thing the lexer refused, and where it is.
+///
+/// The lexer only reads characters, so a problem is always at a position, never with the file as
+/// a whole.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Problem {
     /// The kind says what's wrong.
@@ -18,8 +20,9 @@ pub struct Problem {
     pub position: Position,
 }
 
-/// A kind is one of the problems the lexer can find. A name's kinds are at the first character
-/// that breaks its shape.
+/// A kind is one of the problems the lexer can find.
+///
+/// A name's kinds are at the first character that breaks its shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// A character in code can't start a token, and the token before it, if any, has ended. The
@@ -39,18 +42,18 @@ pub enum Kind {
 /// A kind displays as the sentence that says what's wrong. A message prints it after the file,
 /// line and column.
 impl fmt::Display for Kind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             // A backtick can't sit between backticks, so it's written the way Markdown writes one.
-            Kind::Unexpected('`') => formatter.write_str("`` ` `` can't start a token."),
-            Kind::Unexpected(character) => {
-                write!(formatter, "`{character}` can't start a token.")
+            Self::Unexpected('`') => f.write_str("`` ` `` can't start a token."),
+            Self::Unexpected(character) => {
+                write!(f, "`{character}` can't start a token.")
             }
-            Kind::NameNotSnakeCase => formatter.write_str(
+            Self::NameNotSnakeCase => f.write_str(
                 "a name must be lowercase letters and digits joined by single underscores, like \
                  `my_function`.",
             ),
-            Kind::TypeNameNotPascalCase => formatter.write_str(
+            Self::TypeNameNotPascalCase => f.write_str(
                 "a type's name must be words that each start with one capital, then lowercase \
                  letters and digits, like `Void` or `MessageQueue`.",
             ),
