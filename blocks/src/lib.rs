@@ -13,7 +13,6 @@
 //! and trust them in turn.
 
 #![forbid(unsafe_code)]
-#![warn(missing_docs)]
 
 mod nest;
 

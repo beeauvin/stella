@@ -10,6 +10,7 @@ dependencies = [
  "stella-linter-text",
  "stella-linter-tokens",
  "stella-source",
+ "stella-test-support",
 ]
 
 [[package]]
