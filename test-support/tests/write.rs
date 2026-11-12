@@ -5,7 +5,7 @@
 //! Unit tests for the ways tests write and show source. The oracles lean on these, so each is
 //! pinned against text written out by hand.
 
-use stella_test_support::{indent, joined, nested_blocks, shown, source_of};
+use stella_test_support::{indent, joined, nested_blocks, shown, slice, source_of};
 
 #[test]
 fn indent_is_four_spaces_a_level() {
@@ -56,4 +56,19 @@ fn shown_cuts_a_long_source_short() {
     assert_eq!(shown(&longest_whole), format!("{longest_whole:?}"));
     let long = "x".repeat(121);
     assert_eq!(shown(&long), format!("{:?}, and on to 121 bytes", "x".repeat(60)));
+}
+
+#[test]
+fn slice_returns_the_part_at_a_range() {
+    // Any range between characters gives that part, an empty one included.
+    assert_eq!(slice("a é b", 0..1), "a");
+    assert_eq!(slice("a é b", 2..4), "é");
+    assert_eq!(slice("a é b", 5..5), "");
+}
+
+#[test]
+#[should_panic(expected = "starts and ends between characters")]
+fn slicing_inside_a_character_is_a_bug() {
+    // `é` is two bytes, so byte 3 is in the middle of it.
+    _ = slice("a é b", 2..3);
 }

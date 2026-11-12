@@ -17,4 +17,4 @@ mod write;
 
 pub use examples::{Example, Examples};
 pub use rng::Rng;
-pub use write::{indent, joined, nested_blocks, shown, source_of};
+pub use write::{indent, joined, nested_blocks, shown, slice, source_of};

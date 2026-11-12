@@ -58,6 +58,7 @@ dependencies = [
  "stella-lexer",
  "stella-linter-text",
  "stella-source",
+ "stella-test-support",
 ]
 
 [[package]]

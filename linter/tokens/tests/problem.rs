@@ -5,11 +5,18 @@
 //! Unit tests for the sentences the tokens lint's problems print. Each sentence is pinned exactly,
 //! because people and tools both read them.
 
-use stella_lexer::TokenKind::*;
-use stella_linter_tokens::Kind::*;
+use stella_lexer::TokenKind::{
+    BraceClose, BraceOpen, Comment, Function, Name, ParenClose, ParenOpen, Returns, TypeName,
+};
+use stella_linter_tokens::Kind::{
+    BraceCloseNotAlone, BraceClosesNothing, BraceNeverClosed, BraceOpenNotLast,
+    BraceOpenStartsLine, IndentationNotDepth, LineEndsWithoutBrace, SpaceMissing, SpaceUnwanted,
+    SpacesExtra,
+};
 
 #[test]
 fn sentences() {
+    // Every kind of problem the tokens lint has, each with its sentence written out whole.
     for (kind, sentence) in [
         (BraceOpenNotLast, "`{` must end its line."),
         (BraceOpenStartsLine, "`{` can't start a line."),

@@ -10,7 +10,6 @@
 //! can take one and trust that the code is laid out the one way and that its braces pair up.
 
 #![forbid(unsafe_code)]
-#![warn(missing_docs)]
 
 mod layout;
 mod problem;

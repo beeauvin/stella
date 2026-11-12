@@ -7,6 +7,8 @@
 //! These state the layout as the reference words it, on their own: four spaces to a level, and
 //! one space between two tokens, except none after `(` and none before `(` or `)`.
 
+use std::ops::Range;
+
 use stella_source::usize_from_u32;
 
 /// This is how many spaces indent a line one level, as the layout page says.
@@ -63,6 +65,16 @@ pub fn nested_blocks(depth: u32) -> Vec<String> {
     let mut lines: Vec<String> = (0..depth).map(|level| format!("{}({{", indent(level))).collect();
     lines.extend((0..depth).rev().map(|level| format!("{}}}", indent(level))));
     lines
+}
+
+/// Returns the part of `text` at `range`.
+///
+/// # Panics
+///
+/// Panics if `range` reaches past the end of `text`, or starts or ends inside a character.
+#[must_use]
+pub fn slice(text: &str, range: Range<usize>) -> &str {
+    text.get(range).expect("the range is in the text, and starts and ends between characters")
 }
 
 /// Returns `source` as a failure shows it: whole when it's short, or else its start and its

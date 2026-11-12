@@ -11,3 +11,9 @@ publish.workspace = true
 stella-lexer = { path = "../../lexer" }
 stella-linter-text = { path = "../text" }
 stella-source = { path = "../../source" }
+
+[dev-dependencies]
+stella-test-support = { path = "../../test-support" }
+
+[lints]
+workspace = true

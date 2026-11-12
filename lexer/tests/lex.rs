@@ -17,7 +17,6 @@
 
 use std::cell::RefCell;
 use std::fmt::Debug;
-use std::ops::Range;
 
 use stella_lexer::Kind::{NameNotSnakeCase, TypeNameNotPascalCase, Unexpected};
 use stella_lexer::TokenKind::{
@@ -26,7 +25,7 @@ use stella_lexer::TokenKind::{
 use stella_lexer::{Kind, Problem, TOKENS_MAX, TokenBuffer, TokenKind, Tokens, lex};
 use stella_linter_text::lint;
 use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
-use stella_test_support::Rng;
+use stella_test_support::{Rng, slice};
 
 /// An expected token: its kind, its line and column, and its text.
 type Expected<'source> = (TokenKind, u32, u32, &'source str);
@@ -93,11 +92,6 @@ fn assert_in_place(source: &str, found: &[Expected<'_>]) {
         index = start + text.len();
     }
     assert_passed_over(slice(source, index..source.len()));
-}
-
-/// Returns the part of `text` at `range`, which starts and ends between characters.
-fn slice(text: &str, range: Range<usize>) -> &str {
-    text.get(range).expect("the range starts and ends between characters")
 }
 
 /// Checks that `passed`, which the lexer passed over, is only spaces and line ends.

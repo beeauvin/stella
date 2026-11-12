@@ -10,12 +10,16 @@ use stella_lexer::TokenKind;
 use stella_linter_text::LEVEL_SPACES;
 use stella_source::Position;
 
-// `IndentationNotDepth`'s sentence names a level's spaces, so a new level needs a new sentence.
-const _: () = assert!(LEVEL_SPACES == 4);
+const _: () = assert!(
+    LEVEL_SPACES == 4,
+    "`IndentationNotDepth`'s sentence names a level's four spaces, so a new level needs a new \
+     sentence"
+);
 
-/// A problem is one thing the tokens lint refused, and where it is. The tokens lint only reads
-/// tokens and the spaces between them, so a problem is always at a position, never with the file
-/// as a whole.
+/// A problem is the one thing the tokens lint refused, and where it is.
+///
+/// The tokens lint only reads tokens and the spaces between them, so a problem is always at a
+/// position, never with the file as a whole.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Problem {
     /// The kind says what's wrong.
@@ -24,8 +28,9 @@ pub struct Problem {
     pub position: Position,
 }
 
-/// A kind is one of the problems the tokens lint can find. They're grouped by the step that finds
-/// them, in the order the steps run.
+/// A kind is one of the problems the tokens lint can find.
+///
+/// They're grouped by the step that finds them, in the order the steps run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     // The lines.
@@ -60,46 +65,46 @@ pub enum Kind {
 /// A kind displays as the sentence that says what's wrong. A message prints it after the file,
 /// line and column.
 impl fmt::Display for Kind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let sentence = match *self {
-            Kind::BraceOpenNotLast => "`{` must end its line.",
-            Kind::BraceOpenStartsLine => "`{` can't start a line.",
-            Kind::BraceCloseNotAlone => "`}` must be on a line of its own.",
-            Kind::LineEndsWithoutBrace => "a line of code must end with `{` or `}`.",
-            Kind::BraceClosesNothing => "this `}` has no `{` to close.",
-            Kind::BraceNeverClosed => "this `{` is never closed.",
-            Kind::IndentationNotDepth(0) => {
+            Self::BraceOpenNotLast => "`{` must end its line.",
+            Self::BraceOpenStartsLine => "`{` can't start a line.",
+            Self::BraceCloseNotAlone => "`}` must be on a line of its own.",
+            Self::LineEndsWithoutBrace => "a line of code must end with `{` or `}`.",
+            Self::BraceClosesNothing => "this `}` has no `{` to close.",
+            Self::BraceNeverClosed => "this `{` is never closed.",
+            Self::IndentationNotDepth(0) => {
                 "this line can't be indented, since no `{` is still open on it."
             }
-            Kind::IndentationNotDepth(levels) => {
+            Self::IndentationNotDepth(levels) => {
                 // Counted wide, so any number of levels has its spaces.
                 let spaces = u64::from(levels) * u64::from(LEVEL_SPACES);
                 return write!(
-                    formatter,
+                    f,
                     "this line must be indented {spaces} spaces, one level of four for each `{{` \
                      still open on it."
                 );
             }
-            Kind::SpaceMissing(first, second) => {
+            Self::SpaceMissing(first, second) => {
                 let (first, second) = (named(first), named(second));
-                return write!(formatter, "one space must go between {first} and {second}.");
+                return write!(f, "one space must go between {first} and {second}.");
             }
-            Kind::SpaceUnwanted(first, second) => {
+            Self::SpaceUnwanted(first, second) => {
                 let (first, second) = (named(first), named(second));
-                return write!(formatter, "no space can go between {first} and {second}.");
+                return write!(f, "no space can go between {first} and {second}.");
             }
-            Kind::SpacesExtra(first, second) => {
+            Self::SpacesExtra(first, second) => {
                 let (first, second) = (named(first), named(second));
-                return write!(formatter, "only one space can go between {first} and {second}.");
+                return write!(f, "only one space can go between {first} and {second}.");
             }
         };
-        formatter.write_str(sentence)
+        f.write_str(sentence)
     }
 }
 
 /// Returns how a sentence names a token of `kind`: a keyword or a symbol by its own spelling, in
 /// backticks, and any other kind in words.
-fn named(kind: TokenKind) -> &'static str {
+const fn named(kind: TokenKind) -> &'static str {
     match kind {
         TokenKind::Function => "`function`",
         TokenKind::Returns => "`returns`",
