@@ -1,8 +1,8 @@
 # Programs
 
 For now, a program is one source file, and its name ends in `.stella`. Tested
-by [`accepted_paths`](../../linter/text/tests/path.rs) and
-[`refused_paths`](../../linter/text/tests/path.rs).
+by [`accepted_paths`](../../linter/path/tests/path.rs) and
+[`refused_paths`](../../linter/path/tests/path.rs).
 
 It holds exactly one [function](functions.md), named `main`, and nothing else
 but [comments](comments.md). The compiler refuses anything else. Not built

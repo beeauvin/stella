@@ -21,6 +21,7 @@ name = "stella-cli"
 version = "0.0.0"
 dependencies = [
  "stella-lexer",
+ "stella-linter-path",
  "stella-linter-text",
  "stella-linter-tokens",
  "stella-source",
@@ -32,6 +33,13 @@ version = "0.0.0"
 dependencies = [
  "stella-linter-text",
  "stella-source",
+]
+
+[[package]]
+name = "stella-linter-path"
+version = "0.0.0"
+dependencies = [
+ "stella-test-support",
 ]
 
 [[package]]

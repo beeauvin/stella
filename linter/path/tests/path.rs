@@ -10,8 +10,11 @@
 //! test checks random paths against an oracle, which states the path lint as plainly as the
 //! reference does. Every example checks the oracle too.
 
-use stella_linter_text::Kind::*;
-use stella_linter_text::{Kind, Place, Problem, lint_path};
+use stella_linter_path::Problem::{
+    Absolute, DirectoryNotKebab, DotPart, EmptyPart, NameEmpty, NameNotKebab, NameNotStella, Parent,
+};
+use stella_linter_path::{Problem, lint_path};
+use stella_test_support::Rng;
 
 /// These are the 37 characters a name can hold.
 const NAME_CHARACTERS: &str = "abcdefghijklmnopqrstuvwxyz0123456789-";
@@ -25,17 +28,16 @@ fn accepts(path: &str, normalized: &str, name: &str) {
     assert_eq!(source_path.name(), name, "for {path:?}");
 }
 
-/// Lints `path`, which must be refused for `kind`, a problem with the file as a whole. The oracle
-/// must agree first.
-fn refuses(path: &str, kind: Kind) {
-    assert_eq!(oracle(path), Err(kind), "the oracle, for {path:?}");
-    let problem = lint_path(path).expect_err("path should be refused");
-    let expected = Problem { kind, place: Place::File };
-    assert_eq!(problem, expected, "for {path:?}");
+/// Lints `path`, which must be refused with `problem`. The oracle must agree first.
+fn refuses(path: &str, problem: Problem) {
+    assert_eq!(oracle(path), Err(problem), "the oracle, for {path:?}");
+    assert_eq!(lint_path(path), Err(problem), "for {path:?}");
 }
 
 #[test]
 fn every_code_point_in_a_files_name() {
+    // Each code point is put between `a` and `b` in a file's name. The 37 a name can hold pass,
+    // and every other is refused for the name.
     for character in char::MIN..=char::MAX {
         // `/` splits the path rather than sitting in a name, so the tables test it.
         if character == '/' {
@@ -53,6 +55,8 @@ fn every_code_point_in_a_files_name() {
 
 #[test]
 fn every_code_point_in_a_directorys_name() {
+    // Each code point is put between `a` and `b` in a directory's name. The 37 a name can hold
+    // pass, and every other is refused for the directory.
     for character in char::MIN..=char::MAX {
         // `/` splits the path rather than sitting in a name, so the tables test it.
         if character == '/' {
@@ -69,6 +73,7 @@ fn every_code_point_in_a_directorys_name() {
 
 #[test]
 fn accepted_paths() {
+    // Each path passes, and comes back without its leading `./`, with the program's name.
     for (path, normalized, name) in [
         ("hello.stella", "hello.stella", "hello"),
         ("hello-world.stella", "hello-world.stella", "hello-world"),
@@ -86,21 +91,22 @@ fn accepted_paths() {
 
 #[test]
 fn refused_paths() {
-    for (path, kind) in [
-        ("/", PathAbsolute),
-        ("/hello.stella", PathAbsolute),
-        ("..", PathParent),
-        ("../hello.stella", PathParent),
-        ("programs/../hello.stella", PathParent),
-        ("./../hello.stella", PathParent),
-        ("", PathEmptyPart),
-        ("./", PathEmptyPart),
-        ("programs/", PathEmptyPart),
-        ("programs//hello.stella", PathEmptyPart),
-        (".//hello.stella", PathEmptyPart),
-        (".", PathDotPart),
-        ("programs/./hello.stella", PathDotPart),
-        ("././hello.stella", PathDotPart),
+    // Each path is refused with the one problem beside it, which is the first the checks find.
+    for (path, problem) in [
+        ("/", Absolute),
+        ("/hello.stella", Absolute),
+        ("..", Parent),
+        ("../hello.stella", Parent),
+        ("programs/../hello.stella", Parent),
+        ("./../hello.stella", Parent),
+        ("", EmptyPart),
+        ("./", EmptyPart),
+        ("programs/", EmptyPart),
+        ("programs//hello.stella", EmptyPart),
+        (".//hello.stella", EmptyPart),
+        (".", DotPart),
+        ("programs/./hello.stella", DotPart),
+        ("././hello.stella", DotPart),
         // Every directory is checked, not just the first or the last.
         ("A/b/c/hello.stella", DirectoryNotKebab),
         ("a/B/c/hello.stella", DirectoryNotKebab),
@@ -124,38 +130,38 @@ fn refused_paths() {
         ("..hello.stella", NameNotKebab),
         ("..programs/hello.stella", DirectoryNotKebab),
         // The checks run in order, and each looks at every part before the next runs.
-        ("/x/../Hello.txt", PathAbsolute),
-        ("Programs/../hello.stella", PathParent),
-        ("a//../b.stella", PathParent),
-        ("a/./../b.stella", PathParent),
-        ("a/.//b.stella", PathEmptyPart),
-        ("Programs//hello.stella", PathEmptyPart),
-        ("Programs/./hello.stella", PathDotPart),
+        ("/x/../Hello.txt", Absolute),
+        ("Programs/../hello.stella", Parent),
+        ("a//../b.stella", Parent),
+        ("a/./../b.stella", Parent),
+        ("a/.//b.stella", EmptyPart),
+        ("Programs//hello.stella", EmptyPart),
+        ("Programs/./hello.stella", DotPart),
         ("Programs/hello.txt", DirectoryNotKebab),
         ("Hello.txt", NameNotStella),
     ] {
-        refuses(path, kind);
+        refuses(path, problem);
     }
 }
 
 // Fuzzing against an oracle, seeded so a failing case replays.
 
 /// Returns what the path lint should say about `path`, worked out the way the reference words
-/// it: the normalized path and the name, or the kind of the first problem.
-fn oracle(path: &str) -> Result<(&str, &str), Kind> {
+/// it: the normalized path and the name, or the first problem.
+fn oracle(path: &str) -> Result<(&str, &str), Problem> {
     if path.starts_with('/') {
-        return Err(PathAbsolute);
+        return Err(Absolute);
     }
     let rest = path.strip_prefix("./").unwrap_or(path);
     let parts: Vec<&str> = rest.split('/').collect();
     if parts.contains(&"..") {
-        return Err(PathParent);
+        return Err(Parent);
     }
     if parts.contains(&"") {
-        return Err(PathEmptyPart);
+        return Err(EmptyPart);
     }
     if parts.contains(&".") {
-        return Err(PathDotPart);
+        return Err(DotPart);
     }
     let (file, directories) = parts.split_last().expect("split gives at least one part");
     if !directories.iter().all(|directory| is_kebab(directory)) {
@@ -183,32 +189,6 @@ fn is_kebab(name: &str) -> bool {
     })
 }
 
-/// This is a small deterministic generator, xorshift64*.
-struct Rng {
-    state: u64,
-}
-
-impl Rng {
-    /// Returns the next number in the sequence.
-    fn next(&mut self) -> u64 {
-        self.state ^= self.state >> 12;
-        self.state ^= self.state << 25;
-        self.state ^= self.state >> 27;
-        self.state.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    }
-
-    /// Returns a number from 0 up to, but not including, `count`.
-    fn below(&mut self, count: u64) -> u64 {
-        assert!(count > 0);
-        self.next() % count
-    }
-
-    /// Returns one of `choices`.
-    fn pick<'a>(&mut self, choices: &[&'a str]) -> &'a str {
-        choices[self.below(choices.len() as u64) as usize]
-    }
-}
-
 /// Returns a random path: one to four parts, each one to three pieces long. Most pieces are
 /// valid in a name, so every answer the oracle can give comes up, accepting included.
 fn random_path(rng: &mut Rng) -> String {
@@ -221,7 +201,7 @@ fn random_path(rng: &mut Rng) -> String {
         if part_index > 0 {
             path.push('/');
         }
-        for _ in 0..1 + rng.below(3) {
+        for _ in 0..=rng.below(3) {
             let piece = match rng.below(4) {
                 0 => "-",
                 1 => rng.pick(&invalid),
@@ -238,38 +218,40 @@ fn random_path(rng: &mut Rng) -> String {
 
 #[test]
 fn fuzz_against_the_oracle() {
-    let mut rng = Rng { state: 0x5745_4C4C_4100_0001 };
+    // 50,000 random paths, each checked against what the oracle says of it. Every answer the
+    // oracle can give is counted, so the test fails if the paths stop reaching one of them.
+    let mut rng = Rng::new(0x5745_4C4C_4100_0001);
     let mut accepted_count: u32 = 0;
     let mut refused_counts = [
-        (PathAbsolute, 0_u32),
-        (PathParent, 0),
-        (PathEmptyPart, 0),
-        (PathDotPart, 0),
+        (Absolute, 0_u32),
+        (Parent, 0),
+        (EmptyPart, 0),
+        (DotPart, 0),
         (DirectoryNotKebab, 0),
         (NameNotStella, 0),
         (NameEmpty, 0),
         (NameNotKebab, 0),
     ];
-    for _ in 0..50_000 {
+    for _ in 0_u32..50_000 {
         let path = random_path(&mut rng);
         match oracle(&path) {
             Ok((normalized, name)) => {
                 accepts(&path, normalized, name);
                 accepted_count += 1;
             }
-            Err(kind) => {
-                refuses(&path, kind);
+            Err(problem) => {
+                refuses(&path, problem);
                 let (_, count) = refused_counts
                     .iter_mut()
-                    .find(|(counted, _)| *counted == kind)
-                    .expect("the oracle only gives path kinds");
+                    .find(|(counted, _)| *counted == problem)
+                    .expect("every problem is counted");
                 *count += 1;
             }
         }
     }
     // The fuzzing only means something if the paths reach every answer, often.
     assert!(accepted_count > 1_000, "only {accepted_count} were accepted");
-    for (kind, count) in refused_counts {
-        assert!(count > 50, "only {count} were refused for {kind:?}");
+    for (problem, count) in refused_counts {
+        assert!(count > 50, "only {count} were refused for {problem:?}");
     }
 }

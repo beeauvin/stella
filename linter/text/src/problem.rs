@@ -28,7 +28,7 @@ pub struct Problem {
 
 impl Problem {
     /// Returns a problem with the file as a whole.
-    pub fn whole_file(kind: Kind) -> Problem {
+    pub(crate) fn whole_file(kind: Kind) -> Problem {
         assert!(kind.is_whole_file());
         Problem { kind, place: Place::File }
     }
@@ -55,34 +55,10 @@ pub enum Place {
     At(Position),
 }
 
-/// A kind is one of the problems the text lint can find, or, for `PathSymlink`, that the command
-/// finds for it. They're grouped by the step that finds them, in the order the steps run.
+/// A kind is one of the problems the text lint can find. They're grouped by the step that finds
+/// them, in the order the steps run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    // The path, checked before the file is read. The checks run in this order: absolute, parent,
-    // empty parts, `.` parts, directories' names, and then the file's name. Then the command
-    // looks for a symlink in it.
-    /// The path starts at the root, so there's no way to mirror it under `.build/`.
-    PathAbsolute,
-    /// A part of the path is `..`, so it could leave the directory the compiler runs in.
-    PathParent,
-    /// A part of the path is empty, as `//` or a trailing `/` makes.
-    PathEmptyPart,
-    /// A part of the path is `.`, other than one leading `./`.
-    PathDotPart,
-    /// A directory's name isn't lowercase letters and digits with single hyphens between words.
-    DirectoryNotKebab,
-    /// The file's name doesn't end in `.stella`. Case matters, so `hello.Stella` doesn't.
-    NameNotStella,
-    /// The file's name is `.stella` and nothing more.
-    NameEmpty,
-    /// The file's name before `.stella` isn't lowercase letters and digits with single hyphens
-    /// between words.
-    NameNotKebab,
-    /// A part of the path is a symlink. The path lint can't see this, since it never touches the
-    /// filesystem, so the command finds it, after every check above.
-    PathSymlink,
-
     // The size.
     /// The file has no bytes at all.
     FileEmpty,
@@ -128,15 +104,12 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// Says whether this kind is about the file as a whole, as the path's and the size's are.
-    /// Every other kind is at a position.
+    /// Says whether this kind is about the file as a whole, as the size's are. Every other kind
+    /// is at a position.
     fn is_whole_file(self) -> bool {
         use Kind::*;
         match self {
-            PathAbsolute | PathParent | PathEmptyPart | PathDotPart | DirectoryNotKebab
-            | NameNotStella | NameEmpty | NameNotKebab | PathSymlink | FileEmpty | FileTooBig => {
-                true
-            }
+            FileEmpty | FileTooBig => true,
             NotUtf8 | ByteOrderMark | CarriageReturn | Tab | ControlCharacter(_)
             | BidiControl(_) | LineSeparator(_) | NoFinalNewline | BlankLineAtEnd
             | TrailingSpace | IndentationNotFour | CommentSharesLine | CommentNeedsSpace
@@ -152,25 +125,6 @@ impl fmt::Display for Kind {
         use Kind::*;
         // Most sentences are fixed. The four kinds that hold a character name it by its code point.
         let sentence = match *self {
-            PathAbsolute => "the build path can't be established from an absolute path.",
-            PathParent => "the build path can't be established from a path that uses `..`.",
-            PathEmptyPart => {
-                "a path can't have an empty part, like the one `//` or a trailing `/` makes."
-            }
-            PathDotPart => "`.` can't be a part of a path, except as one leading `./`.",
-            DirectoryNotKebab => {
-                "a directory's name must be lowercase letters and digits joined by single \
-                 hyphens, like `hello-world`."
-            }
-            NameNotStella => "a source file's name must end in `.stella`.",
-            NameEmpty => "a source file needs a name before `.stella`.",
-            NameNotKebab => {
-                "a source file's name, before `.stella`, must be lowercase letters and digits \
-                 joined by single hyphens, like `hello-world`."
-            }
-            PathSymlink => {
-                "the build path can't be established from a path that goes through a symlink."
-            }
             FileEmpty => "this file is empty.",
             FileTooBig => "this file is over 16,384 bytes, the most a source file can hold.",
             NotUtf8 => "this isn't valid UTF-8.",

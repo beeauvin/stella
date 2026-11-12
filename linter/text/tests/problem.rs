@@ -10,29 +10,6 @@ use stella_linter_text::Kind::*;
 #[test]
 fn sentences() {
     for (kind, sentence) in [
-        (PathAbsolute, "the build path can't be established from an absolute path."),
-        (PathParent, "the build path can't be established from a path that uses `..`."),
-        (
-            PathEmptyPart,
-            "a path can't have an empty part, like the one `//` or a trailing `/` makes.",
-        ),
-        (PathDotPart, "`.` can't be a part of a path, except as one leading `./`."),
-        (
-            DirectoryNotKebab,
-            "a directory's name must be lowercase letters and digits joined by single hyphens, \
-             like `hello-world`.",
-        ),
-        (NameNotStella, "a source file's name must end in `.stella`."),
-        (NameEmpty, "a source file needs a name before `.stella`."),
-        (
-            NameNotKebab,
-            "a source file's name, before `.stella`, must be lowercase letters and digits joined \
-             by single hyphens, like `hello-world`.",
-        ),
-        (
-            PathSymlink,
-            "the build path can't be established from a path that goes through a symlink.",
-        ),
         (FileEmpty, "this file is empty."),
         (FileTooBig, "this file is over 16,384 bytes, the most a source file can hold."),
         (NotUtf8, "this isn't valid UTF-8."),

@@ -14,7 +14,7 @@ The binary goes in `.build/`, at the same path as its source, without
 `.stella`. So `programs/hello.stella` builds to `.build/programs/hello`. If
 something other than a regular file is already there, such as a directory, the
 build stops without touching it. The path and the name it's built from are
-tested by [`accepted_paths`](../../linter/text/tests/path.rs). `stella build`
+tested by [`accepted_paths`](../../linter/path/tests/path.rs). `stella build`
 itself isn't built yet.
 
 The compiler refuses a path it can't build from: an absolute path, or one with
@@ -24,11 +24,11 @@ lowercase letters and digits joined by single hyphens, like `hello-world` or
 `rung-0`. One leading `./` is fine, so `./programs/hello.stella` means the same
 as `programs/hello.stella`. Anywhere else, `.` or an empty part, as in
 `programs//hello.stella`, is refused. Tested by
-[`every_code_point_in_a_files_name`](../../linter/text/tests/path.rs),
-[`every_code_point_in_a_directorys_name`](../../linter/text/tests/path.rs),
-[`accepted_paths`](../../linter/text/tests/path.rs),
-[`refused_paths`](../../linter/text/tests/path.rs) and
-[`fuzz_against_the_oracle`](../../linter/text/tests/path.rs).
+[`every_code_point_in_a_files_name`](../../linter/path/tests/path.rs),
+[`every_code_point_in_a_directorys_name`](../../linter/path/tests/path.rs),
+[`accepted_paths`](../../linter/path/tests/path.rs),
+[`refused_paths`](../../linter/path/tests/path.rs) and
+[`fuzz_against_the_oracle`](../../linter/path/tests/path.rs).
 
 Then the path is checked again, as it's stored. macOS ignores case, so
 `hello.stella` can name a file stored as `Hello.stella`, and that file is
@@ -161,7 +161,7 @@ one less to worry about:
 9. The code itself.
 
 The order of the path's checks is tested by
-[`refused_paths`](../../linter/text/tests/path.rs), and the order of steps 2 to 6
+[`refused_paths`](../../linter/path/tests/path.rs), and the order of steps 2 to 6
 by [`the_steps_run_in_order`](../../linter/text/tests/text.rs). That the tokens
 come after them is tested by
 [`code_that_cant_be_lexed`](../../cli/tests/lint.rs), and that the layout comes
@@ -207,7 +207,8 @@ reaches the terminal, and the caret stays exactly under the problem. Tested by
 [`every_byte_that_isnt_utf8_is_shown_safely`](../../cli/tests/message.rs)
 and [`the_caret_lands_after_every_code_point`](../../cli/tests/message.rs).
 
-Every sentence is tested by the text lint's
+Every sentence is tested by the path lint's
+[`sentences`](../../linter/path/tests/problem.rs), the text lint's
 [`sentences`](../../linter/text/tests/problem.rs), the lexer's
 [`sentences`](../../lexer/tests/problem.rs) and the tokens lint's
 [`sentences`](../../linter/tokens/tests/problem.rs), and every line and column

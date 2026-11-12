@@ -4,17 +4,15 @@
 
 //! Checks Stella source text before it's lexed.
 //!
-//! The text lint is the first check a program meets. `lint_path` checks the path it was named
-//! by, and `lint` checks its bytes. A source that passes comes back as a `Text`, which only
-//! `lint` can make, so the lexer can take one and trust everything the lint guarantees.
+//! The text lint is the check after the path lint, and the first to read the file. `lint` checks
+//! a source's bytes. A source that passes comes back as a `Text`, which only `lint` can make, so
+//! the lexer can take one and trust everything the lint guarantees.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-mod path;
 mod problem;
 mod text;
 
-pub use path::{SourcePath, lint_path};
 pub use problem::{Kind, Place, Problem};
 pub use text::{LEVEL_SPACES, Text, lint};

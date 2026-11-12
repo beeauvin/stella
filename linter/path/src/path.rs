@@ -10,10 +10,12 @@
 //! name must be lowercase kebab: lowercase letters and digits joined by single hyphens. Last, the
 //! file's name must end in `.stella`, have something before it, and be kebab before it.
 
-use crate::problem::{Kind, Problem};
+use crate::problem::Problem;
 
-/// A source path passed the path lint. It's relative, it stays inside the directory the compiler
-/// runs in, and every name in it is lowercase kebab. Only `lint_path` makes one.
+/// A source path is a path that passed the path lint.
+///
+/// It's relative, it stays inside the directory the compiler runs in, and every name in it is
+/// lowercase kebab. Only `lint_path` makes one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourcePath<'path> {
     normalized: &'path str,
@@ -22,50 +24,61 @@ pub struct SourcePath<'path> {
 
 impl<'path> SourcePath<'path> {
     /// Returns the path without its leading `./`, if it had one, such as `programs/hello.stella`.
-    pub fn normalized(&self) -> &'path str {
+    #[must_use]
+    pub const fn normalized(&self) -> &'path str {
         self.normalized
     }
 
     /// Returns the file's name without `.stella`, such as `hello`.
-    pub fn name(&self) -> &'path str {
+    #[must_use]
+    pub const fn name(&self) -> &'path str {
         self.name
     }
 }
 
 /// Checks the path a program was named by, before anything reads it.
+///
+/// # Errors
+///
+/// Returns the first problem with the path, in the order the checks run.
+///
+/// # Panics
+///
+/// Never, whatever the path. The assertions check the lint's own work, so one that fails is a bug
+/// in the compiler.
 pub fn lint_path(path: &str) -> Result<SourcePath<'_>, Problem> {
     if path.starts_with('/') {
-        return Err(Problem::whole_file(Kind::PathAbsolute));
+        return Err(Problem::Absolute);
     }
     let normalized = path.strip_prefix("./").unwrap_or(path);
     // Each check looks at every part before the next check runs.
     if normalized.split('/').any(|part| part == "..") {
-        return Err(Problem::whole_file(Kind::PathParent));
+        return Err(Problem::Parent);
     }
     if normalized.split('/').any(str::is_empty) {
-        return Err(Problem::whole_file(Kind::PathEmptyPart));
+        return Err(Problem::EmptyPart);
     }
     if normalized.split('/').any(|part| part == ".") {
-        return Err(Problem::whole_file(Kind::PathDotPart));
+        return Err(Problem::DotPart);
     }
     // The last part is the file, and every part before it is a directory.
     let mut parts = normalized.rsplit('/');
     let file = parts.next().expect("a split has at least one part");
     if !parts.all(is_kebab) {
-        return Err(Problem::whole_file(Kind::DirectoryNotKebab));
+        return Err(Problem::DirectoryNotKebab);
     }
     let Some(name) = file.strip_suffix(".stella") else {
-        return Err(Problem::whole_file(Kind::NameNotStella));
+        return Err(Problem::NameNotStella);
     };
     if name.is_empty() {
-        return Err(Problem::whole_file(Kind::NameEmpty));
+        return Err(Problem::NameEmpty);
     }
     if !is_kebab(name) {
-        return Err(Problem::whole_file(Kind::NameNotKebab));
+        return Err(Problem::NameNotKebab);
     }
-    // Every part passed, so the path is kebab names joined by `/`: relative, and ASCII.
-    assert!(!normalized.starts_with('/'));
-    assert!(normalized.is_ascii());
+    // Every part passed, so the path is kebab names joined by `/`.
+    assert!(!normalized.starts_with('/'), "an absolute path was refused first");
+    assert!(normalized.is_ascii(), "kebab names, `/` and `.stella` are all ASCII");
     Ok(SourcePath { normalized, name })
 }
 
@@ -83,8 +96,8 @@ fn is_kebab(name: &str) -> bool {
     }
     let kebab = !word_needed;
     if kebab {
-        assert!(!name.starts_with('-'));
-        assert!(!name.ends_with('-'));
+        assert!(!name.starts_with('-'), "a hyphen is only taken after a word");
+        assert!(!name.ends_with('-'), "a name that ends in a hyphen still needs a word");
     }
     kebab
 }

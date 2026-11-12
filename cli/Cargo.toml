@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 stella-lexer = { path = "../lexer" }
+stella-linter-path = { path = "../linter/path" }
 stella-linter-text = { path = "../linter/text" }
 stella-linter-tokens = { path = "../linter/tokens" }
 stella-source = { path = "../source" }

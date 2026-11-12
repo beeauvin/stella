@@ -80,30 +80,31 @@ fn the_caret_lands_after_every_code_point() {
 #[test]
 fn whole_file_messages() {
     // A problem with the file as a whole is one line, whatever the source holds.
-    for (path, source, problem, expected) in [
+    let not_kebab = stella_linter_path::Problem::NameNotKebab.to_string();
+    for (path, source, sentence, expected) in [
         (
             &b"Hello.stella"[..],
             &b""[..],
-            whole_file(NameNotKebab),
+            not_kebab.clone(),
             "Hello.stella: a source file's name, before `.stella`, must be lowercase letters and \
              digits joined by single hyphens, like `hello-world`.\n",
         ),
         (
             b"big.stella",
             b"// x\n",
-            whole_file(FileTooBig),
+            whole_file(FileTooBig).kind.to_string(),
             "big.stella: this file is over 16,384 bytes, the most a source file can hold.\n",
         ),
         // A path is shown safely too.
         (
             b"a\xFF\n\xE2\x80\xAEb.stella",
             b"",
-            whole_file(NameNotKebab),
+            not_kebab.clone(),
             "a\\xFF\\u{A}\\u{202E}b.stella: a source file's name, before `.stella`, must be \
              lowercase letters and digits joined by single hyphens, like `hello-world`.\n",
         ),
     ] {
-        assert_eq!(message(path, source, problem.place, problem.kind), expected, "for {problem:?}");
+        assert_eq!(message(path, source, Place::File, &sentence), expected, "for {sentence:?}");
     }
 }
 

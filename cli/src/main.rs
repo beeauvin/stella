@@ -26,7 +26,8 @@ use std::process::ExitCode;
 
 use stella_cli::{Found, WALK_ENTRIES_MAX, message, shown, walk};
 use stella_lexer::{TokenBuffer, lex};
-use stella_linter_text::{Kind, Place, Problem, lint, lint_path};
+use stella_linter_path::lint_path;
+use stella_linter_text::{Place, lint};
 use stella_linter_tokens::lint_tokens;
 use stella_source::SOURCE_BYTES_MAX;
 
@@ -126,16 +127,13 @@ fn lint_one(path: &[u8], buffers: &mut Buffers) -> (u8, String) {
     let typed = String::from_utf8_lossy(path);
     let source_path = match lint_path(&typed) {
         Ok(source_path) => source_path,
-        Err(problem) => return (REFUSED, message(path, b"", problem.place, problem.kind)),
+        Err(problem) => return (REFUSED, message(path, b"", Place::File, problem)),
     };
     // On macOS, which ignores case, `hello.stella` can name `Hello.stella`, so the path is found
     // as it's stored before it's checked again.
     let as_stored = match stored(source_path.normalized()) {
         Ok(as_stored) => as_stored,
-        Err(Unstored::Symlink) => {
-            let problem = Problem::whole_file(Kind::PathSymlink);
-            return (REFUSED, message(path, b"", problem.place, problem.kind));
-        }
+        Err(Unstored::Symlink) => return (REFUSED, message(path, b"", Place::File, SYMLINK)),
         Err(Unstored::Failed(sentence)) => {
             return (FAILED, message(path, b"", Place::File, sentence));
         }
@@ -151,7 +149,7 @@ fn lint_stored(path: &[u8], stored: &[u8], buffers: &mut Buffers) -> (u8, String
     let stored_text = String::from_utf8_lossy(stored);
     let stored_path = match lint_path(&stored_text) {
         Ok(stored_path) => stored_path,
-        Err(problem) => return (REFUSED, message(stored, b"", problem.place, problem.kind)),
+        Err(problem) => return (REFUSED, message(stored, b"", Place::File, problem)),
     };
     let source = match read(stored_path.normalized(), &mut buffers.source) {
         Ok(source) => source,
@@ -182,6 +180,12 @@ fn check(source: &[u8], buffer: &mut TokenBuffer) -> Result<(), (Place, String)>
     laid_out.map_err(|problem| (Place::At(problem.position), problem.kind.to_string()))?;
     Ok(())
 }
+
+/// This is the sentence for a path that goes through a symlink. The path lint can't find one,
+/// since it never touches the filesystem, so the command does, after every check the path lint
+/// makes.
+const SYMLINK: &str =
+    "the build path can't be established from a path that goes through a symlink.";
 
 /// Unstored says why a path couldn't be found as it's stored.
 enum Unstored {
