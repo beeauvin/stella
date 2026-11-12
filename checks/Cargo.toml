@@ -6,3 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[dev-dependencies]
+stella-test-support = { path = "../test-support" }
+
+[lints]
+workspace = true

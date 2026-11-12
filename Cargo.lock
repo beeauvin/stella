@@ -16,6 +16,9 @@ dependencies = [
 [[package]]
 name = "stella-checks"
 version = "0.0.0"
+dependencies = [
+ "stella-test-support",
+]
 
 [[package]]
 name = "stella-cli"
