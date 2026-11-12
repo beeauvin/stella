@@ -5,6 +5,8 @@
 //! Unit tests for the fixtures that make a test's files. Each is checked against the filesystem
 //! itself, in the tests' scratch directory.
 
+#![forbid(unsafe_code)]
+
 use std::fs;
 use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};

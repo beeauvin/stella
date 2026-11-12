@@ -8,6 +8,8 @@
 //! Every test works on real files, under the directory cargo gives the tests to write in. The
 //! command's own tests try the walk's bound, which takes ten thousand files, through the binary.
 
+#![forbid(unsafe_code)]
+
 use std::fs;
 use std::io;
 use std::os::unix::fs::symlink;

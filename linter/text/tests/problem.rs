@@ -5,6 +5,8 @@
 //! Unit tests for the sentences the text lint's problems print. Each sentence is pinned exactly,
 //! because people and tools both read them.
 
+#![forbid(unsafe_code)]
+
 use stella_linter_text::Kind::{
     BidiControl, BlankLineAtEnd, ByteOrderMark, CarriageReturn, CommentNeedsSpace,
     CommentSharesLine, ControlCharacter, IndentationNotFour, LineSeparator, NoFinalNewline,

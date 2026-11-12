@@ -15,6 +15,8 @@
 //! the source's own text, at its own position, with only spaces and line ends between and around
 //! them.
 
+#![forbid(unsafe_code)]
+
 use std::cell::RefCell;
 use std::fmt::Debug;
 

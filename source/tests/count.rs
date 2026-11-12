@@ -5,6 +5,8 @@
 //! Unit tests for counts. A count within a source goes to a `u32` and back unchanged, up to the
 //! size of the largest source, and one more is a bug, caught where it's converted.
 
+#![forbid(unsafe_code)]
+
 use stella_source::{SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 
 #[test]

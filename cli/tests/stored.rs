@@ -10,6 +10,8 @@
 //! what a filesystem does with a name is the thing being checked. On macOS, one works across a
 //! real mount point, made from a small disk image.
 
+#![forbid(unsafe_code)]
+
 use std::fs;
 use std::io;
 use std::os::unix::fs::symlink;

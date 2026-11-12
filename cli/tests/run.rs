@@ -6,6 +6,8 @@
 //! and somewhere to write, so what it says and how it ends can be seen directly, and so can what
 //! it does when it can't write.
 
+#![forbid(unsafe_code)]
+
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};

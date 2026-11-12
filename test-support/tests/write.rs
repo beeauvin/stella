@@ -5,6 +5,8 @@
 //! Unit tests for the ways tests write and show source. The oracles lean on these, so each is
 //! pinned against text written out by hand.
 
+#![forbid(unsafe_code)]
+
 use stella_test_support::{excerpt, indent, joined, nested_blocks, slice, source_of};
 
 #[test]

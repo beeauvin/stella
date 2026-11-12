@@ -5,6 +5,8 @@
 //! End-to-end tests for `stella lint`. Each one runs the real binary in a directory of its own and
 //! pins exactly what it does: its exit status, its stdout and its stderr.
 
+#![forbid(unsafe_code)]
+
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;

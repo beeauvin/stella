@@ -10,6 +10,8 @@
 //! Git is to keep, so a new crate that isn't named there is never committed, and nothing says
 //! so. These tests hold each of those together.
 
+#![forbid(unsafe_code)]
+
 use stella_repository::{members, root, text_of};
 
 /// This is the command that runs everything that must pass, as a person types it.

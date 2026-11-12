@@ -11,6 +11,8 @@
 //! tested with it. These tests hold every crate to all four, and every source file to carrying
 //! the license.
 
+#![forbid(unsafe_code)]
+
 use std::path::PathBuf;
 
 use stella_repository::{Wanted, files_under, members, members_in, root, text_of};
@@ -98,16 +100,23 @@ fn every_crate_inherits_the_workspace() {
 
 #[test]
 fn every_crate_root_forbids_unsafe() {
-    // A crate's roots are its `src/lib.rs` and its `src/main.rs`. Each one a member has must
-    // forbid `unsafe`, and every member has at least one.
+    // A crate's roots are its `src/lib.rs` and its `src/main.rs`, and each file in its `tests`,
+    // which is built as a crate of its own. Each one a member has must forbid `unsafe`, and
+    // every member has a `src` root at least.
     for member in members() {
         let source = root().join(&member).join("src");
-        let roots: Vec<PathBuf> = ["lib.rs", "main.rs"]
+        let mut roots: Vec<PathBuf> = ["lib.rs", "main.rs"]
             .iter()
             .map(|name| source.join(name))
             .filter(|path| path.is_file())
             .collect();
         assert!(!roots.is_empty(), "{member} has neither a `src/lib.rs` nor a `src/main.rs`");
+        let tests = root().join(&member).join("tests");
+        if tests.is_dir() {
+            let in_tests = files_under(&tests, Wanted::WithExtension("rs"));
+            // A file deeper down is a module of one of these, not a root.
+            roots.extend(in_tests.into_iter().filter(|path| path.parent() == Some(&tests)));
+        }
         for crate_root in roots {
             let forbids =
                 text_of(&crate_root).split('\n').any(|line| line == "#![forbid(unsafe_code)]");

@@ -6,6 +6,8 @@
 //! only what the crate makes public: arguments in, a `Command` or a `Misuse` out, and the sentence
 //! each misuse prints.
 
+#![forbid(unsafe_code)]
+
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt as _;
 

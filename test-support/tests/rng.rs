@@ -5,6 +5,8 @@
 //! Unit tests for the generator. Every fuzz test's floors were measured on its sequence, so the
 //! sequence is pinned: the same seed must give the same numbers for good.
 
+#![forbid(unsafe_code)]
+
 use std::iter::repeat_with;
 
 use stella_test_support::Rng;

@@ -10,6 +10,8 @@
 //! checks the steps run in order, so an earlier step's problem wins even when a later step's
 //! comes first in the file.
 
+#![forbid(unsafe_code)]
+
 use stella_linter_text::Kind::{
     BidiControl, BlankLineAtEnd, ByteOrderMark, CarriageReturn, CommentNeedsSpace,
     CommentSharesLine, ControlCharacter, IndentationNotFour, LineSeparator, NoFinalNewline,

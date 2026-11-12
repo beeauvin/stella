@@ -5,6 +5,8 @@
 //! Unit tests for the sentences the tokens lint's problems print. Each sentence is pinned exactly,
 //! because people and tools both read them.
 
+#![forbid(unsafe_code)]
+
 use stella_lexer::TokenKind;
 use stella_lexer::TokenKind::{
     BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,

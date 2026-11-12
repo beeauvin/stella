@@ -9,6 +9,8 @@
 //! bytes a few at a time, the end, an interruption and a failure. `read` is tried on real files
 //! under the directory cargo gives the tests to write in.
 
+#![forbid(unsafe_code)]
+
 use std::io::{self, Read};
 use std::iter::repeat_n;
 use std::path::PathBuf;

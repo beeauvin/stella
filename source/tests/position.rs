@@ -5,6 +5,8 @@
 //! Unit tests for positions. A position holds the line and column it was made with, at every
 //! corner of the largest source, and one that no source has is a bug, caught when it's made.
 
+#![forbid(unsafe_code)]
+
 use stella_source::{Position, SOURCE_BYTES_MAX};
 
 #[test]

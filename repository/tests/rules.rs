@@ -9,6 +9,8 @@
 //! and not stated there would send a reader to a page that doesn't answer, and one stated and
 //! never cited is a rule nothing holds the code to.
 
+#![forbid(unsafe_code)]
+
 use std::path::Path;
 
 use stella_repository::{Wanted, files_under, root, text_of};

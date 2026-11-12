@@ -14,6 +14,8 @@
 //! can, from each line's text rather than the tokens' positions: it writes each line the one way
 //! and finds the first character that differs. Every example checks the oracle as well.
 
+#![forbid(unsafe_code)]
+
 use std::cell::RefCell;
 use std::cmp::Ordering;
 

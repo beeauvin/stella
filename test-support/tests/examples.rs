@@ -5,6 +5,8 @@
 //! Unit tests for examples. They come back in the order they were added, each with the line that
 //! added it, and a test can't pass by adding examples and never checking them.
 
+#![forbid(unsafe_code)]
+
 use stella_test_support::{EXAMPLES_MAX, Example, Examples};
 
 #[test]

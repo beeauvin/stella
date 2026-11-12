@@ -10,6 +10,8 @@
 //! test checks random paths against an oracle, which states the path lint as plainly as the
 //! reference does. Every example checks the oracle too.
 
+#![forbid(unsafe_code)]
+
 use stella_linter_path::Problem::{
     Absolute, DirectoryNotKebab, DotPart, EmptyPart, NameEmpty, NameNotKebab, NameNotStella, Parent,
 };

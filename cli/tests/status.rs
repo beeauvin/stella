@@ -4,6 +4,8 @@
 
 //! Unit tests for statuses: what each exits with, and which of two is the worse.
 
+#![forbid(unsafe_code)]
+
 use stella_cli::Status;
 
 #[test]

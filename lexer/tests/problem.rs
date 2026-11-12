@@ -5,6 +5,8 @@
 //! Unit tests for the sentences the lexer's problems print. Each sentence is pinned exactly,
 //! because people and tools both read them.
 
+#![forbid(unsafe_code)]
+
 use stella_lexer::Kind::{NameNotSnakeCase, TypeNameNotPascalCase, Unexpected};
 
 #[test]

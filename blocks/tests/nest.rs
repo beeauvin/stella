@@ -15,6 +15,8 @@
 //! oracle. The largest sources sit at each limit a source of 16,384 bytes has, so nothing can be
 //! counted in anything too small.
 
+#![forbid(unsafe_code)]
+
 use std::cell::RefCell;
 use std::ptr;
 

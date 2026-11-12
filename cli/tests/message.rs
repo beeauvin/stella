@@ -10,6 +10,8 @@
 //! and every code point is put before a problem to check the caret still lands under it. The rest
 //! is one table of whole messages.
 
+#![forbid(unsafe_code)]
+
 use stella_cli::{Place, message, shown};
 use stella_linter_path::Problem::NameNotKebab;
 use stella_linter_text::Kind::{

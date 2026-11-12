@@ -11,6 +11,8 @@
 //! It also checks the links between the reference's own pages: each leads to a page that's
 //! there, and the front page links every other page.
 
+#![forbid(unsafe_code)]
+
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
