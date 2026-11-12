@@ -9,6 +9,7 @@ members = [
     "linter/tokens",
     "source",
     "test-support",
+    "xtask",
 ]
 resolver = "3"
 

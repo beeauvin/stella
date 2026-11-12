@@ -13,6 +13,10 @@
 !/readme.md
 !/rustfmt.toml
 
+# The alias that makes `cargo xtask` run the workspace's tools.
+!/.cargo/
+!/.cargo/**
+
 # The workflows GitHub runs.
 !/.github/
 !/.github/**
@@ -32,6 +36,8 @@
 !/source/**
 !/test-support/
 !/test-support/**
+!/xtask/
+!/xtask/**
 
 # The documentation, which is also an Obsidian vault.
 !/docs/

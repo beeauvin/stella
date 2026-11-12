@@ -5,11 +5,7 @@ avoid-breaking-exported-api = false       # TS-NO-ABBREVIATIONS (check public na
 enum-variant-size-threshold = 128         # TS-DESIGN-PERF
 pass-by-value-size-limit = 128            # TS-DESIGN-PERF
 allowed-duplicate-crates = []             # TS-WEIGH-DEPS (name only what upstream must fix)
-await-holding-invalid-types = [           # TS-RUN-TO-COMPLETION (by default, std's guard only)
-    "tokio::sync::MutexGuard",
-    "tokio::sync::RwLockReadGuard",
-    "tokio::sync::RwLockWriteGuard",
-]
+max-include-file-size = 65536             # TS-MACROS (the default is 1,000,000 bytes)
 disallowed-macros = [
     { path = "std::debug_assert", reason = "TS-ASSERT-ARGS: assertions stay on in release" },
     { path = "std::debug_assert_eq", reason = "TS-ASSERT-ARGS: assertions stay on in release" },
@@ -20,5 +16,4 @@ disallowed-macros = [
 ]
 disallowed-methods = [
     { path = "std::sync::mpsc::channel", reason = "TS-BOUNDED: use sync_channel(capacity)" },
-    { path = "tokio::sync::mpsc::unbounded_channel", reason = "TS-BOUNDED: use channel(capacity)" },
 ]
