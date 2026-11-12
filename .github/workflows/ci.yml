@@ -16,7 +16,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  checks:
+  ci:
     # The compiler is written for macOS: it checks names as a filesystem that ignores case stores
     # them, and one test mounts a disk image.
     runs-on: macos-26

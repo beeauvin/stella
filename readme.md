@@ -48,7 +48,7 @@ something outside the program went wrong, like a file that doesn't exist.
 
 ## Working on it
 
-One command runs every check that must pass before anything merges, and CI runs
+One command runs everything that must pass before anything merges, and CI runs
 the same one:
 
 ```sh
@@ -77,7 +77,7 @@ only it can make, so nothing downstream can be given text that wasn't checked.
 | `linter/tokens` | The check of how tokens are laid out.                         |
 | `blocks`        | The nesting of laid-out lines into blocks.                    |
 | `cli`           | The `stella` command, which reads files and runs the checks.  |
-| `checks`        | Checks of the repository itself, like the reference's links.  |
+| `repository`    | Tests of the repository itself, like the reference's links.   |
 | `test-support`  | What the tests share.                                         |
 | `xtask`         | The workspace's own tools, run as `cargo xtask <command>`.    |
 | `docs`          | The documentation, with the reference in `docs/reference`.    |

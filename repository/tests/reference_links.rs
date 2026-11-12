@@ -15,7 +15,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use stella_checks::{root, text_of};
+use stella_repository::{root, text_of};
 use stella_test_support::slice;
 
 /// This is the most files the walk will look at. It's far more than the repository holds, and
@@ -32,7 +32,7 @@ fn pages() -> Vec<(PathBuf, String)> {
             (page, text)
         })
         .collect();
-    // A walk that silently found nothing would let every check here pass.
+    // A walk that silently found nothing would let every test here pass.
     assert!(!pages.is_empty(), "found no pages in {}", reference.display());
     pages
 }

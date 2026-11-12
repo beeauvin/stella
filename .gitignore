@@ -24,14 +24,14 @@
 # The crates.
 !/blocks/
 !/blocks/**
-!/checks/
-!/checks/**
 !/cli/
 !/cli/**
 !/lexer/
 !/lexer/**
 !/linter/
 !/linter/**
+!/repository/
+!/repository/**
 !/source/
 !/source/**
 !/test-support/

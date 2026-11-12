@@ -14,13 +14,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "stella-checks"
-version = "0.0.0"
-dependencies = [
- "stella-test-support",
-]
-
-[[package]]
 name = "stella-cli"
 version = "0.0.0"
 dependencies = [
@@ -64,6 +57,13 @@ dependencies = [
  "stella-lexer",
  "stella-linter-text",
  "stella-source",
+ "stella-test-support",
+]
+
+[[package]]
+name = "stella-repository"
+version = "0.0.0"
+dependencies = [
  "stella-test-support",
 ]
 

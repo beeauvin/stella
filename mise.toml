@@ -3,7 +3,7 @@ rust = { version = "1.99.1", components = "clippy,rustfmt" }
 
 # Tasks only name a command of the workspace's own tools, which are in `xtask/`.
 [tasks.ci]
-description = "Run every check that must pass before anything merges."
+description = "Run everything that must pass before anything merges."
 run = "cargo xtask ci"
 
 [tasks.lints]

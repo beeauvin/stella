@@ -2,20 +2,20 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! Checks of the workspace that no tool makes.
+//! Tests of the workspace that no tool makes.
 //!
 //! The workspace declares one set of lints, but nothing makes a crate inherit it: a crate whose
 //! manifest lacks `[lints] workspace = true` is built with no lints at all, and passes. Nothing
 //! makes a crate root forbid `unsafe` either, or stops an inner `#![allow(..)]` from switching a
 //! lint off for a whole crate. And a crate that isn't a member of the workspace isn't built or
-//! tested with it. These checks hold every crate to all four, and every source file to carrying
+//! tested with it. These tests hold every crate to all four, and every source file to carrying
 //! the license.
 
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use stella_checks::{members, members_in, root, text_of};
+use stella_repository::{members, members_in, root, text_of};
 
 /// This is the most files and directories a walk here will look at. It's far more than the
 /// repository holds, and it keeps the walk bounded.
@@ -196,7 +196,7 @@ fn every_source_file_carries_the_license() {
 
 #[test]
 fn the_scanners_find_what_theyre_for() {
-    // The checks above lean on these scanners, so each is tried on text written here: one case
+    // The tests above lean on these scanners, so each is tried on text written here: one case
     // it must find, and one it must not.
     let manifest = "[workspace]\nmembers = [\"blocks\", \"linter/text\"]\nresolver = \"3\"\n";
     assert_eq!(members_in(manifest), ["blocks", "linter/text"]);

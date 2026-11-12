@@ -2,17 +2,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! Checks of what the repository says in more than one place.
+//! Tests of what the repository says in more than one place.
 //!
 //! The Rust it's built with is pinned twice: for mise, which installs it, and for Cargo, which
-//! tells Clippy which lints apply. The command that runs every check is named three times: in
+//! tells Clippy which lints apply. The command that runs everything is named three times: in
 //! the readme, in the mise task, and in the workflow. And the ignore file names every directory
 //! Git is to keep, so a new crate that isn't named there is never committed, and nothing says
-//! so. These checks hold each of those together.
+//! so. These tests hold each of those together.
 
-use stella_checks::{members, root, text_of};
+use stella_repository::{members, root, text_of};
 
-/// This is the command that runs every check, as a person types it.
+/// This is the command that runs everything that must pass, as a person types it.
 const CI_COMMAND: &str = "cargo xtask ci";
 
 /// This is the step CI runs, which is the mise task that runs `CI_COMMAND`.
@@ -111,7 +111,7 @@ fn the_ignore_file_lets_every_crate_through() {
 
 #[test]
 fn the_scanners_find_what_theyre_for() {
-    // The checks above lean on these scanners, so each is tried on text written here: cases it
+    // The tests above lean on these scanners, so each is tried on text written here: cases it
     // must find, and cases it must not.
     let pinned = "[tools]\nrust = { version = \"1.2.3\", components = \"clippy\" }\n";
     assert_eq!(version_after(pinned, Key("rust = { version =")), Some("1.2.3"));
