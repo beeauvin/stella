@@ -12,6 +12,7 @@
 //! compiler, caught by an assertion. Only `nest` can make `Blocks`, so the grammar can take them
 //! and trust them in turn.
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod nest;

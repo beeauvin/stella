@@ -5,3 +5,5 @@
 //! This crate holds checks of the repository as a whole, such as the reference's links to the
 //! tests that check its rules. It has no code of its own: the checks are in `tests/`, so they run
 //! with every `cargo test`.
+
+#![forbid(unsafe_code)]

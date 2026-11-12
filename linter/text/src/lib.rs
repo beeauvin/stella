@@ -8,6 +8,7 @@
 //! by, and `lint` checks its bytes. A source that passes comes back as a `Text`, which only
 //! `lint` can make, so the lexer can take one and trust everything the lint guarantees.
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod path;

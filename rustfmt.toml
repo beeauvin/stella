@@ -1,1 +1,6 @@
+# The first three are what `cargo fmt` gives an edition-2024 crate, written out so a bare `rustfmt`,
+# which falls back to edition 2015, formats alike.
+max_width = 100
+edition = "2024"
+style_edition = "2024"
 use_small_heuristics = "Max"

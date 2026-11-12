@@ -13,6 +13,8 @@
 //! stderr that's closed can be written, though: Rust opens `/dev/null` in its place before `main`
 //! runs, so what's written to it is lost, and the status stands.
 
+#![forbid(unsafe_code)]
+
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, Read, Write};

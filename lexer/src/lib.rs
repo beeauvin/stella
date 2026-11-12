@@ -10,6 +10,7 @@
 //! source that lexes comes back as `Tokens`, which only `lex` can make, so the tokens lint can
 //! take them and trust them in turn.
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod lex;

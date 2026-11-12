@@ -7,6 +7,7 @@
 //! `message` turns a problem into what the compiler prints, and `shown` makes any bytes safe to
 //! print. `walk` finds every source file `stella lint` checks when it's given no path.
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod message;
