@@ -125,7 +125,7 @@ pub(crate) fn prove(root: &Path) -> Result<(), String> {
         if members.is_empty() {
             continue;
         }
-        let scratch = Scratch { root, setup, configuration };
+        let scratch = ScratchWorkspace { root, setup, configuration };
         failures.extend(scratch.failures(&members)?);
     }
     if !failures.is_empty() {
@@ -194,7 +194,7 @@ struct Configuration<'proof> {
 
 /// A scratch workspace is where the proof builds the fixtures of one setup.
 #[derive(Clone, Copy)]
-struct Scratch<'proof> {
+struct ScratchWorkspace<'proof> {
     /// The real workspace's root, which the scratch workspace is under.
     root: &'proof Path,
     /// The setup the workspace is for, which says where it is and what it's made with.
@@ -203,7 +203,7 @@ struct Scratch<'proof> {
     configuration: Configuration<'proof>,
 }
 
-impl Scratch<'_> {
+impl ScratchWorkspace<'_> {
     /// Builds `fixtures` in the scratch workspace, and returns every one that didn't do what
     /// the setup expects of it, as a sentence each.
     fn failures(self, fixtures: &[Fixture]) -> Result<Vec<String>, String> {

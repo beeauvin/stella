@@ -26,10 +26,7 @@ const STEPS: [Step; 4] = [
 pub(crate) fn run_steps(root: &Path) -> Result<(), String> {
     for step in STEPS {
         let arguments = step.concat();
-        let run = Run { directory: root, arguments: &arguments };
-        if !run.succeeds()? {
-            return Err(format!("`{}` failed.", run.shown()));
-        }
+        Run { directory: root, arguments: &arguments }.finish()?;
     }
     lints::prove(root)
 }

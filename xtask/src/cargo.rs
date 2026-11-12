@@ -45,14 +45,14 @@ pub(crate) struct Run<'run> {
 }
 
 impl Run<'_> {
-    /// Runs Cargo, with its output going where the tool's does, and says whether it succeeded.
+    /// Runs Cargo, with its output going where the tool's does.
     ///
     /// # Errors
     ///
-    /// Returns why when Cargo can't be started.
-    pub(crate) fn succeeds(self) -> Result<bool, String> {
+    /// Returns why when Cargo can't be started, or that it failed. Cargo has said why itself.
+    pub(crate) fn finish(self) -> Result<(), String> {
         let status = self.command().status().map_err(|error| self.unstarted(&error))?;
-        Ok(status.success())
+        if status.success() { Ok(()) } else { Err(format!("`{}` failed.", self.shown())) }
     }
 
     /// Runs Cargo in a scratch workspace, which builds beside its own crates, and returns what

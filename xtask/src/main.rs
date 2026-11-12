@@ -96,6 +96,7 @@ mod tests {
         assert_eq!(refused(&["ci", "lints"]), one_needed);
         assert_eq!(refused(&["lint"]), format!("`lint` isn't a command.\n{USAGE}"));
         assert_eq!(refused(&[""]), format!("`` isn't a command.\n{USAGE}"));
-        assert!(USAGE.contains("ci") && USAGE.contains("lints"), "the usage names each command");
+        assert!(USAGE.contains("ci"), "the usage names `ci`");
+        assert!(USAGE.contains("lints"), "the usage names `lints`");
     }
 }
