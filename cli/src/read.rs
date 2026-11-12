@@ -92,11 +92,12 @@ pub fn read<'buffer>(
     buffer: &'buffer mut SourceBuffer,
 ) -> Result<&'buffer [u8], Unread> {
     // TS-CLOSE-USE: the file is checked before it's opened, and not after, since opening
-    // something that isn't a file, like a FIFO, can wait forever. Something swapped in between the two could still do that, or be a
-    // symlink by the time it's opened. Opening without waiting or following takes flags std
-    // doesn't name, whose numbers differ from one system to the next, and even then a directory
-    // on the way could be swapped. Only someone who can already write where the program is could
-    // do either, so the gap is left open rather than closed halfway.
+    // something that isn't a file, like a FIFO, can wait forever. Something swapped in between
+    // the two could still do that, or be a symlink by the time it's opened. Opening without
+    // waiting or following takes flags std doesn't name, whose numbers differ from one system to
+    // the next, and even then a directory on the way could be swapped. Only someone who can
+    // already write where the program is could do either, so the gap is left open rather than
+    // closed halfway.
     let metadata = fs::metadata(path).map_err(|error| match error.kind() {
         io::ErrorKind::NotFound => Unread::Missing,
         _ => Unread::Unreadable(error),

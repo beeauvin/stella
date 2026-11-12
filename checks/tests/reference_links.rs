@@ -37,74 +37,6 @@ fn pages() -> Vec<(PathBuf, String)> {
     pages
 }
 
-#[test]
-fn every_test_link_in_the_reference_leads_to_that_test() {
-    // Every page's test links are read, and each must lead to a file with a `#[test]` of the
-    // name the link shows. A Rust file named any other way fails here too.
-    let mut links_count: u32 = 0;
-    for (page, text) in pages() {
-        let page_name = page.display();
-        let links = test_links(&text);
-        let stray = links.as_ref().err();
-        assert!(
-            stray.is_none(),
-            "{page_name}: a Rust file is named outside a test link, [`test_name`](file.rs): \
-             {stray:?}"
-        );
-        for (name, target) in links.expect("no Rust file is named outside a test link") {
-            let file = page.parent().expect("a page is in a directory").join(target);
-            let tests = fs::read_to_string(&file);
-            let unread = tests.as_ref().err();
-            assert!(
-                unread.is_none(),
-                "{page_name}: `{name}` links to {target}, which can't be read: {unread:?}"
-            );
-            assert!(
-                test_names(&tests.expect("the file was read")).contains(&name),
-                "{page_name}: `{name}` links to {target}, which has no test of that name",
-            );
-            links_count += 1;
-        }
-    }
-    // A scanner that silently found nothing would pass, so make sure it found the links.
-    assert!(links_count > 0, "found no test links in the reference");
-}
-
-#[test]
-fn every_link_between_pages_leads_to_a_page() {
-    // Every link whose target ends in `.md` is followed from the page it's on, and must lead to
-    // a file that's there.
-    let mut links_count: u32 = 0;
-    for (page, text) in pages() {
-        for target in page_links(&text) {
-            let linked = page.parent().expect("a page is in a directory").join(target);
-            assert!(
-                linked.is_file(),
-                "{}: a link leads to {target}, which isn't there",
-                page.display()
-            );
-            links_count += 1;
-        }
-    }
-    assert!(links_count > 0, "found no links between pages in the reference");
-}
-
-#[test]
-fn the_front_page_links_every_page() {
-    // The reference's front page is its table of contents, so a page it doesn't link can't be
-    // found from it. Every other page in its directory must be one of its links.
-    let front = root().join("docs/reference/readme.md");
-    let text = text_of(&front);
-    let linked = page_links(&text);
-    for (page, _) in pages() {
-        if page == front {
-            continue;
-        }
-        let name = page.file_name().and_then(OsStr::to_str).expect("a page's name is UTF-8");
-        assert!(linked.contains(&name), "the front page doesn't link {name}");
-    }
-}
-
 /// Returns every file under `directory` whose name ends in `.` and `extension`. It walks with a
 /// stack rather than recursion, and it stops with a panic past `FILES_MAX`.
 fn files_with_extension(directory: &Path, extension: &str) -> Vec<PathBuf> {
@@ -222,6 +154,94 @@ fn ends_a_rust_file(after: &str) -> bool {
     }
 }
 
+/// Returns the name of every function marked `#[test]` in `source`, skipping any other
+/// attributes between the mark and the `fn`.
+fn test_names(source: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut lines = source.split('\n').map(str::trim);
+    while let Some(line) = lines.next() {
+        if line != "#[test]" {
+            continue;
+        }
+        let function = lines.by_ref().find(|line| !line.starts_with("#["));
+        let name = function
+            .and_then(|line| line.strip_prefix("fn "))
+            .and_then(|rest| rest.split('(').next());
+        if let Some(name) = name {
+            names.push(name);
+        }
+    }
+    names
+}
+
+#[test]
+fn every_test_link_in_the_reference_leads_to_that_test() {
+    // Every page's test links are read, and each must lead to a file with a `#[test]` of the
+    // name the link shows. A Rust file named any other way fails here too.
+    let mut links_count: u32 = 0;
+    for (page, text) in pages() {
+        let page_name = page.display();
+        let links = test_links(&text);
+        let stray = links.as_ref().err();
+        assert!(
+            stray.is_none(),
+            "{page_name}: a Rust file is named outside a test link, [`test_name`](file.rs): \
+             {stray:?}"
+        );
+        for (name, target) in links.expect("no Rust file is named outside a test link") {
+            let file = page.parent().expect("a page is in a directory").join(target);
+            let tests = fs::read_to_string(&file);
+            let unread = tests.as_ref().err();
+            assert!(
+                unread.is_none(),
+                "{page_name}: `{name}` links to {target}, which can't be read: {unread:?}"
+            );
+            assert!(
+                test_names(&tests.expect("the file was read")).contains(&name),
+                "{page_name}: `{name}` links to {target}, which has no test of that name",
+            );
+            links_count += 1;
+        }
+    }
+    // A scanner that silently found nothing would pass, so make sure it found the links.
+    assert!(links_count > 0, "found no test links in the reference");
+}
+
+#[test]
+fn every_link_between_pages_leads_to_a_page() {
+    // Every link whose target ends in `.md` is followed from the page it's on, and must lead to
+    // a file that's there.
+    let mut links_count: u32 = 0;
+    for (page, text) in pages() {
+        for target in page_links(&text) {
+            let linked = page.parent().expect("a page is in a directory").join(target);
+            assert!(
+                linked.is_file(),
+                "{}: a link leads to {target}, which isn't there",
+                page.display()
+            );
+            links_count += 1;
+        }
+    }
+    assert!(links_count > 0, "found no links between pages in the reference");
+}
+
+#[test]
+fn the_front_page_links_every_page() {
+    // The reference's front page is its table of contents, so a page it doesn't link can't be
+    // found from it. Every other page in its directory must be one of its links.
+    let front = root().join("docs/reference/readme.md");
+    let text = text_of(&front);
+    let linked = page_links(&text);
+    for (page, _) in pages() {
+        if page == front {
+            continue;
+        }
+        let name = page.file_name().and_then(OsStr::to_str).expect("a page's name is UTF-8");
+        assert!(linked.contains(&name), "the front page doesn't link {name}");
+    }
+}
+
 #[test]
 fn every_link_to_a_rust_file_names_a_test() {
     // The scanner itself, on text written here: it reads the one shape of test link, takes
@@ -254,7 +274,7 @@ fn every_link_to_a_rust_file_names_a_test() {
         ] {
             // The error is the line that holds the mention.
             let error = test_links(&text).expect_err(&text);
-            assert!(text.lines().any(|line| line == error), "for {text:?}");
+            assert!(text.split('\n').any(|line| line == error), "for {text:?}");
             assert!(error.contains("text.rs"), "for {text:?}");
         }
     }
@@ -270,32 +290,13 @@ fn page_links_are_the_targets_that_end_in_md() {
     assert_eq!(page_links("No links here, only (parentheses) and [brackets]."), [""; 0]);
 }
 
-/// Returns the name of every function marked `#[test]` in `source`, skipping any other
-/// attributes between the mark and the `fn`.
-fn test_names(source: &str) -> Vec<&str> {
-    let mut names = Vec::new();
-    let mut lines = source.lines().map(str::trim);
-    while let Some(line) = lines.next() {
-        if line != "#[test]" {
-            continue;
-        }
-        let function = lines.by_ref().find(|line| !line.starts_with("#["));
-        let name = function
-            .and_then(|line| line.strip_prefix("fn "))
-            .and_then(|rest| rest.split('(').next());
-        if let Some(name) = name {
-            names.push(name);
-        }
-    }
-    names
-}
-
 #[test]
 fn only_functions_marked_as_tests_are_named() {
     // The scanner for tests, on source written here: a function is a test when `#[test]` marks
     // it, with or without other attributes between, and no other function is.
     let source = "#[test]\nfn one() {\n}\n\nfn helper() {\n}\n\n#[test]\n\
-                  #[should_panic(expected = \"x\")]\nfn two() {\n}\n    #[test]\n    fn three() {}\n";
+                  #[should_panic(expected = \"x\")]\nfn two() {\n}\n    #[test]\n    \
+                  fn three() {}\n";
     assert_eq!(test_names(source), ["one", "two", "three"]);
     assert_eq!(test_names("fn helper() {\n}\n"), [""; 0]);
 }

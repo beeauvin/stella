@@ -5,8 +5,8 @@
 //! What the tests of more than one crate share.
 //!
 //! `Rng` is the seeded generator every fuzz test draws from. `Examples` is a table of sources a
-//! test tries, which can't be dropped unchecked. `fresh_directory`, `write`, `fifo` and `Lock`
-//! make the files a test works in. The rest write and show Stella source the way the tests do.
+//! test tries, which can't be dropped unchecked. `Scratch`, `write`, `fifo` and `Lock` make the
+//! files a test works in. The rest write and show Stella source the way the tests do.
 //! Nothing here depends on a check, so an oracle built from it states a rule on its own, and
 //! can't agree with the code it checks by sharing that code.
 
@@ -17,7 +17,7 @@ mod files;
 mod rng;
 mod write;
 
-pub use examples::{Example, Examples};
-pub use files::{Lock, fifo, fresh_directory, write};
+pub use examples::{EXAMPLES_MAX, Example, Examples};
+pub use files::{Lock, Scratch, fifo, write};
 pub use rng::Rng;
-pub use write::{indent, joined, nested_blocks, shown, slice, source_of};
+pub use write::{excerpt, indent, joined, nested_blocks, slice, source_of};

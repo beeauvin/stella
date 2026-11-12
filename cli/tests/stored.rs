@@ -17,15 +17,61 @@ use std::path::{Path, PathBuf};
 
 use stella_cli::{Unstored, stored};
 use stella_linter_path::lint_path;
-use stella_test_support::{Lock, write};
+use stella_test_support::{Lock, Scratch, write};
 
 /// This is a program that passes, though nothing here reads it.
 const GOOD: &[u8] = b"function main() returns Void {\n}\n";
 
+/// A disk image mounted at a directory until it's dropped.
+#[cfg(target_os = "macos")]
+struct Mounted {
+    mount_point: PathBuf,
+}
+
+#[cfg(target_os = "macos")]
+impl Mounted {
+    /// Makes a small disk image in `directory` and mounts it at `volume` there. The volume tells
+    /// names apart by case, as the filesystem around it needn't.
+    fn in_directory(directory: &Path) -> Self {
+        let (image, mount_point) = (directory.join("image.dmg"), directory.join("volume"));
+        fs::create_dir(&mount_point).expect("the mount point is ours to make");
+        let made = hdiutil(&[
+            "create".as_ref(),
+            "-size".as_ref(),
+            "4m".as_ref(),
+            "-fs".as_ref(),
+            "Case-sensitive APFS".as_ref(),
+            "-volname".as_ref(),
+            "stella-test".as_ref(),
+            "-quiet".as_ref(),
+            image.as_os_str(),
+        ]);
+        assert!(made, "hdiutil should make a disk image at {}", image.display());
+        let attached = hdiutil(&[
+            "attach".as_ref(),
+            image.as_os_str(),
+            "-mountpoint".as_ref(),
+            mount_point.as_os_str(),
+            "-nobrowse".as_ref(),
+            "-quiet".as_ref(),
+        ]);
+        assert!(attached, "hdiutil should mount the image at {}", mount_point.display());
+        Self { mount_point }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for Mounted {
+    fn drop(&mut self) {
+        // A test may have failed already, so this mustn't panic too. An image left mounted is
+        // unmounted by the next run, before it starts.
+        _ = unmount(&self.mount_point);
+    }
+}
+
 /// Returns a new, empty directory for one test to work in.
 fn fresh_directory(name: &str) -> PathBuf {
-    let parent = Path::new(env!("CARGO_TARGET_TMPDIR")).join("stored");
-    stella_test_support::fresh_directory(&parent, name)
+    Scratch::of("stored").fresh(name)
 }
 
 /// Returns `typed`, which must pass the path lint, as it's stored under `root`.
@@ -34,6 +80,8 @@ fn stored_of(root: &Path, typed: &str) -> Result<Vec<u8>, Unstored> {
 }
 
 /// Checks that `typed` is stored under `root` as `expected`.
+// TS-DISTINCT-ARGS: the path typed comes before the path it's stored by, as in the sentence
+// above, and a check with the two swapped asks the filesystem another question, so it fails.
 fn stores(root: &Path, typed: &str, expected: &str) {
     let found = stored_of(root, typed).map(|found| String::from_utf8_lossy(&found).into_owned());
     let found = found.map_err(|unstored| unstored.to_string());
@@ -46,6 +94,19 @@ fn ignores_case(directory: &Path) -> bool {
     let ignores = directory.join("probe.txt").exists();
     fs::remove_file(directory.join("Probe.txt")).expect("the probe is ours to remove");
     ignores
+}
+
+/// Runs `hdiutil` with `arguments`, and says whether it succeeded.
+#[cfg(target_os = "macos")]
+fn hdiutil(arguments: &[&std::ffi::OsStr]) -> bool {
+    let status = std::process::Command::new("/usr/bin/hdiutil").args(arguments).status();
+    status.expect("`/usr/bin/hdiutil` is there to run on macOS").success()
+}
+
+/// Unmounts what's mounted at `mount_point`, and says whether anything was.
+#[cfg(target_os = "macos")]
+fn unmount(mount_point: &Path) -> bool {
+    hdiutil(&["detach".as_ref(), mount_point.as_os_str(), "-force".as_ref(), "-quiet".as_ref()])
 }
 
 #[test]
@@ -201,64 +262,6 @@ fn what_cant_be_found_says_why() {
     assert_eq!(listless.to_string(), sentence);
 }
 
-/// A disk image mounted at a directory until it's dropped.
-#[cfg(target_os = "macos")]
-struct Mounted {
-    mount_point: PathBuf,
-}
-
-#[cfg(target_os = "macos")]
-impl Mounted {
-    /// Makes a small disk image at `image` and mounts it at `mount_point`. The volume tells
-    /// names apart by case, as the filesystem around it needn't.
-    fn new(image: &Path, mount_point: &Path) -> Self {
-        let made = hdiutil(&[
-            "create".as_ref(),
-            "-size".as_ref(),
-            "4m".as_ref(),
-            "-fs".as_ref(),
-            "Case-sensitive APFS".as_ref(),
-            "-volname".as_ref(),
-            "stella-test".as_ref(),
-            "-quiet".as_ref(),
-            image.as_os_str(),
-        ]);
-        assert!(made, "hdiutil should make a disk image at {}", image.display());
-        let attached = hdiutil(&[
-            "attach".as_ref(),
-            image.as_os_str(),
-            "-mountpoint".as_ref(),
-            mount_point.as_os_str(),
-            "-nobrowse".as_ref(),
-            "-quiet".as_ref(),
-        ]);
-        assert!(attached, "hdiutil should mount the image at {}", mount_point.display());
-        Self { mount_point: mount_point.to_path_buf() }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for Mounted {
-    fn drop(&mut self) {
-        // A test may have failed already, so this mustn't panic too. An image left mounted is
-        // unmounted by the next run, before it starts.
-        _ = unmount(&self.mount_point);
-    }
-}
-
-/// Runs `hdiutil` with `arguments`, and says whether it succeeded.
-#[cfg(target_os = "macos")]
-fn hdiutil(arguments: &[&std::ffi::OsStr]) -> bool {
-    let status = std::process::Command::new("/usr/bin/hdiutil").args(arguments).status();
-    status.expect("`/usr/bin/hdiutil` is there to run on macOS").success()
-}
-
-/// Unmounts what's mounted at `mount_point`, and says whether anything was.
-#[cfg(target_os = "macos")]
-fn unmount(mount_point: &Path) -> bool {
-    hdiutil(&["detach".as_ref(), mount_point.as_os_str(), "-force".as_ref(), "-quiet".as_ref()])
-}
-
 #[cfg(target_os = "macos")]
 #[test]
 fn a_path_through_a_mount_point_is_found() {
@@ -266,13 +269,13 @@ fn a_path_through_a_mount_point_is_found() {
     // what's mounted there, so it can't be found by matching the inode a listing gives. It's
     // found by its name. Here a small disk image is mounted at `volume`, and paths through it are
     // found as they're stored, on a volume that tells names apart by case.
-    let parent = Path::new(env!("CARGO_TARGET_TMPDIR")).join("stored");
+    let scratch = Scratch::of("stored");
+    let parent = scratch.path();
     // A run that was killed may have left its image mounted, which can't be removed until it's
     // unmounted. Nothing is mounted there otherwise, so this is allowed to find nothing.
     _ = unmount(&parent.join("mount-point/volume"));
     let directory = fresh_directory("mount-point");
-    fs::create_dir(directory.join("volume")).expect("the mount point is ours to make");
-    let mounted = Mounted::new(&directory.join("image.dmg"), &directory.join("volume"));
+    let mounted = Mounted::in_directory(&directory);
     write(&mounted.mount_point, "hello.stella", GOOD);
     write(&mounted.mount_point, "programs/hello.stella", GOOD);
     write(&mounted.mount_point, "Shout.stella", GOOD);

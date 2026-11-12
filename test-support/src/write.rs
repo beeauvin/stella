@@ -15,10 +15,10 @@ use stella_source::usize_from_u32;
 const LEVEL_SPACES: usize = 4;
 
 /// This is the longest source a failure shows whole, in bytes.
-const SHOWN_BYTES_MAX: usize = 120;
+const EXCERPT_WHOLE_BYTES_MAX: usize = 120;
 
 /// This is how many characters of a longer source a failure shows.
-const SHOWN_START_CHARACTERS: usize = 60;
+const EXCERPT_START_CHARACTERS: usize = 60;
 
 /// Returns the spaces that indent a line `levels` levels.
 #[must_use]
@@ -80,11 +80,11 @@ pub fn slice(text: &str, range: Range<usize>) -> &str {
 /// Returns `source` as a failure shows it: whole when it's short, or else its start and its
 /// length, since the largest sources are 16,384 bytes.
 #[must_use]
-pub fn shown(source: &str) -> String {
-    if source.len() <= SHOWN_BYTES_MAX {
+pub fn excerpt(source: &str) -> String {
+    if source.len() <= EXCERPT_WHOLE_BYTES_MAX {
         format!("{source:?}")
     } else {
-        let start: String = source.chars().take(SHOWN_START_CHARACTERS).collect();
+        let start: String = source.chars().take(EXCERPT_START_CHARACTERS).collect();
         format!("{start:?}, and on to {} bytes", source.len())
     }
 }

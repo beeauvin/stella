@@ -11,11 +11,11 @@
 
 use std::io::{self, Read};
 use std::iter::repeat_n;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use stella_cli::{READ_INTERRUPTIONS_MAX, SourceBuffer, Unread, fill, read};
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
-use stella_test_support::{Lock, fifo, write};
+use stella_test_support::{Lock, Scratch, fifo, write};
 
 /// One answer a scripted reader gives to a read.
 #[derive(Clone, Copy)]
@@ -61,8 +61,7 @@ impl Read for Scripted {
 
 /// Returns a new, empty directory for one test to work in.
 fn fresh_directory(name: &str) -> PathBuf {
-    let parent = Path::new(env!("CARGO_TARGET_TMPDIR")).join("read");
-    stella_test_support::fresh_directory(&parent, name)
+    Scratch::of("read").fresh(name)
 }
 
 #[test]

@@ -5,10 +5,11 @@
 //! Unit tests for the ways tests write and show source. The oracles lean on these, so each is
 //! pinned against text written out by hand.
 
-use stella_test_support::{indent, joined, nested_blocks, shown, slice, source_of};
+use stella_test_support::{excerpt, indent, joined, nested_blocks, slice, source_of};
 
 #[test]
 fn indent_is_four_spaces_a_level() {
+    // No level is no spaces, and each level after adds four, as the layout page says.
     assert_eq!(indent(0), "");
     assert_eq!(indent(1), "    ");
     assert_eq!(indent(3), "            ");
@@ -42,20 +43,22 @@ fn joined_writes_a_line_the_one_way() {
 
 #[test]
 fn nested_blocks_open_and_close_in_order() {
+    // Each block is opened by `({`, a level deeper than the one it's in, and closed by a `}` at
+    // its own depth, innermost first. The lines for depths 1 and 3 are written out by hand.
     assert_eq!(nested_blocks(0), Vec::<String>::new());
     assert_eq!(nested_blocks(1), ["({", "}"]);
     assert_eq!(nested_blocks(3), ["({", "    ({", "        ({", "        }", "    }", "}"]);
 }
 
 #[test]
-fn shown_cuts_a_long_source_short() {
+fn an_excerpt_cuts_a_long_source_short() {
     // A source of up to 120 bytes is shown whole, as a string literal. A longer one is its first
     // 60 characters and its length.
-    assert_eq!(shown("a {\n}\n"), "\"a {\\n}\\n\"");
+    assert_eq!(excerpt("a {\n}\n"), "\"a {\\n}\\n\"");
     let longest_whole = "x".repeat(120);
-    assert_eq!(shown(&longest_whole), format!("{longest_whole:?}"));
+    assert_eq!(excerpt(&longest_whole), format!("{longest_whole:?}"));
     let long = "x".repeat(121);
-    assert_eq!(shown(&long), format!("{:?}, and on to 121 bytes", "x".repeat(60)));
+    assert_eq!(excerpt(&long), format!("{:?}, and on to 121 bytes", "x".repeat(60)));
 }
 
 #[test]

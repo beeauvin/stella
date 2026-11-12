@@ -27,7 +27,7 @@ use stella_linter_text::{LEVEL_SPACES, lint};
 use stella_linter_tokens::lint_tokens;
 use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 use stella_test_support::{
-    Example, Examples, Rng, indent, joined, nested_blocks, shown, source_of,
+    Example, Examples, Rng, excerpt, indent, joined, nested_blocks, source_of,
 };
 
 /// One line of an outline: the line's number in the source, how many tokens it holds, the number
@@ -47,6 +47,80 @@ thread_local! {
     /// Each test lexes and nests every source it tries into these buffers, as the command does.
     static BUFFERS: RefCell<(TokenBuffer, NodeBuffer)> =
         RefCell::new((TokenBuffer::new(), NodeBuffer::new()));
+}
+
+/// These are what a random line that opens a block is made of, before its `{`.
+const PIECES: &[&str] = &["function", "returns", "main", "Void", "x", "MyType", "(", ")"];
+
+/// These follow a comment's `//`. Some read like braces, which open and close nothing.
+const COMMENT_TEXTS: &[&str] = &["", " a", " café", " { } ( )", " }", " function main() {"];
+
+/// A node with its parts in the open, as the tests state and compare one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlainNode {
+    /// The index of the node's first token, in the source's tokens.
+    first: u32,
+    /// How many tokens the node holds.
+    count: u32,
+    /// The index of the node whose block this one is directly in.
+    parent: Option<u32>,
+    /// The block the node opens.
+    block: Option<PlainBlock>,
+}
+
+/// A block with its parts in the open, as the tests state and compare one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlainBlock {
+    /// The index just past the block's last node.
+    end: u32,
+    /// The index of the `}` that closes the block, in the source's tokens.
+    close: u32,
+}
+
+/// What nesting makes of a source, as the tests compare it: its nodes, the nodes `top` yields,
+/// and for each node, the nodes `children` yields when it opens a block.
+#[derive(Debug, PartialEq, Eq)]
+struct Nested {
+    nodes: Vec<PlainNode>,
+    top: Vec<u32>,
+    children: Vec<Option<Vec<u32>>>,
+}
+
+/// What the oracle makes of a source: what nesting should make of it, and its outline.
+struct Expected {
+    nested: Nested,
+    outline: Vec<Outlined>,
+}
+
+/// The shapes the fuzzing must reach often, as counts of the sources that reach each.
+#[derive(Debug, Default)]
+struct Reached {
+    deep: u32,
+    many_at_top: u32,
+    empty_blocks: u32,
+    comments_in_blocks: u32,
+    blank_lines: u32,
+}
+
+impl Reached {
+    /// Counts the shapes `source`, which nests as `nodes`, reaches.
+    fn count(&mut self, source: &str, nodes: &[PlainNode]) {
+        let mut depths: Vec<u32> = Vec::new();
+        for node in nodes {
+            depths.push(node.parent.map_or(0, |parent| depths[usize_from_u32(parent)] + 1));
+        }
+        let opens_at_top =
+            nodes.iter().filter(|node| node.parent.is_none() && node.block.is_some());
+        let is_empty = |(index, node): (usize, &PlainNode)| {
+            node.block.is_some_and(|block| block.end == u32_from_usize(index) + 1)
+        };
+        self.deep += u32::from(depths.iter().any(|&depth| depth >= 6));
+        self.many_at_top += u32::from(opens_at_top.count() >= 3);
+        self.empty_blocks += u32::from(nodes.iter().enumerate().any(is_empty));
+        let in_block = |node: &PlainNode| node.parent.is_some() && node.block.is_none();
+        self.comments_in_blocks += u32::from(nodes.iter().any(in_block));
+        self.blank_lines += u32::from(source.starts_with('\n') || source.contains("\n\n"));
+    }
 }
 
 /// Says whether `source` passes the text lint, the lexer and the tokens lint, so it can be nested.
@@ -73,28 +147,6 @@ fn with_blocks<T>(source: &str, then: impl FnOnce(Blocks<'_, '_>) -> T) -> T {
     })
 }
 
-/// A node with its parts in the open, as the tests state and compare one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PlainNode {
-    /// The index of the node's first token, in the source's tokens.
-    first: u32,
-    /// How many tokens the node holds.
-    count: u32,
-    /// The index of the node whose block this one is directly in.
-    parent: Option<u32>,
-    /// The block the node opens.
-    block: Option<PlainBlock>,
-}
-
-/// A block with its parts in the open, as the tests state and compare one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PlainBlock {
-    /// The index just past the block's last node.
-    end: u32,
-    /// The index of the `}` that closes the block, in the source's tokens.
-    close: u32,
-}
-
 /// Returns `node` with its parts in the open.
 fn plain(node: &Node) -> PlainNode {
     let span = node.token_span();
@@ -107,15 +159,6 @@ fn plain(node: &Node) -> PlainNode {
             close: block.close_token_index(),
         }),
     }
-}
-
-/// What nesting makes of a source, as the tests compare it: its nodes, the nodes `top` yields,
-/// and for each node, the nodes `children` yields when it opens a block.
-#[derive(Debug, PartialEq, Eq)]
-struct Nested {
-    nodes: Vec<PlainNode>,
-    top: Vec<u32>,
-    children: Vec<Option<Vec<u32>>>,
 }
 
 /// Nests `source`, which must be laid out the one way, and returns what `nest` made of it. On the
@@ -171,14 +214,14 @@ fn check(examples: Examples<Vec<Outlined>>) {
     let examples = examples.take();
     let mut expected = Vec::new();
     for Example { source, expected: outline, at } in &examples {
-        let shown = shown(source);
-        assert!(lays_out(source), "{at}: {shown} should be laid out the one way");
+        let excerpt = excerpt(source);
+        assert!(lays_out(source), "{at}: {excerpt} should be laid out the one way");
         let oracle = oracle(source);
-        assert_eq!(oracle.outline, *outline, "{at}: the oracle's outline, for {shown}");
+        assert_eq!(oracle.outline, *outline, "{at}: the oracle's outline, for {excerpt}");
         expected.push(oracle.nested);
     }
     for (Example { source, at, .. }, nested) in examples.iter().zip(expected) {
-        assert_eq!(checked(source), nested, "{at}: for {}", shown(source));
+        assert_eq!(checked(source), nested, "{at}: for {}", excerpt(source));
     }
 }
 
@@ -197,6 +240,113 @@ fn comments_outline(count: u32) -> Vec<Outlined> {
 /// line of two tokens and closed on the next line.
 fn blocks_outline(count: u32) -> Vec<Outlined> {
     (0..count).map(|block| (2 * block + 1, 2, 0, 2 * block + 2)).collect()
+}
+
+/// Returns how many tokens are in `code`, a line of code without its indentation: each of `(`,
+/// `)`, `{` and `}` is one, a run of letters, digits and `_` is one, and spaces are between them.
+fn tokens_in(code: &str) -> u32 {
+    let mut count = 0;
+    let mut in_word = false;
+    for byte in code.bytes() {
+        let word = byte.is_ascii_alphanumeric() || byte == b'_';
+        if (word && !in_word) || matches!(byte, b'(' | b')' | b'{' | b'}') {
+            count += 1;
+        }
+        in_word = word;
+    }
+    count
+}
+
+/// Returns what nesting should make of `source`, which is laid out the one way, worked out from
+/// each line's text. A blank line isn't a node. A comment is a node of one token, and a line of
+/// code is a node of as many as `tokens_in` counts. A node's depth is its line's indentation, a
+/// level for each block it's in, and it's in the block opened by the latest line that ends with
+/// `{` one level out. A `}` isn't a node: it's at the depth of the line whose block it closes,
+/// and that block ends with the nodes before it.
+fn oracle(source: &str) -> Expected {
+    let (mut nodes, mut outline) = (Vec::<PlainNode>::new(), Vec::<Outlined>::new());
+    // The nodes that open the blocks still open, outermost first, so one for each level.
+    let mut open: Vec<usize> = Vec::new();
+    let mut token: u32 = 0;
+    for (content, number) in source.split_terminator('\n').zip(1_u32..) {
+        let code = content.trim_start_matches(' ');
+        if code.is_empty() {
+            continue;
+        }
+        let depth = (content.len() - code.len()) / usize_from_u32(LEVEL_SPACES);
+        let is_comment = code.starts_with("//");
+        let count = if is_comment { 1 } else { tokens_in(code) };
+        if code == "}" {
+            assert_eq!(open.len(), depth + 1, "a `}}` is at the depth of the block it closes");
+            let opener = open.pop().expect("a block is open");
+            nodes[opener].block =
+                Some(PlainBlock { end: u32_from_usize(nodes.len()), close: token });
+            outline[opener].3 = number;
+        } else {
+            assert_eq!(open.len(), depth, "a line is in every block still open");
+            let parent = open.last().copied();
+            nodes.push(PlainNode {
+                first: token,
+                count,
+                parent: parent.map(u32_from_usize),
+                block: None,
+            });
+            outline.push((number, count, parent.map_or(0, |parent| outline[parent].0), 0));
+            if code.ends_with('{') && !is_comment {
+                open.push(nodes.len() - 1);
+            }
+        }
+        token += count;
+    }
+    assert!(open.is_empty(), "every block is closed");
+    let top = children_by_parent(&nodes, None);
+    let children = (0..nodes.len())
+        .map(|index| {
+            let opens = nodes[index].block.is_some();
+            opens.then(|| children_by_parent(&nodes, Some(u32_from_usize(index))))
+        })
+        .collect();
+    Expected { nested: Nested { nodes, top, children }, outline }
+}
+
+/// Returns the indices of the nodes in `nodes` whose parent is `parent`, in order.
+fn children_by_parent(nodes: &[PlainNode], parent: Option<u32>) -> Vec<u32> {
+    (0..nodes.len()).filter(|&index| nodes[index].parent == parent).map(u32_from_usize).collect()
+}
+
+/// Returns a random program laid out the one way, as its lines: blank lines, comments, and blocks
+/// nested up to eight deep, each opened by a few random tokens and `{`, and closed by `}`.
+fn random_program(rng: &mut Rng) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut depth: u32 = 0;
+    for _ in 0..=rng.below(40) {
+        match rng.below(8) {
+            0 => lines.push(String::new()),
+            1 | 2 => lines.push(format!("{}//{}", indent(depth), rng.pick(COMMENT_TEXTS))),
+            3 | 4 if depth > 0 => {
+                depth -= 1;
+                lines.push(format!("{}}}", indent(depth)));
+            }
+            _ if depth < 8 => {
+                let heads = 1 + rng.below(4);
+                let mut texts: Vec<&str> =
+                    std::iter::repeat_with(|| rng.pick(PIECES)).take(heads).collect();
+                texts.push("{");
+                lines.push(format!("{}{}", indent(depth), joined(&texts)));
+                depth += 1;
+            }
+            _ => lines.push(format!("{}// deep", indent(depth))),
+        }
+    }
+    lines.extend((0..depth).rev().map(|level| format!("{}}}", indent(level))));
+    // A source can't end with a blank line, or be empty.
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        lines.push(String::from("// empty"));
+    }
+    lines
 }
 
 #[test]
@@ -481,160 +631,6 @@ fn one_buffer_serves_every_source() {
     }
 }
 
-// The oracle, which works from each line's text.
-
-/// What the oracle makes of a source: what nesting should make of it, and its outline.
-struct Expected {
-    nested: Nested,
-    outline: Vec<Outlined>,
-}
-
-/// Returns how many tokens are in `code`, a line of code without its indentation: each of `(`,
-/// `)`, `{` and `}` is one, a run of letters, digits and `_` is one, and spaces are between them.
-fn tokens_in(code: &str) -> u32 {
-    let mut count = 0;
-    let mut in_word = false;
-    for byte in code.bytes() {
-        let word = byte.is_ascii_alphanumeric() || byte == b'_';
-        if (word && !in_word) || matches!(byte, b'(' | b')' | b'{' | b'}') {
-            count += 1;
-        }
-        in_word = word;
-    }
-    count
-}
-
-/// Returns what nesting should make of `source`, which is laid out the one way, worked out from
-/// each line's text. A blank line isn't a node. A comment is a node of one token, and a line of
-/// code is a node of as many as `tokens_in` counts. A node's depth is its line's indentation, a
-/// level for each block it's in, and it's in the block opened by the latest line that ends with
-/// `{` one level out. A `}` isn't a node: it's at the depth of the line whose block it closes,
-/// and that block ends with the nodes before it.
-fn oracle(source: &str) -> Expected {
-    let (mut nodes, mut outline) = (Vec::<PlainNode>::new(), Vec::<Outlined>::new());
-    // The nodes that open the blocks still open, outermost first, so one for each level.
-    let mut open: Vec<usize> = Vec::new();
-    let mut token: u32 = 0;
-    for (content, number) in source.split_terminator('\n').zip(1_u32..) {
-        let code = content.trim_start_matches(' ');
-        if code.is_empty() {
-            continue;
-        }
-        let depth = (content.len() - code.len()) / usize_from_u32(LEVEL_SPACES);
-        let is_comment = code.starts_with("//");
-        let count = if is_comment { 1 } else { tokens_in(code) };
-        if code == "}" {
-            assert_eq!(open.len(), depth + 1, "a `}}` is at the depth of the block it closes");
-            let opener = open.pop().expect("a block is open");
-            nodes[opener].block =
-                Some(PlainBlock { end: u32_from_usize(nodes.len()), close: token });
-            outline[opener].3 = number;
-        } else {
-            assert_eq!(open.len(), depth, "a line is in every block still open");
-            let parent = open.last().copied();
-            nodes.push(PlainNode {
-                first: token,
-                count,
-                parent: parent.map(u32_from_usize),
-                block: None,
-            });
-            outline.push((number, count, parent.map_or(0, |parent| outline[parent].0), 0));
-            if code.ends_with('{') && !is_comment {
-                open.push(nodes.len() - 1);
-            }
-        }
-        token += count;
-    }
-    assert!(open.is_empty(), "every block is closed");
-    let top = children_by_parent(&nodes, None);
-    let children = (0..nodes.len())
-        .map(|index| {
-            let opens = nodes[index].block.is_some();
-            opens.then(|| children_by_parent(&nodes, Some(u32_from_usize(index))))
-        })
-        .collect();
-    Expected { nested: Nested { nodes, top, children }, outline }
-}
-
-/// Returns the indices of the nodes in `nodes` whose parent is `parent`, in order.
-fn children_by_parent(nodes: &[PlainNode], parent: Option<u32>) -> Vec<u32> {
-    (0..nodes.len()).filter(|&index| nodes[index].parent == parent).map(u32_from_usize).collect()
-}
-
-// Fuzzing against the oracle, seeded so a failing case replays.
-
-/// These are what a random line that opens a block is made of, before its `{`.
-const PIECES: &[&str] = &["function", "returns", "main", "Void", "x", "MyType", "(", ")"];
-
-/// These follow a comment's `//`. Some read like braces, which open and close nothing.
-const COMMENT_TEXTS: &[&str] = &["", " a", " café", " { } ( )", " }", " function main() {"];
-
-/// Returns a random program laid out the one way, as its lines: blank lines, comments, and blocks
-/// nested up to eight deep, each opened by a few random tokens and `{`, and closed by `}`.
-fn random_program(rng: &mut Rng) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut depth: u32 = 0;
-    for _ in 0..=rng.below(40) {
-        match rng.below(8) {
-            0 => lines.push(String::new()),
-            1 | 2 => lines.push(format!("{}//{}", indent(depth), rng.pick(COMMENT_TEXTS))),
-            3 | 4 if depth > 0 => {
-                depth -= 1;
-                lines.push(format!("{}}}", indent(depth)));
-            }
-            _ if depth < 8 => {
-                let heads = 1 + rng.below(4);
-                let mut texts: Vec<&str> =
-                    std::iter::repeat_with(|| rng.pick(PIECES)).take(heads).collect();
-                texts.push("{");
-                lines.push(format!("{}{}", indent(depth), joined(&texts)));
-                depth += 1;
-            }
-            _ => lines.push(format!("{}// deep", indent(depth))),
-        }
-    }
-    lines.extend((0..depth).rev().map(|level| format!("{}}}", indent(level))));
-    // A source can't end with a blank line, or be empty.
-    while lines.last().is_some_and(String::is_empty) {
-        lines.pop();
-    }
-    if lines.is_empty() {
-        lines.push(String::from("// empty"));
-    }
-    lines
-}
-
-/// The shapes the fuzzing must reach often, as counts of the sources that reach each.
-#[derive(Debug, Default)]
-struct Reached {
-    deep: u32,
-    many_at_top: u32,
-    empty_blocks: u32,
-    comments_in_blocks: u32,
-    blank_lines: u32,
-}
-
-impl Reached {
-    /// Counts the shapes `source`, which nests as `nodes`, reaches.
-    fn count(&mut self, source: &str, nodes: &[PlainNode]) {
-        let mut depths: Vec<u32> = Vec::new();
-        for node in nodes {
-            depths.push(node.parent.map_or(0, |parent| depths[usize_from_u32(parent)] + 1));
-        }
-        let opens_at_top =
-            nodes.iter().filter(|node| node.parent.is_none() && node.block.is_some());
-        let is_empty = |(index, node): (usize, &PlainNode)| {
-            node.block.is_some_and(|block| block.end == u32_from_usize(index) + 1)
-        };
-        self.deep += u32::from(depths.iter().any(|&depth| depth >= 6));
-        self.many_at_top += u32::from(opens_at_top.count() >= 3);
-        self.empty_blocks += u32::from(nodes.iter().enumerate().any(is_empty));
-        let in_block = |node: &PlainNode| node.parent.is_some() && node.block.is_none();
-        self.comments_in_blocks += u32::from(nodes.iter().any(in_block));
-        self.blank_lines += u32::from(source.starts_with('\n') || source.contains("\n\n"));
-    }
-}
-
 #[test]
 fn fuzz_against_the_oracle() {
     // 20,000 random programs laid out the one way, each nested and checked against what the
@@ -645,7 +641,7 @@ fn fuzz_against_the_oracle() {
     let mut checks = Vec::new();
     for _ in 0_u32..20_000 {
         let source = source_of(&random_program(&mut rng));
-        assert!(lays_out(&source), "the generator lays out {}", shown(&source));
+        assert!(lays_out(&source), "the generator lays out {}", excerpt(&source));
         let expected = oracle(&source).nested;
         reached.count(&source, &expected.nodes);
         checks.push((source, expected));
@@ -665,6 +661,6 @@ fn fuzz_against_the_oracle() {
     }
     // The oracle made these answers, so each goes straight to `nest`.
     for (source, expected) in checks {
-        assert_eq!(checked(&source), expected, "for {}", shown(&source));
+        assert_eq!(checked(&source), expected, "for {}", excerpt(&source));
     }
 }

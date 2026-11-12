@@ -14,12 +14,11 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use stella_cli::{Find, TooManyEntries, walk};
-use stella_test_support::{Lock, fifo, write};
+use stella_test_support::{Lock, Scratch, fifo, write};
 
 /// Returns a new, empty directory for one test to work in.
 fn fresh_directory(name: &str) -> PathBuf {
-    let parent = Path::new(env!("CARGO_TARGET_TMPDIR")).join("walk");
-    stella_test_support::fresh_directory(&parent, name)
+    Scratch::of("walk").fresh(name)
 }
 
 /// Returns what the walk found under `root`, each as its path and whether it's a source, in the
@@ -101,10 +100,14 @@ fn a_directory_that_cant_be_read_is_found_too() {
     write(&directory, "programs/a.stella", b"");
     let lock = Lock::new(directory.join("locked"), 0o000);
     let walked = walk(&directory).expect("the directory holds few entries");
-    let [Find::Source(first), Find::Unreadable { directory: locked, error }, Find::Source(last)] =
-        walked.as_slice()
-    else {
+    let [first, unreadable, last] = walked.as_slice() else {
         unreachable!("the walk finds a source, the locked directory and a source: {walked:?}");
+    };
+    let (Find::Source(first), Find::Source(last)) = (first, last) else {
+        unreachable!("the walk finds a source first and last: {walked:?}");
+    };
+    let Find::Unreadable { directory: locked, error } = unreadable else {
+        unreachable!("the walk finds the locked directory between the sources: {walked:?}");
     };
     assert_eq!(
         (first.as_slice(), last.as_slice()),

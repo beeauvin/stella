@@ -15,19 +15,24 @@
 
 #![forbid(unsafe_code)]
 
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Returns the repository's root, which holds this crate's directory.
 ///
 /// # Panics
 ///
-/// Panics if this crate's directory has no parent, which would be a bug in where the crate is.
+/// Panics if Cargo isn't what's running the check, or if this crate's directory isn't in the
+/// root, which would be a bug in where the crate is.
 #[must_use]
-pub fn root() -> &'static Path {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("checks/ is in the root");
-    assert!(root.join("Cargo.toml").is_file(), "the root holds the workspace's manifest");
-    root
+pub fn root() -> PathBuf {
+    let manifest_directory = env::var_os("CARGO_MANIFEST_DIR");
+    let manifest_directory =
+        manifest_directory.expect("Cargo tells a test which crate's directory it's built from");
+    let root = Path::new(&manifest_directory).parent().expect("checks/ is in the root");
+    assert!(root.join("Cargo.lock").is_file(), "the root holds the workspace's lock file");
+    root.to_path_buf()
 }
 
 /// Returns the text of the file at `path`, which is in the repository.

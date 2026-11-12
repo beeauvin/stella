@@ -41,6 +41,83 @@ thread_local! {
     static TOKEN_BUFFER: RefCell<TokenBuffer> = RefCell::new(TokenBuffer::new());
 }
 
+/// These are most of the pieces random code is made of: keywords, names and type names, a
+/// capital that runs into the next piece, and the symbols.
+const PIECES: &[&str] = &[
+    "function",
+    "returns",
+    "main",
+    "Void",
+    "Function",
+    "function2",
+    "my_name",
+    "x",
+    "MyType",
+    "Http",
+    "A",
+    "(",
+    ")",
+    "{",
+    "}",
+];
+
+/// These go on with a word, but can't start a token, so they're pieces now and then.
+const IN_WORD: &[&str] = &["9", "_"];
+
+/// These can't start a token, or be in one, so they're pieces now and then too.
+const REFUSED: &[&str] = &[";", "\"", "/", "#", "`", "-", "="];
+
+/// These go between pieces: nothing, so the pieces run together, or spaces.
+const GAPS: &[&str] = &["", " ", " ", "  "];
+
+/// These start a line. Two spaces isn't a level, so the text lint refuses it.
+const INDENTS: &[&str] =
+    &["", "", "", "", "    ", "    ", "    ", "        ", "        ", "            ", "  "];
+
+/// These follow a comment's `//`. The text lint refuses `//x`.
+const COMMENT_TEXTS: &[&str] = &["", " a", " ; ( }", " café", " function main", "x"];
+
+/// A cursor is a place in a source, by line and column, that moves along as text is passed.
+struct Cursor {
+    /// The line is counted from 1.
+    line: u32,
+    /// The column is counted in characters from 1.
+    column: u32,
+}
+
+impl Cursor {
+    /// Moves the cursor past `passed`.
+    fn pass(&mut self, passed: &str) {
+        for character in passed.chars() {
+            if character == '\n' {
+                self.line += 1;
+                self.column = 1;
+            } else {
+                self.column += 1;
+            }
+        }
+    }
+}
+
+/// A role is what a character does in code, as the tokens and names pages say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Role {
+    /// It starts a name, or goes on with any word.
+    Lowercase,
+    /// It starts a type's name, or goes on with one. In a name, it breaks the name's shape.
+    Capital,
+    /// It goes on with any word, but can't start a token.
+    Digit,
+    /// It goes on with a name, but can't start a token. In a type's name, it breaks the shape.
+    Underscore,
+    /// It's a token of its own.
+    Symbol(TokenKind),
+    /// It separates tokens.
+    Space,
+    /// It can't start a token, or be in one.
+    Refused,
+}
+
 /// Lints `source`, which must pass, and lexes it into the test's buffer, which must pass too.
 /// Returns its tokens.
 fn tokens(source: &str) -> Vec<Expected<'_>> {
@@ -102,28 +179,6 @@ fn assert_passed_over(passed: &str) {
     assert!(only_spaces, "only spaces and line ends are passed over, not {passed:?}");
 }
 
-/// A cursor is a place in a source, by line and column, that moves along as text is passed.
-struct Cursor {
-    /// The line is counted from 1.
-    line: u32,
-    /// The column is counted in characters from 1.
-    column: u32,
-}
-
-impl Cursor {
-    /// Moves the cursor past `passed`.
-    fn pass(&mut self, passed: &str) {
-        for character in passed.chars() {
-            if character == '\n' {
-                self.line += 1;
-                self.column = 1;
-            } else {
-                self.column += 1;
-            }
-        }
-    }
-}
-
 /// Checks that `source` lexes to exactly `expected`. The oracle must agree first, so every
 /// example checks it too.
 fn lexes(source: &str, expected: &[Expected<'_>]) {
@@ -161,6 +216,170 @@ const fn first_line(line: u32) -> [Expected<'static>; 7] {
         (TypeName, line, 25, "Void"),
         (BraceOpen, line, 30, "{"),
     ]
+}
+
+/// Returns the role `character` has in code, worked out the way the tokens page words it.
+fn role(character: char) -> Role {
+    assert!((' '..='~').contains(&character), "code holds only printable ASCII");
+    match character {
+        'a'..='z' => Role::Lowercase,
+        'A'..='Z' => Role::Capital,
+        '0'..='9' => Role::Digit,
+        '_' => Role::Underscore,
+        '(' => Role::Symbol(ParenthesisOpen),
+        ')' => Role::Symbol(ParenthesisClose),
+        '{' => Role::Symbol(BraceOpen),
+        '}' => Role::Symbol(BraceClose),
+        ' ' => Role::Space,
+        _ => Role::Refused,
+    }
+}
+
+/// Returns what the lexer should make of `source`, which passed the text lint, worked out the way
+/// the tokens and names pages word it: its tokens, or its first problem.
+fn oracle(source: &str) -> Result<Vec<Expected<'_>>, Refusal> {
+    let mut found = Vec::new();
+    for (content, line) in source.split_terminator('\n').zip(1_u32..) {
+        let code = content.trim_start_matches(' ');
+        let indentation = content.len() - code.len();
+        let column = |index: usize| u32_from_usize(index) + 1;
+        if code.starts_with("//") {
+            found.push((Comment, line, column(indentation), code));
+            continue;
+        }
+        assert!(content.is_ascii(), "the text lint lets only ASCII into code");
+        // So a character is a byte.
+        let characters: Vec<char> = content.chars().collect();
+        let mut index = 0;
+        while index < characters.len() {
+            let first = role(characters[index]);
+            match first {
+                Role::Space => index += 1,
+                Role::Symbol(kind) => {
+                    found.push((kind, line, column(index), slice(content, index..index + 1)));
+                    index += 1;
+                }
+                Role::Lowercase | Role::Capital => {
+                    let mut end = index + 1;
+                    while end < characters.len() && in_word(role(characters[end])) {
+                        end += 1;
+                    }
+                    let word = slice(content, index..end);
+                    if let Some((kind, at)) = shape_problem(word) {
+                        return Err((kind, line, column(index + at)));
+                    }
+                    let kind = match word {
+                        "function" => Function,
+                        "returns" => Returns,
+                        _ if first == Role::Capital => TypeName,
+                        _ => Name,
+                    };
+                    found.push((kind, line, column(index), word));
+                    index = end;
+                }
+                Role::Digit | Role::Underscore | Role::Refused => {
+                    return Err((Unexpected(characters[index]), line, column(index)));
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Says whether a character with this role can go on with a word.
+const fn in_word(role: Role) -> bool {
+    matches!(role, Role::Lowercase | Role::Capital | Role::Digit | Role::Underscore)
+}
+
+/// Returns where `word`, which starts with a letter, first breaks its shape, worked out the way
+/// the names page words it: the problem's kind and the character's index. It's `None` when the
+/// word keeps its shape.
+fn shape_problem(word: &str) -> Option<(Kind, usize)> {
+    let bytes = word.as_bytes();
+    assert!(!bytes.is_empty(), "a word is at least its first letter");
+    let last = bytes.len() - 1;
+    if bytes[0].is_ascii_lowercase() {
+        // Snake case: lowercase letters and digits, with single underscores between them.
+        let broken = (0..=last).find(|&index| match bytes[index] {
+            b'A'..=b'Z' => true,
+            b'_' => index == last || bytes[index - 1] == b'_',
+            b'a'..=b'z' | b'0'..=b'9' => false,
+            other => unreachable!("a word holds only letters, digits and `_`, not byte {other}"),
+        });
+        broken.map(|index| (NameNotSnakeCase, index))
+    } else {
+        // Pascal case: words that each start with one capital, then lowercase letters and digits.
+        let broken = (0..=last).find(|&index| match bytes[index] {
+            b'_' => true,
+            b'A'..=b'Z' => index > 0 && bytes[index - 1].is_ascii_uppercase(),
+            b'a'..=b'z' | b'0'..=b'9' => false,
+            other => unreachable!("a word holds only letters, digits and `_`, not byte {other}"),
+        });
+        broken.map(|index| (TypeNameNotPascalCase, index))
+    }
+}
+
+/// Returns a random source of one to six lines: blank lines, comments and lines of code. Some are
+/// ones the text lint refuses, and they're skipped.
+fn random_source(rng: &mut Rng) -> String {
+    let mut source = String::new();
+    for _ in 0..=rng.below(6) {
+        match rng.below(6) {
+            0 => {}
+            1 => {
+                source.push_str(rng.pick(INDENTS));
+                source.push_str("//");
+                source.push_str(rng.pick(COMMENT_TEXTS));
+            }
+            _ => {
+                source.push_str(rng.pick(INDENTS));
+                for index in 0..=rng.below(6) {
+                    if index > 0 {
+                        source.push_str(rng.pick(GAPS));
+                    }
+                    let piece = match rng.below(16) {
+                        0 => String::from(rng.pick(REFUSED)),
+                        1 => String::from(rng.pick(IN_WORD)),
+                        2 | 3 => near_keyword(rng),
+                        _ => String::from(rng.pick(PIECES)),
+                    };
+                    source.push_str(&piece);
+                }
+            }
+        }
+        source.push('\n');
+    }
+    source
+}
+
+/// Returns a keyword, or a word that's nearly one: cut short, run on, or with a letter in
+/// another case.
+fn near_keyword(rng: &mut Rng) -> String {
+    let keyword = rng.pick(&["function", "returns"]);
+    match rng.below(4) {
+        0 => String::from(keyword),
+        1 => keyword.chars().take(1 + rng.below(keyword.len() - 1)).collect(),
+        2 => format!("{keyword}{}", rng.pick(&["s", "2", "_", "x"])),
+        _ => {
+            let capital = rng.below(keyword.len());
+            let letters = keyword.chars().enumerate();
+            letters
+                .map(
+                    |(index, letter)| {
+                        if index == capital { letter.to_ascii_uppercase() } else { letter }
+                    },
+                )
+                .collect()
+        }
+    }
+}
+
+/// Adds one to the count for `counted`, which must have one.
+fn count<T: PartialEq + Debug>(counts: &mut [(T, u32)], counted: &T) {
+    let found = counts.iter_mut().find(|(each, _)| each == counted);
+    assert!(found.is_some(), "{counted:?} has a count");
+    let (_, count) = found.expect("it has a count, as just asserted");
+    *count += 1;
 }
 
 #[test]
@@ -410,42 +629,6 @@ fn spaces_and_lines() {
     lexes("\n\nfunction main() returns Void {\n\n}\n", &spaced);
 }
 
-/// A role is what a character does in code, as the tokens and names pages say.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Role {
-    /// It starts a name, or goes on with any word.
-    Lowercase,
-    /// It starts a type's name, or goes on with one. In a name, it breaks the name's shape.
-    Capital,
-    /// It goes on with any word, but can't start a token.
-    Digit,
-    /// It goes on with a name, but can't start a token. In a type's name, it breaks the shape.
-    Underscore,
-    /// It's a token of its own.
-    Symbol(TokenKind),
-    /// It separates tokens.
-    Space,
-    /// It can't start a token, or be in one.
-    Refused,
-}
-
-/// Returns the role `character` has in code, worked out the way the tokens page words it.
-fn role(character: char) -> Role {
-    assert!((' '..='~').contains(&character), "code holds only printable ASCII");
-    match character {
-        'a'..='z' => Role::Lowercase,
-        'A'..='Z' => Role::Capital,
-        '0'..='9' => Role::Digit,
-        '_' => Role::Underscore,
-        '(' => Role::Symbol(ParenthesisOpen),
-        ')' => Role::Symbol(ParenthesisClose),
-        '{' => Role::Symbol(BraceOpen),
-        '}' => Role::Symbol(BraceClose),
-        ' ' => Role::Space,
-        _ => Role::Refused,
-    }
-}
-
 #[test]
 fn every_printable_character() {
     // Code holds only printable ASCII, so these are all the characters the lexer meets in code.
@@ -641,191 +824,6 @@ fn text_of_a_token_from_a_longer_source_is_a_bug() {
     let shorter = lex(shorter, &mut shorter_buffer).expect("source should lex");
     let last = longer.as_slice().last().expect("the smallest program has tokens");
     _ = shorter.text(last);
-}
-
-// Fuzzing against an oracle, seeded so a failing case replays.
-
-/// Returns what the lexer should make of `source`, which passed the text lint, worked out the way
-/// the tokens and names pages word it: its tokens, or its first problem.
-fn oracle(source: &str) -> Result<Vec<Expected<'_>>, Refusal> {
-    let mut found = Vec::new();
-    for (content, line) in source.split_terminator('\n').zip(1_u32..) {
-        let code = content.trim_start_matches(' ');
-        let indentation = content.len() - code.len();
-        let column = |index: usize| u32_from_usize(index) + 1;
-        if code.starts_with("//") {
-            found.push((Comment, line, column(indentation), code));
-            continue;
-        }
-        assert!(content.is_ascii(), "the text lint lets only ASCII into code");
-        // So a character is a byte.
-        let characters: Vec<char> = content.chars().collect();
-        let mut index = 0;
-        while index < characters.len() {
-            let first = role(characters[index]);
-            match first {
-                Role::Space => index += 1,
-                Role::Symbol(kind) => {
-                    found.push((kind, line, column(index), slice(content, index..index + 1)));
-                    index += 1;
-                }
-                Role::Lowercase | Role::Capital => {
-                    let mut end = index + 1;
-                    while end < characters.len() && in_word(role(characters[end])) {
-                        end += 1;
-                    }
-                    let word = slice(content, index..end);
-                    if let Some((kind, at)) = shape_problem(word) {
-                        return Err((kind, line, column(index + at)));
-                    }
-                    let kind = match word {
-                        "function" => Function,
-                        "returns" => Returns,
-                        _ if first == Role::Capital => TypeName,
-                        _ => Name,
-                    };
-                    found.push((kind, line, column(index), word));
-                    index = end;
-                }
-                Role::Digit | Role::Underscore | Role::Refused => {
-                    return Err((Unexpected(characters[index]), line, column(index)));
-                }
-            }
-        }
-    }
-    Ok(found)
-}
-
-/// Says whether a character with this role can go on with a word.
-const fn in_word(role: Role) -> bool {
-    matches!(role, Role::Lowercase | Role::Capital | Role::Digit | Role::Underscore)
-}
-
-/// Returns where `word`, which starts with a letter, first breaks its shape, worked out the way
-/// the names page words it: the problem's kind and the character's index. It's `None` when the
-/// word keeps its shape.
-fn shape_problem(word: &str) -> Option<(Kind, usize)> {
-    let bytes = word.as_bytes();
-    assert!(!bytes.is_empty(), "a word is at least its first letter");
-    let last = bytes.len() - 1;
-    if bytes[0].is_ascii_lowercase() {
-        // Snake case: lowercase letters and digits, with single underscores between them.
-        let broken = (0..=last).find(|&index| match bytes[index] {
-            b'A'..=b'Z' => true,
-            b'_' => index == last || bytes[index - 1] == b'_',
-            b'a'..=b'z' | b'0'..=b'9' => false,
-            other => unreachable!("a word holds only letters, digits and `_`, not byte {other}"),
-        });
-        broken.map(|index| (NameNotSnakeCase, index))
-    } else {
-        // Pascal case: words that each start with one capital, then lowercase letters and digits.
-        let broken = (0..=last).find(|&index| match bytes[index] {
-            b'_' => true,
-            b'A'..=b'Z' => index > 0 && bytes[index - 1].is_ascii_uppercase(),
-            b'a'..=b'z' | b'0'..=b'9' => false,
-            other => unreachable!("a word holds only letters, digits and `_`, not byte {other}"),
-        });
-        broken.map(|index| (TypeNameNotPascalCase, index))
-    }
-}
-
-/// These are most of the pieces random code is made of: keywords, names and type names, a
-/// capital that runs into the next piece, and the symbols.
-const PIECES: &[&str] = &[
-    "function",
-    "returns",
-    "main",
-    "Void",
-    "Function",
-    "function2",
-    "my_name",
-    "x",
-    "MyType",
-    "Http",
-    "A",
-    "(",
-    ")",
-    "{",
-    "}",
-];
-
-/// These go on with a word, but can't start a token, so they're pieces now and then.
-const IN_WORD: &[&str] = &["9", "_"];
-
-/// These can't start a token, or be in one, so they're pieces now and then too.
-const REFUSED: &[&str] = &[";", "\"", "/", "#", "`", "-", "="];
-
-/// These go between pieces: nothing, so the pieces run together, or spaces.
-const GAPS: &[&str] = &["", " ", " ", "  "];
-
-/// These start a line. Two spaces isn't a level, so the text lint refuses it.
-const INDENTS: &[&str] =
-    &["", "", "", "", "    ", "    ", "    ", "        ", "        ", "            ", "  "];
-
-/// These follow a comment's `//`. The text lint refuses `//x`.
-const COMMENT_TEXTS: &[&str] = &["", " a", " ; ( }", " café", " function main", "x"];
-
-/// Returns a random source of one to six lines: blank lines, comments and lines of code. Some are
-/// ones the text lint refuses, and they're skipped.
-fn random_source(rng: &mut Rng) -> String {
-    let mut source = String::new();
-    for _ in 0..=rng.below(6) {
-        match rng.below(6) {
-            0 => {}
-            1 => {
-                source.push_str(rng.pick(INDENTS));
-                source.push_str("//");
-                source.push_str(rng.pick(COMMENT_TEXTS));
-            }
-            _ => {
-                source.push_str(rng.pick(INDENTS));
-                for index in 0..=rng.below(6) {
-                    if index > 0 {
-                        source.push_str(rng.pick(GAPS));
-                    }
-                    let piece = match rng.below(16) {
-                        0 => String::from(rng.pick(REFUSED)),
-                        1 => String::from(rng.pick(IN_WORD)),
-                        2 | 3 => near_keyword(rng),
-                        _ => String::from(rng.pick(PIECES)),
-                    };
-                    source.push_str(&piece);
-                }
-            }
-        }
-        source.push('\n');
-    }
-    source
-}
-
-/// Returns a keyword, or a word that's nearly one: cut short, run on, or with a letter in
-/// another case.
-fn near_keyword(rng: &mut Rng) -> String {
-    let keyword = rng.pick(&["function", "returns"]);
-    match rng.below(4) {
-        0 => String::from(keyword),
-        1 => keyword.chars().take(1 + rng.below(keyword.len() - 1)).collect(),
-        2 => format!("{keyword}{}", rng.pick(&["s", "2", "_", "x"])),
-        _ => {
-            let capital = rng.below(keyword.len());
-            let letters = keyword.chars().enumerate();
-            letters
-                .map(
-                    |(index, letter)| {
-                        if index == capital { letter.to_ascii_uppercase() } else { letter }
-                    },
-                )
-                .collect()
-        }
-    }
-}
-
-/// Adds one to the count for `counted`, which must have one.
-fn count<T: PartialEq + Debug>(counts: &mut [(T, u32)], counted: &T) {
-    let found = counts.iter_mut().find(|(each, _)| each == counted);
-    assert!(found.is_some(), "{counted:?} has a count");
-    let (_, count) = found.expect("it has a count, as just asserted");
-    *count += 1;
 }
 
 #[test]

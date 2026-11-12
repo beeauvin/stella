@@ -23,14 +23,6 @@ impl Rng {
         Self { state: seed }
     }
 
-    /// Returns the next number in the sequence.
-    const fn next(&mut self) -> u64 {
-        self.state ^= self.state >> 12_u32;
-        self.state ^= self.state << 25_u32;
-        self.state ^= self.state >> 27_u32;
-        self.state.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    }
-
     /// Returns a number from 0 up to, but not including, `count`.
     ///
     /// # Panics
@@ -50,5 +42,13 @@ impl Rng {
     pub fn pick<'choice>(&mut self, choices: &[&'choice str]) -> &'choice str {
         assert!(!choices.is_empty(), "there's nothing to pick from");
         choices[self.below(choices.len())]
+    }
+
+    /// Returns the next number in the sequence.
+    const fn next(&mut self) -> u64 {
+        self.state ^= self.state >> 12_u32;
+        self.state ^= self.state << 25_u32;
+        self.state ^= self.state >> 27_u32;
+        self.state.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 }

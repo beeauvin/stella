@@ -26,7 +26,7 @@ const WORKFLOW: &str = ".github/workflows/ci.yml";
 /// trimmed: what's between the quotes that follow it. Returns `None` when no line starts with
 /// it, or the quotes aren't there.
 fn version_after<'text>(text: &'text str, before: &str) -> Option<&'text str> {
-    let after = text.lines().find_map(|line| line.trim_start().strip_prefix(before))?;
+    let after = text.split('\n').find_map(|line| line.trim_start().strip_prefix(before))?;
     let (_, quoted) = after.split_once('"')?;
     let (version, _) = quoted.split_once('"')?;
     Some(version)
@@ -35,7 +35,7 @@ fn version_after<'text>(text: &'text str, before: &str) -> Option<&'text str> {
 /// Returns the lines of `ignore`, an ignore file, that say something: not blank, and not a
 /// comment.
 fn rules(ignore: &str) -> Vec<&str> {
-    ignore.lines().filter(|line| !line.is_empty() && !line.starts_with('#')).collect()
+    ignore.split('\n').filter(|line| !line.is_empty() && !line.starts_with('#')).collect()
 }
 
 /// Says whether `rules`, an ignore file's rules, let `directory` through, with everything in
@@ -70,14 +70,14 @@ fn the_readme_and_the_workflow_run_the_same_checks() {
     let readme = text_of(&root().join("readme.md"));
     let workflow = text_of(&root().join(WORKFLOW));
     for check in CHECKS {
-        let in_readme = readme.lines().any(|line| line == check);
+        let in_readme = readme.split('\n').any(|line| line == check);
         assert!(in_readme, "the readme doesn't list `{check}`");
         let step = format!("- run: {check}");
-        let in_workflow = workflow.lines().any(|line| line.trim_start() == step);
+        let in_workflow = workflow.split('\n').any(|line| line.trim_start() == step);
         assert!(in_workflow, "{WORKFLOW} doesn't run `{check}`");
     }
     let steps_count =
-        workflow.lines().filter(|line| line.trim_start().starts_with("- run: ")).count();
+        workflow.split('\n').filter(|line| line.trim_start().starts_with("- run: ")).count();
     assert_eq!(steps_count, CHECKS.len(), "{WORKFLOW} runs a check the readme doesn't list");
 }
 

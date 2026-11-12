@@ -5,7 +5,8 @@
 //! End-to-end tests for `stella lint`. Each one runs the real binary in a directory of its own and
 //! pins exactly what it does: its exit status, its stdout and its stderr.
 
-use std::ffi::OsStr;
+use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read as _;
 use std::os::unix::ffi::OsStrExt as _;
@@ -15,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use stella_cli::WALK_ENTRIES_MAX;
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
-use stella_test_support::{Lock, fifo, write};
+use stella_test_support::{Lock, Scratch, fifo, write};
 
 /// This is the smallest program, which passes.
 const GOOD: &[u8] = b"function main() returns Void {\n}\n";
@@ -77,9 +78,14 @@ fn stella(directory: &Path, arguments: &[&str]) -> Run {
     stella_with(directory, &arguments)
 }
 
+/// Returns the path of the `stella` binary Cargo built for these tests.
+fn stella_binary() -> OsString {
+    env::var_os("CARGO_BIN_EXE_stella").expect("Cargo tells a test where the binary it built is")
+}
+
 /// Runs `stella` in `directory` with `arguments`, which needn't be UTF-8.
 fn stella_with(directory: &Path, arguments: &[&OsStr]) -> Run {
-    let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+    let output = Command::new(stella_binary())
         .args(arguments)
         .current_dir(directory)
         .stdin(Stdio::null())
@@ -94,8 +100,7 @@ fn stella_with(directory: &Path, arguments: &[&OsStr]) -> Run {
 
 /// Returns a new, empty directory for one test, or one row of a table, to work in.
 fn fresh_directory(name: &str) -> PathBuf {
-    let parent = Path::new(env!("CARGO_TARGET_TMPDIR")).join("lint");
-    stella_test_support::fresh_directory(&parent, name)
+    Scratch::of("lint").fresh(name)
 }
 
 /// Returns a new directory for `name` that holds `files`, each a path and its contents, for
@@ -672,7 +677,7 @@ fn stderr_that_cant_be_written() {
     let source = format!("// {}\t", "\u{7FF}".repeat(8_189));
     write(&directory, "wide.stella", source.as_bytes());
     for arguments in [&["lint", "wide.stella"][..], &["lint"]] {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_stella"))
+        let mut child = Command::new(stella_binary())
             .args(arguments)
             .current_dir(&directory)
             .stdin(Stdio::null())
@@ -690,7 +695,7 @@ fn stderr_that_cant_be_written() {
     }
     // A stderr open only for reading can't be written either.
     let read_only = fs::File::open("/dev/null").expect("open /dev/null");
-    let status = Command::new(env!("CARGO_BIN_EXE_stella"))
+    let status = Command::new(stella_binary())
         .args(["lint", "Hello.stella"])
         .current_dir(&directory)
         .stdin(Stdio::null())
@@ -709,8 +714,13 @@ fn a_closed_stderr() {
     let directory = fresh_directory("closed-stderr");
     write(&directory, "hello.stella", GOOD);
     for (path, expected) in [("hello.stella", 0_i32), ("Hello.stella", 1_i32)] {
+        // TS-MACROS: only a shell can start a program with its stderr closed, which std can't do
+        // without `unsafe`. The script is fixed, and the binary and the path are handed to it as
+        // arguments, never written into it.
         let status = Command::new("/bin/sh")
-            .args(["-c", "exec \"$0\" lint \"$1\" 2>&-", env!("CARGO_BIN_EXE_stella"), path])
+            .args(["-c", "exec \"$0\" lint \"$1\" 2>&-"])
+            .arg(stella_binary())
+            .arg(path)
             .current_dir(&directory)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

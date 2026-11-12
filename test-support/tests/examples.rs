@@ -5,10 +5,12 @@
 //! Unit tests for examples. They come back in the order they were added, each with the line that
 //! added it, and a test can't pass by adding examples and never checking them.
 
-use stella_test_support::Examples;
+use stella_test_support::{EXAMPLES_MAX, Examples};
 
 #[test]
 fn examples_come_back_in_order_with_where_they_were_added() {
+    // Two examples are added on lines two apart, and taken back. They come back in the order
+    // they went in, each with what was expected of it and the line that added it.
     let mut examples = Examples::new();
     examples.add("a {\n}\n", 1_u32);
     let first_line = line!() - 1;
@@ -31,8 +33,21 @@ fn taking_no_examples_is_a_bug() {
 #[test]
 #[should_panic(expected = "examples were added but never checked")]
 fn dropping_examples_unchecked_fails_the_test() {
+    // The example is added and never taken, so the panic comes from the drop at the end of this
+    // function.
     let mut examples = Examples::new();
     examples.add("// a\n", ());
+}
+
+#[test]
+#[should_panic(expected = "a test tries at most")]
+fn adding_past_the_most_examples_is_a_bug() {
+    // One more than the most a test can hold. The examples are forgotten once it's caught, so
+    // the only panic is the one from `add`.
+    let mut examples = Examples::new();
+    for _ in 0..=EXAMPLES_MAX {
+        examples.add("", ());
+    }
 }
 
 #[test]

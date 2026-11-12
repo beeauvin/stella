@@ -38,6 +38,15 @@ const INHERITED: [&str; 6] = [
     "publish.workspace = true",
 ];
 
+/// Which files a walk is looking for.
+#[derive(Clone, Copy)]
+enum Wanted {
+    /// Files with exactly this name.
+    Named(&'static str),
+    /// Files with this extension.
+    WithExtension(&'static str),
+}
+
 /// Returns every file under `directory` that's `wanted`, sorted by path. It doesn't go into
 /// `target` or into anything whose name starts with `.`, where no crate lives. It walks with a
 /// stack rather than recursion, and it stops with a panic past `ENTRIES_MAX`.
@@ -50,7 +59,8 @@ fn files_under(directory: &Path, wanted: Wanted) -> Vec<PathBuf> {
             let path = entry.expect("an entry of the repository can be read").path();
             seen_count += 1;
             assert!(seen_count <= ENTRIES_MAX, "more than {ENTRIES_MAX} entries in the repository");
-            let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
+            let name = path.file_name().and_then(OsStr::to_str);
+            let name = name.expect("everything in the repository has a name that's UTF-8");
             if name.starts_with('.') || name == "target" {
                 continue;
             }
@@ -71,19 +81,10 @@ fn files_under(directory: &Path, wanted: Wanted) -> Vec<PathBuf> {
     found
 }
 
-/// Which files a walk is looking for.
-#[derive(Clone, Copy)]
-enum Wanted {
-    /// Files with exactly this name.
-    Named(&'static str),
-    /// Files with this extension.
-    WithExtension(&'static str),
-}
-
 /// Says whether `manifest`, a crate's manifest, inherits the workspace's lints: whether it has a
 /// `[lints]` table whose first line is `workspace = true`.
 fn inherits_lints(manifest: &str) -> bool {
-    let mut lines = manifest.lines().map(str::trim);
+    let mut lines = manifest.split('\n').map(str::trim);
     lines.by_ref().any(|line| line == "[lints]") && lines.next() == Some("workspace = true")
 }
 
@@ -92,12 +93,11 @@ fn inherits_lints(manifest: &str) -> bool {
 fn blanket_lint(source: &str) -> Option<&str> {
     let is_blanket = |line: &&str| {
         let line = line.trim_start();
-        line.starts_with("#![allow(")
-            || line.starts_with("#![expect(")
-            || line.starts_with("#![cfg_attr(")
-                && (line.contains("allow(") || line.contains("expect("))
+        let is_conditional = line.starts_with("#![cfg_attr(")
+            && (line.contains("allow(") || line.contains("expect("));
+        line.starts_with("#![allow(") || line.starts_with("#![expect(") || is_conditional
     };
-    source.lines().find(is_blanket)
+    source.split('\n').find(is_blanket)
 }
 
 #[test]
@@ -106,14 +106,15 @@ fn every_crate_is_a_member_of_the_workspace() {
     // member, or it's never built, linted or tested with the rest. And every member listed must
     // have its manifest.
     let members = members();
-    let manifests = files_under(root(), Wanted::Named("Cargo.toml"));
+    let root = root();
+    let manifests = files_under(&root, Wanted::Named("Cargo.toml"));
     let mut crates_count: u32 = 0;
     for manifest in &manifests {
         let directory = manifest.parent().expect("a manifest is in a directory");
-        if directory == root() {
+        if directory == root {
             continue;
         }
-        let relative = directory.strip_prefix(root()).expect("the crate is under the root");
+        let relative = directory.strip_prefix(&root).expect("the crate is under the root");
         let relative = relative.to_str().expect("a crate's path is UTF-8");
         let listed = members.iter().any(|member| member == relative);
         assert!(listed, "{relative} has a manifest, but isn't a member of the workspace");
@@ -121,7 +122,7 @@ fn every_crate_is_a_member_of_the_workspace() {
     }
     assert!(crates_count > 0, "found no crates in the repository");
     for member in &members {
-        let manifest = root().join(member).join("Cargo.toml");
+        let manifest = root.join(member).join("Cargo.toml");
         assert!(manifest.is_file(), "{member} is a member of the workspace with no manifest");
     }
 }
@@ -138,7 +139,7 @@ fn every_crate_inherits_the_workspace() {
             "{member}'s manifest must hold `[lints]` and then `workspace = true`"
         );
         for line in INHERITED {
-            let inherits = manifest.lines().any(|found| found.trim() == line);
+            let inherits = manifest.split('\n').any(|found| found.trim() == line);
             assert!(inherits, "{member}'s manifest must hold `{line}`");
         }
     }
@@ -158,7 +159,7 @@ fn every_crate_root_forbids_unsafe() {
         assert!(!roots.is_empty(), "{member} has neither a `src/lib.rs` nor a `src/main.rs`");
         for crate_root in roots {
             let forbids =
-                text_of(&crate_root).lines().any(|line| line == "#![forbid(unsafe_code)]");
+                text_of(&crate_root).split('\n').any(|line| line == "#![forbid(unsafe_code)]");
             assert!(forbids, "{} must hold `#![forbid(unsafe_code)]`", crate_root.display());
         }
     }
@@ -169,7 +170,7 @@ fn no_file_switches_a_lint_off_for_a_whole_crate_or_module() {
     // An inner `#![allow(..)]` isn't seen by the lint that refuses `#[allow]`, and an inner
     // `#![expect(..)]` covers far more than the one item an exception is for. No source file may
     // hold either.
-    let sources = files_under(root(), Wanted::WithExtension("rs"));
+    let sources = files_under(&root(), Wanted::WithExtension("rs"));
     assert!(!sources.is_empty(), "found no source files in the repository");
     for source in sources {
         let text = text_of(&source);
@@ -182,7 +183,7 @@ fn no_file_switches_a_lint_off_for_a_whole_crate_or_module() {
 fn every_source_file_carries_the_license() {
     // Each source file starts with the three lines that say it's under the MPL, and then a blank
     // line.
-    let sources = files_under(root(), Wanted::WithExtension("rs"));
+    let sources = files_under(&root(), Wanted::WithExtension("rs"));
     assert!(!sources.is_empty(), "found no source files in the repository");
     for source in sources {
         let text = text_of(&source);

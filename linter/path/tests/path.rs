@@ -21,6 +21,8 @@ const NAME_CHARACTERS: &str = "abcdefghijklmnopqrstuvwxyz0123456789-";
 
 /// Lints `path`, which must pass, and checks what it normalizes to and the program's name. The
 /// oracle must agree first.
+// TS-DISTINCT-ARGS: a path, then what it normalizes to, then the name in it, each shorter than
+// the last, and an expectation with two of them swapped fails its test.
 fn accepts(path: &str, normalized: &str, name: &str) {
     assert_eq!(oracle(path), Ok((normalized, name)), "the oracle, for {path:?}");
     let source_path = lint_path(path).expect("path should pass the path lint");
@@ -32,6 +34,76 @@ fn accepts(path: &str, normalized: &str, name: &str) {
 fn refuses(path: &str, problem: Problem) {
     assert_eq!(oracle(path), Err(problem), "the oracle, for {path:?}");
     assert_eq!(lint_path(path), Err(problem), "for {path:?}");
+}
+
+/// Returns what the path lint should say about `path`, worked out the way the reference words
+/// it: the normalized path and the name, or the first problem.
+fn oracle(path: &str) -> Result<(&str, &str), Problem> {
+    if path.starts_with('/') {
+        return Err(Absolute);
+    }
+    let rest = path.strip_prefix("./").unwrap_or(path);
+    let parts: Vec<&str> = rest.split('/').collect();
+    if parts.contains(&"..") {
+        return Err(Parent);
+    }
+    if parts.contains(&"") {
+        return Err(EmptyPart);
+    }
+    if parts.contains(&".") {
+        return Err(DotPart);
+    }
+    let (file, directories) = parts.split_last().expect("split gives at least one part");
+    if !directories.iter().all(|directory| is_kebab(directory)) {
+        return Err(DirectoryNotKebab);
+    }
+    let Some(name) = file.strip_suffix(".stella") else {
+        return Err(NameNotStella);
+    };
+    if name.is_empty() {
+        return Err(NameEmpty);
+    }
+    if !is_kebab(name) {
+        return Err(NameNotKebab);
+    }
+    Ok((rest, name))
+}
+
+/// Says whether `name` is words of lowercase letters and digits, joined by single hyphens.
+fn is_kebab(name: &str) -> bool {
+    name.split('-').all(|word| {
+        let letters_and_digits = word
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit());
+        !word.is_empty() && letters_and_digits
+    })
+}
+
+/// Returns a random path: one to four parts, each one to three pieces long. Most pieces are
+/// valid in a name, so every answer the oracle can give comes up, accepting included.
+fn random_path(rng: &mut Rng) -> String {
+    let valid = ["a", "b", "z", "0", "9", "hello", "rung", "x86"];
+    let invalid = ["--", ".", "..", "", "A", "_", " ", "é", ".stella", ".txt"];
+    let starts = ["", "", "", "", "", "./", "/", "../"];
+    let mut path = String::from(rng.pick(&starts));
+    let parts_count = 1 + rng.below(4);
+    for part_index in 0..parts_count {
+        if part_index > 0 {
+            path.push('/');
+        }
+        for _ in 0..=rng.below(3) {
+            let piece = match rng.below(4) {
+                0 => "-",
+                1 => rng.pick(&invalid),
+                _ => rng.pick(&valid),
+            };
+            path.push_str(piece);
+        }
+    }
+    if rng.below(4) > 0 {
+        path.push_str(".stella");
+    }
+    path
 }
 
 #[test]
@@ -142,78 +214,6 @@ fn refused_paths() {
     ] {
         refuses(path, problem);
     }
-}
-
-// Fuzzing against an oracle, seeded so a failing case replays.
-
-/// Returns what the path lint should say about `path`, worked out the way the reference words
-/// it: the normalized path and the name, or the first problem.
-fn oracle(path: &str) -> Result<(&str, &str), Problem> {
-    if path.starts_with('/') {
-        return Err(Absolute);
-    }
-    let rest = path.strip_prefix("./").unwrap_or(path);
-    let parts: Vec<&str> = rest.split('/').collect();
-    if parts.contains(&"..") {
-        return Err(Parent);
-    }
-    if parts.contains(&"") {
-        return Err(EmptyPart);
-    }
-    if parts.contains(&".") {
-        return Err(DotPart);
-    }
-    let (file, directories) = parts.split_last().expect("split gives at least one part");
-    if !directories.iter().all(|directory| is_kebab(directory)) {
-        return Err(DirectoryNotKebab);
-    }
-    let Some(name) = file.strip_suffix(".stella") else {
-        return Err(NameNotStella);
-    };
-    if name.is_empty() {
-        return Err(NameEmpty);
-    }
-    if !is_kebab(name) {
-        return Err(NameNotKebab);
-    }
-    Ok((rest, name))
-}
-
-/// Says whether `name` is words of lowercase letters and digits, joined by single hyphens.
-fn is_kebab(name: &str) -> bool {
-    name.split('-').all(|word| {
-        let letters_and_digits = word
-            .chars()
-            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit());
-        !word.is_empty() && letters_and_digits
-    })
-}
-
-/// Returns a random path: one to four parts, each one to three pieces long. Most pieces are
-/// valid in a name, so every answer the oracle can give comes up, accepting included.
-fn random_path(rng: &mut Rng) -> String {
-    let valid = ["a", "b", "z", "0", "9", "hello", "rung", "x86"];
-    let invalid = ["--", ".", "..", "", "A", "_", " ", "é", ".stella", ".txt"];
-    let starts = ["", "", "", "", "", "./", "/", "../"];
-    let mut path = String::from(rng.pick(&starts));
-    let parts_count = 1 + rng.below(4);
-    for part_index in 0..parts_count {
-        if part_index > 0 {
-            path.push('/');
-        }
-        for _ in 0..=rng.below(3) {
-            let piece = match rng.below(4) {
-                0 => "-",
-                1 => rng.pick(&invalid),
-                _ => rng.pick(&valid),
-            };
-            path.push_str(piece);
-        }
-    }
-    if rng.below(4) > 0 {
-        path.push_str(".stella");
-    }
-    path
 }
 
 #[test]

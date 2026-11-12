@@ -9,6 +9,9 @@ use std::iter::repeat_with;
 
 use stella_test_support::Rng;
 
+/// The first three numbers below 1,000 from a seed of 1.
+const PINNED: [usize; 3] = [165, 517, 103];
+
 #[test]
 fn a_seed_gives_the_same_numbers_every_time() {
     // Two generators from one seed agree, draw for draw, and another seed gives other numbers.
@@ -24,9 +27,6 @@ fn a_seed_gives_the_same_numbers_every_time() {
     let mut pinned = Rng::new(1);
     assert_eq!([pinned.below(1_000), pinned.below(1_000), pinned.below(1_000)], PINNED);
 }
-
-/// The first three numbers below 1,000 from a seed of 1.
-const PINNED: [usize; 3] = [165, 517, 103];
 
 #[test]
 fn below_stays_below_and_reaches_every_number() {

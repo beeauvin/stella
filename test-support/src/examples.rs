@@ -23,6 +23,10 @@ pub struct Example<Expected> {
     pub at: &'static Location<'static>,
 }
 
+/// This is the most examples one test can hold. It's far more than any test tries, so a loop
+/// that adds without end fails here, with a reason, instead of filling memory.
+pub const EXAMPLES_MAX: usize = 100_000;
+
 /// The examples a test tries.
 #[derive(Debug)]
 pub struct Examples<Expected> {
@@ -37,8 +41,13 @@ impl<Expected> Examples<Expected> {
     }
 
     /// Adds `source`, with what's `expected` of it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the test already holds `EXAMPLES_MAX` examples.
     #[track_caller]
     pub fn add(&mut self, source: &str, expected: Expected) {
+        assert!(self.examples.len() < EXAMPLES_MAX, "a test tries at most {EXAMPLES_MAX} examples");
         self.examples.push(Example {
             source: String::from(source),
             expected,

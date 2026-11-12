@@ -31,15 +31,8 @@ use stella_linter_tokens::Kind::{
 use stella_linter_tokens::{Kind, Neighbors, Problem, lint_tokens};
 use stella_source::{SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 use stella_test_support::{
-    Example, Examples, Rng, indent, joined, nested_blocks, shown, slice, source_of,
+    Example, Examples, Rng, excerpt, indent, joined, nested_blocks, slice, source_of,
 };
-
-/// Returns the two kinds as neighbors, `before` first.
-// TS-DISTINCT-ARGS: the two kinds are in the order the source has them, and an expectation with
-// them swapped fails its test.
-const fn between(before: TokenKind, after: TokenKind) -> Neighbors {
-    Neighbors { before, after }
-}
 
 /// An expected refusal: the problem's kind, and its line and column.
 type Refusal = (Kind, u32, u32);
@@ -54,6 +47,76 @@ const SMALLEST: &str = "function main() returns Void {\n}\n";
 thread_local! {
     /// Each test lexes every source it tries into this one buffer, as the command does.
     static TOKEN_BUFFER: RefCell<TokenBuffer> = RefCell::new(TokenBuffer::new());
+}
+
+/// The tokens that can come first of two on a line, once the braces are where they go, each
+/// written as code writes it.
+const FIRSTS: [(TokenKind, &str); 6] = [
+    (Function, "function"),
+    (Returns, "returns"),
+    (Name, "main"),
+    (TypeName, "Void"),
+    (ParenthesisOpen, "("),
+    (ParenthesisClose, ")"),
+];
+
+/// The tokens that can come second: the same ones, and `{`.
+const SECONDS: [(TokenKind, &str); 7] = [
+    (Function, "function"),
+    (Returns, "returns"),
+    (Name, "main"),
+    (TypeName, "Void"),
+    (ParenthesisOpen, "("),
+    (ParenthesisClose, ")"),
+    (BraceOpen, "{"),
+];
+
+/// How many spaces go between each first token, by row, and each second, by column, as the
+/// layout page says: one, except none after `(`, and none before `(` or `)`.
+#[rustfmt::skip]
+const SPACES: [[usize; 7]; 6] = [
+    // function, returns, main, Void, (, ), {
+    [1, 1, 1, 1, 0, 0, 1], // function
+    [1, 1, 1, 1, 0, 0, 1], // returns
+    [1, 1, 1, 1, 0, 0, 1], // main
+    [1, 1, 1, 1, 0, 0, 1], // Void
+    [0, 0, 0, 0, 0, 0, 0], // (
+    [1, 1, 1, 1, 0, 0, 1], // )
+];
+
+/// These are what a random line of code is made of, before the `{` it ends with.
+const PIECES: &[&str] = &["function", "returns", "main", "Void", "x", "MyType", "(", ")", "(", ")"];
+
+/// These follow a comment's `//`.
+const COMMENT_TEXTS: &[&str] = &["", " a", " café", " { } ( )", " function main() returns Void {"];
+
+/// A line's kind says what the line holds, as the oracle sees it.
+enum LineKind<'source> {
+    /// Nothing: the line is blank.
+    Blank,
+    /// A comment, from its `//` to the end of the line.
+    Comment(&'source str),
+    /// Code, as its tokens: each one's first byte in the line, and its text.
+    Code(Vec<(usize, &'source str)>),
+}
+
+/// A line of the source, as the oracle sees it.
+struct Line<'source> {
+    /// The number is the line's, from 1.
+    number: u32,
+    /// The content is the line, without its `\n`.
+    content: &'source str,
+    /// The indentation is how many spaces the line starts with.
+    indentation: usize,
+    /// The kind says what's on the line.
+    kind: LineKind<'source>,
+}
+
+/// Returns the two kinds as neighbors, `before` first.
+// TS-DISTINCT-ARGS: the two kinds are in the order the source has them, and an expectation with
+// them swapped fails its test.
+const fn between(before: TokenKind, after: TokenKind) -> Neighbors {
+    Neighbors { before, after }
 }
 
 /// Lints and lexes `source`, which must pass both, and then lints its tokens. Returns nothing when
@@ -90,18 +153,327 @@ fn has_tokens(source: &str) -> bool {
 fn check(examples: Examples<Expected>) {
     let examples = examples.take();
     for Example { source, expected, at } in &examples {
-        let shown = shown(source);
-        assert!(has_tokens(source), "{at}: {shown} should pass the text lint and the lexer");
-        assert_eq!(oracle(source), *expected, "{at}: the oracle, for {shown}");
+        let excerpt = excerpt(source);
+        assert!(has_tokens(source), "{at}: {excerpt} should pass the text lint and the lexer");
+        assert_eq!(oracle(source), *expected, "{at}: the oracle, for {excerpt}");
     }
     for Example { source, expected, at } in &examples {
-        assert_eq!(checked(source), *expected, "{at}: for {}", shown(source));
+        assert_eq!(checked(source), *expected, "{at}: for {}", excerpt(source));
     }
 }
 
 /// Returns the column of a line's first token when it's indented `levels` levels.
 const fn column_at(levels: u32) -> u32 {
     levels * LEVEL_SPACES + 1
+}
+
+/// Says whether a token of `kind` is a word, which runs into a word right after it.
+const fn is_word(kind: TokenKind) -> bool {
+    matches!(kind, Function | Returns | Name | TypeName)
+}
+
+/// Returns the lines of blocks opened `depth` deep, each line laid out the one way, then `line`,
+/// then a `}` for every block still open, none of them indented. Nothing past the first problem
+/// is looked at, so a source that's refused at `line` needn't indent them.
+fn opened_then(depth: u32, line: &str) -> String {
+    let mut lines: Vec<String> = (0..depth).map(|level| format!("{}({{", indent(level))).collect();
+    lines.push(String::from(line));
+    let still_open = depth + u32::from(line.ends_with('{'));
+    lines.extend(std::iter::repeat_n(String::from("}"), usize_from_u32(still_open)));
+    source_of(&lines)
+}
+
+/// Returns the column of the byte at `index` on a line, where everything before it is ASCII.
+fn column(index: usize) -> u32 {
+    u32_from_usize(index) + 1
+}
+
+/// Returns `source`'s lines, as the oracle sees them.
+fn lines_of(source: &str) -> Vec<Line<'_>> {
+    source
+        .split_terminator('\n')
+        .zip(1_u32..)
+        .map(|(content, number)| line_of(content, number))
+        .collect()
+}
+
+/// Returns the line `number`, which is `content`, as the oracle sees it.
+fn line_of(content: &str, number: u32) -> Line<'_> {
+    let code = content.trim_start_matches(' ');
+    let indentation = content.len() - code.len();
+    let kind = if code.is_empty() {
+        LineKind::Blank
+    } else if code.starts_with("//") {
+        LineKind::Comment(code)
+    } else {
+        LineKind::Code(split(content, indentation))
+    };
+    Line { number, content, indentation, kind }
+}
+
+/// Splits a line of code into its tokens, starting at byte `from`: each of `(`, `)`, `{` and `}`
+/// is one, a run of letters, digits and `_` is one, and spaces are between them.
+fn split(content: &str, from: usize) -> Vec<(usize, &str)> {
+    let bytes = content.as_bytes();
+    let mut tokens = Vec::new();
+    let mut index = from;
+    while index < bytes.len() {
+        let in_word = |byte: &&u8| byte.is_ascii_alphanumeric() || **byte == b'_';
+        let length = match bytes[index] {
+            b' ' => {
+                index += 1;
+                continue;
+            }
+            b'(' | b')' | b'{' | b'}' => 1,
+            _ => bytes[index..].iter().take_while(in_word).count(),
+        };
+        assert!(length > 0, "the lexer passed this line");
+        tokens.push((index, slice(content, index..index + length)));
+        index += length;
+    }
+    tokens
+}
+
+/// Returns the kind of the token written `text`.
+fn kind_of(text: &str) -> TokenKind {
+    match text {
+        "function" => Function,
+        "returns" => Returns,
+        "(" => ParenthesisOpen,
+        ")" => ParenthesisClose,
+        "{" => BraceOpen,
+        "}" => BraceClose,
+        _ if text.starts_with(|character: char| character.is_ascii_uppercase()) => TypeName,
+        _ => Name,
+    }
+}
+
+/// Returns what the tokens lint should make of `source`, which passed the text lint and the
+/// lexer, worked out the way the layout page words it: nothing, or its first problem.
+fn oracle(source: &str) -> Expected {
+    let lines = lines_of(source);
+    oracle_lines(&lines)?;
+    oracle_braces(&lines)?;
+    oracle_within_lines(&lines)
+}
+
+/// The first step, from each line's text: a `{` is at the end of its line and not at its start, a
+/// `}` is all of its line, and a line of code ends in `{` or `}`. A brace out of place is found
+/// before a line that ends some other way, since it's before the line's end. Of two problems at
+/// the same `{`, the first listed wins.
+fn oracle_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
+    for line in lines {
+        let LineKind::Code(_) = line.kind else {
+            continue;
+        };
+        let code = line.content.trim_start_matches(' ');
+        let open = code.find('{').filter(|&index| index + 1 < code.len());
+        let close = code.find('}').filter(|_| code != "}");
+        let out_of_place = [
+            open.map(|index| (BraceOpenNotLast, index)),
+            close.map(|index| (BraceCloseNotAlone, index)),
+            code.starts_with('{').then_some((BraceOpenStartsLine, 0)),
+        ];
+        let first = out_of_place.into_iter().flatten().min_by_key(|&(_, index)| index);
+        if let Some((kind, index)) = first {
+            return Err((kind, line.number, column(line.indentation + index)));
+        }
+        if !code.ends_with(['{', '}']) {
+            return Err((LineEndsWithoutBrace, line.number, column(line.content.len())));
+        }
+    }
+    Ok(())
+}
+
+/// The second step: each `}` closes the `{` most recently opened, and none is left open. The
+/// braces still open are kept as a stack of where each one is.
+fn oracle_braces(lines: &[Line<'_>]) -> Result<(), Refusal> {
+    let mut open: Vec<(u32, u32)> = Vec::new();
+    for line in lines {
+        let LineKind::Code(tokens) = &line.kind else {
+            continue;
+        };
+        for &(index, text) in tokens {
+            if text == "{" {
+                open.push((line.number, column(index)));
+            }
+            if text == "}" {
+                let closed = open.pop();
+                if closed.is_none() {
+                    return Err((BraceClosesNothing, line.number, column(index)));
+                }
+            }
+        }
+    }
+    match open.first() {
+        Some(&(line, column)) => Err((BraceNeverClosed, line, column)),
+        None => Ok(()),
+    }
+}
+
+/// The last step: each line is written the one way, indented one level for each `{` still open
+/// on it, with its tokens joined the one way. The first character that differs is the problem.
+fn oracle_within_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
+    let mut depth: u32 = 0;
+    for line in lines {
+        let (level, written) = match &line.kind {
+            LineKind::Blank => continue,
+            LineKind::Comment(comment) => (depth, String::from(*comment)),
+            LineKind::Code(tokens) => {
+                let texts: Vec<&str> = tokens.iter().map(|&(_, text)| text).collect();
+                // A line that starts with `}` counts its own brace as closed.
+                let level = if texts[0] == "}" { depth - 1 } else { depth };
+                depth = level + u32::from(texts.last() == Some(&"{"));
+                (level, joined(&texts))
+            }
+        };
+        oracle_line(line, level, &format!("{}{written}", indent(level)))?;
+    }
+    Ok(())
+}
+
+/// Returns the problem with `line`, which the one layout writes as `wanted`, indented `level`
+/// levels: none when they're the same, or the first character that differs.
+fn oracle_line(line: &Line<'_>, level: u32, wanted: &str) -> Result<(), Refusal> {
+    let (bytes, wanted_bytes) = (line.content.as_bytes(), wanted.as_bytes());
+    let shorter = bytes.len().min(wanted_bytes.len());
+    let Some(index) = (0..shorter).find(|&index| bytes[index] != wanted_bytes[index]) else {
+        // The tokens are the same, so either a character differs or nothing does.
+        assert_eq!(line.content, wanted, "a line differs from the one layout by a character");
+        return Ok(());
+    };
+    if index < line.indentation.max(indent(level).len()) {
+        return Err((IndentationNotDepth(level), line.number, column(index)));
+    }
+    // Only a line of code can differ past its indentation, and only in its spaces, so the
+    // character that differs is in a gap between two tokens.
+    let LineKind::Code(tokens) = &line.kind else {
+        unreachable!("a comment is the same text, however it's indented");
+    };
+    let second = tokens.iter().position(|&(start, _)| start >= index).expect("a token follows");
+    assert!(second > 0, "the first token is placed by the indentation");
+    let pair = (kind_of(tokens[second - 1].1), kind_of(tokens[second].1));
+    let kind = match (bytes[index], wanted_bytes[index]) {
+        (b' ', _) if bytes[index - 1] == b' ' => SpacesExtra(between(pair.0, pair.1)),
+        (b' ', _) => SpaceUnwanted(between(pair.0, pair.1)),
+        (_, b' ') => SpaceMissing(between(pair.0, pair.1)),
+        _ => unreachable!("the same tokens differ only in their spaces"),
+    };
+    Err((kind, line.number, column(index)))
+}
+
+/// Returns a random program laid out the one way, as its lines: blank lines, comments, and blocks
+/// nested up to five deep, each opened by a few random tokens and `{`, and closed by `}`.
+fn random_program(rng: &mut Rng) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut depth: u32 = 0;
+    for _ in 0..=rng.below(12) {
+        match rng.below(6) {
+            0 => lines.push(String::new()),
+            1 => lines.push(format!("{}//{}", indent(depth), rng.pick(COMMENT_TEXTS))),
+            2 | 3 if depth > 0 => {
+                depth -= 1;
+                lines.push(format!("{}}}", indent(depth)));
+            }
+            _ if depth < 5 => {
+                let heads = 1 + rng.below(4);
+                let mut texts: Vec<&str> =
+                    std::iter::repeat_with(|| rng.pick(PIECES)).take(heads).collect();
+                texts.push("{");
+                lines.push(format!("{}{}", indent(depth), joined(&texts)));
+                depth += 1;
+            }
+            _ => lines.push(format!("{}// deep", indent(depth))),
+        }
+    }
+    lines.extend((0..depth).rev().map(|level| format!("{}}}", indent(level))));
+    // A source can't end with a blank line, or be empty.
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        lines.push(String::from("// empty"));
+    }
+    lines
+}
+
+/// Changes `lines` in one random way that can break the layout: a space added beside a symbol,
+/// taken away or doubled; a line indented a level more or less; two lines joined or one split; a
+/// brace taken away; the tokens before a line's `{` taken away; a line or a token added; or, now
+/// and then, a gap or an indentation widened by up to 300 spaces, or up to 300 blank lines
+/// added, so widths and line numbers go past what a byte counts. Spaces are only moved on lines
+/// of code, past their indentation, where the text lint lets them be.
+fn mutate(rng: &mut Rng, lines: &mut Vec<String>) {
+    let index = rng.below(lines.len());
+    let line = lines[index].clone();
+    let code = line.trim_start_matches(' ');
+    let indentation = line.len() - code.len();
+    let in_code = |at: &usize| *at > indentation && !code.starts_with("//");
+    let spaces: Vec<usize> = line.match_indices(' ').map(|(at, _)| at).filter(in_code).collect();
+    let symbols: Vec<usize> = line.match_indices(['(', ')', '{', '}']).map(|(at, _)| at).collect();
+    match rng.below(19) {
+        0..=4 if !symbols.is_empty() && !code.starts_with("//") => {
+            let at = symbols[rng.below(symbols.len())] + rng.below(2);
+            if at > indentation && at < line.len() {
+                lines[index].insert(at, ' ');
+            }
+        }
+        5 | 6 if !spaces.is_empty() => {
+            lines[index].remove(spaces[rng.below(spaces.len())]);
+        }
+        7 if !spaces.is_empty() => lines[index].insert(spaces[rng.below(spaces.len())], ' '),
+        8 => lines[index].insert_str(0, &indent(1)),
+        9 if line.starts_with(&indent(1)) => {
+            lines[index].drain(..usize_from_u32(LEVEL_SPACES));
+        }
+        10 if index + 1 < lines.len() => {
+            let next = lines.remove(index + 1);
+            lines[index] = format!("{line}{}{}", rng.pick(&["", " "]), next.trim_start());
+        }
+        11 if !spaces.is_empty() => {
+            let at = spaces[rng.below(spaces.len())];
+            let levels = u32::try_from(rng.below(6)).expect("a few levels");
+            lines[index] = String::from(slice(&line, 0..at));
+            let rest = slice(&line, at + 1..line.len());
+            lines.insert(index + 1, format!("{}{rest}", indent(levels)));
+        }
+        12 => {
+            if let Some(at) = line.rfind(['{', '}']) {
+                let (before, after) = (slice(&line, 0..at), slice(&line, at + 1..line.len()));
+                lines[index] = format!("{}{after}", before.trim_end());
+            }
+        }
+        13 => {
+            let levels = u32::try_from(rng.below(6)).expect("a few levels");
+            lines.insert(
+                index,
+                format!("{}{}", indent(levels), rng.pick(&["}", "{", "a {", "// c"])),
+            );
+        }
+        14 if !spaces.is_empty() => {
+            let at = spaces[rng.below(spaces.len())];
+            lines[index].insert_str(at, &" ".repeat(rng.below(300)));
+        }
+        15 => {
+            let levels = u32::try_from(rng.below(75)).expect("a few levels");
+            lines[index].insert_str(0, &indent(levels));
+        }
+        16 => {
+            for _ in 0..rng.below(300) {
+                lines.insert(index, String::new());
+            }
+        }
+        17 if code.ends_with('{') && code != "{" && !code.starts_with("//") => {
+            lines[index] = format!("{}{{", slice(&line, 0..indentation));
+        }
+        _ => lines[index].push_str(rng.pick(&[" x", "(", ")", " {", "{", " }", "}"])),
+    }
+}
+
+/// Returns the name of `kind`'s variant, without what it holds.
+fn variant(kind: Kind) -> String {
+    let name = format!("{kind:?}");
+    String::from(name.split('(').next().expect("a name"))
 }
 
 #[test]
@@ -332,46 +704,6 @@ fn spaces() {
     check(examples);
 }
 
-/// The tokens that can come first of two on a line, once the braces are where they go, each
-/// written as code writes it.
-const FIRSTS: [(TokenKind, &str); 6] = [
-    (Function, "function"),
-    (Returns, "returns"),
-    (Name, "main"),
-    (TypeName, "Void"),
-    (ParenthesisOpen, "("),
-    (ParenthesisClose, ")"),
-];
-
-/// The tokens that can come second: the same ones, and `{`.
-const SECONDS: [(TokenKind, &str); 7] = [
-    (Function, "function"),
-    (Returns, "returns"),
-    (Name, "main"),
-    (TypeName, "Void"),
-    (ParenthesisOpen, "("),
-    (ParenthesisClose, ")"),
-    (BraceOpen, "{"),
-];
-
-/// How many spaces go between each first token, by row, and each second, by column, as the
-/// layout page says: one, except none after `(`, and none before `(` or `)`.
-#[rustfmt::skip]
-const SPACES: [[usize; 7]; 6] = [
-    // function, returns, main, Void, (, ), {
-    [1, 1, 1, 1, 0, 0, 1], // function
-    [1, 1, 1, 1, 0, 0, 1], // returns
-    [1, 1, 1, 1, 0, 0, 1], // main
-    [1, 1, 1, 1, 0, 0, 1], // Void
-    [0, 0, 0, 0, 0, 0, 0], // (
-    [1, 1, 1, 1, 0, 0, 1], // )
-];
-
-/// Says whether a token of `kind` is a word, which runs into a word right after it.
-const fn is_word(kind: TokenKind) -> bool {
-    matches!(kind, Function | Returns | Name | TypeName)
-}
-
 #[test]
 fn every_gap() {
     // The same rule tried whole: every pair of tokens that can share a line, with every gap up
@@ -483,17 +815,6 @@ fn the_first_problem_wins() {
     check(examples);
 }
 
-/// Returns the lines of blocks opened `depth` deep, each line laid out the one way, then `line`,
-/// then a `}` for every block still open, none of them indented. Nothing past the first problem
-/// is looked at, so a source that's refused at `line` needn't indent them.
-fn opened_then(depth: u32, line: &str) -> String {
-    let mut lines: Vec<String> = (0..depth).map(|level| format!("{}({{", indent(level))).collect();
-    lines.push(String::from(line));
-    let still_open = depth + u32::from(line.ends_with('{'));
-    lines.extend(std::iter::repeat_n(String::from("}"), usize_from_u32(still_open)));
-    source_of(&lines)
-}
-
 #[test]
 fn the_largest_sources() {
     // Depths and line numbers go as far as the largest source lets them, so none of them can be
@@ -568,331 +889,6 @@ fn the_widest_lines() {
     check(examples);
 }
 
-// The oracle, which works from each line's text.
-
-/// A line's kind says what the line holds, as the oracle sees it.
-enum LineKind<'source> {
-    /// Nothing: the line is blank.
-    Blank,
-    /// A comment, from its `//` to the end of the line.
-    Comment(&'source str),
-    /// Code, as its tokens: each one's first byte in the line, and its text.
-    Code(Vec<(usize, &'source str)>),
-}
-
-/// A line of the source, as the oracle sees it.
-struct Line<'source> {
-    /// The number is the line's, from 1.
-    number: u32,
-    /// The content is the line, without its `\n`.
-    content: &'source str,
-    /// The indentation is how many spaces the line starts with.
-    indentation: usize,
-    /// The kind says what's on the line.
-    kind: LineKind<'source>,
-}
-
-/// Returns the column of the byte at `index` on a line, where everything before it is ASCII.
-fn column(index: usize) -> u32 {
-    u32_from_usize(index) + 1
-}
-
-/// Returns `source`'s lines, as the oracle sees them.
-fn lines_of(source: &str) -> Vec<Line<'_>> {
-    source
-        .split_terminator('\n')
-        .zip(1_u32..)
-        .map(|(content, number)| line_of(content, number))
-        .collect()
-}
-
-/// Returns the line `number`, which is `content`, as the oracle sees it.
-fn line_of(content: &str, number: u32) -> Line<'_> {
-    let code = content.trim_start_matches(' ');
-    let indentation = content.len() - code.len();
-    let kind = if code.is_empty() {
-        LineKind::Blank
-    } else if code.starts_with("//") {
-        LineKind::Comment(code)
-    } else {
-        LineKind::Code(split(content, indentation))
-    };
-    Line { number, content, indentation, kind }
-}
-
-/// Splits a line of code into its tokens, starting at byte `from`: each of `(`, `)`, `{` and `}`
-/// is one, a run of letters, digits and `_` is one, and spaces are between them.
-fn split(content: &str, from: usize) -> Vec<(usize, &str)> {
-    let bytes = content.as_bytes();
-    let mut tokens = Vec::new();
-    let mut index = from;
-    while index < bytes.len() {
-        let in_word = |byte: &&u8| byte.is_ascii_alphanumeric() || **byte == b'_';
-        let length = match bytes[index] {
-            b' ' => {
-                index += 1;
-                continue;
-            }
-            b'(' | b')' | b'{' | b'}' => 1,
-            _ => bytes[index..].iter().take_while(in_word).count(),
-        };
-        assert!(length > 0, "the lexer passed this line");
-        tokens.push((index, slice(content, index..index + length)));
-        index += length;
-    }
-    tokens
-}
-
-/// Returns the kind of the token written `text`.
-fn kind_of(text: &str) -> TokenKind {
-    match text {
-        "function" => Function,
-        "returns" => Returns,
-        "(" => ParenthesisOpen,
-        ")" => ParenthesisClose,
-        "{" => BraceOpen,
-        "}" => BraceClose,
-        _ if text.starts_with(|character: char| character.is_ascii_uppercase()) => TypeName,
-        _ => Name,
-    }
-}
-
-/// Returns what the tokens lint should make of `source`, which passed the text lint and the
-/// lexer, worked out the way the layout page words it: nothing, or its first problem.
-fn oracle(source: &str) -> Expected {
-    let lines = lines_of(source);
-    oracle_lines(&lines)?;
-    oracle_braces(&lines)?;
-    oracle_within_lines(&lines)
-}
-
-/// The first step, from each line's text: a `{` is at the end of its line and not at its start, a
-/// `}` is all of its line, and a line of code ends in `{` or `}`. A brace out of place is found
-/// before a line that ends some other way, since it's before the line's end. Of two problems at
-/// the same `{`, the first listed wins.
-fn oracle_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
-    for line in lines {
-        let LineKind::Code(_) = line.kind else {
-            continue;
-        };
-        let code = line.content.trim_start_matches(' ');
-        let open = code.find('{').filter(|&index| index + 1 < code.len());
-        let close = code.find('}').filter(|_| code != "}");
-        let out_of_place = [
-            open.map(|index| (BraceOpenNotLast, index)),
-            close.map(|index| (BraceCloseNotAlone, index)),
-            code.starts_with('{').then_some((BraceOpenStartsLine, 0)),
-        ];
-        let first = out_of_place.into_iter().flatten().min_by_key(|&(_, index)| index);
-        if let Some((kind, index)) = first {
-            return Err((kind, line.number, column(line.indentation + index)));
-        }
-        if !code.ends_with(['{', '}']) {
-            return Err((LineEndsWithoutBrace, line.number, column(line.content.len())));
-        }
-    }
-    Ok(())
-}
-
-/// The second step: each `}` closes the `{` most recently opened, and none is left open. The
-/// braces still open are kept as a stack of where each one is.
-fn oracle_braces(lines: &[Line<'_>]) -> Result<(), Refusal> {
-    let mut open: Vec<(u32, u32)> = Vec::new();
-    for line in lines {
-        let LineKind::Code(tokens) = &line.kind else {
-            continue;
-        };
-        for &(index, text) in tokens {
-            if text == "{" {
-                open.push((line.number, column(index)));
-            }
-            if text == "}" {
-                let closed = open.pop();
-                if closed.is_none() {
-                    return Err((BraceClosesNothing, line.number, column(index)));
-                }
-            }
-        }
-    }
-    match open.first() {
-        Some(&(line, column)) => Err((BraceNeverClosed, line, column)),
-        None => Ok(()),
-    }
-}
-
-/// The last step: each line is written the one way, indented one level for each `{` still open
-/// on it, with its tokens joined the one way. The first character that differs is the problem.
-fn oracle_within_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
-    let mut depth: u32 = 0;
-    for line in lines {
-        let (level, written) = match &line.kind {
-            LineKind::Blank => continue,
-            LineKind::Comment(comment) => (depth, String::from(*comment)),
-            LineKind::Code(tokens) => {
-                let texts: Vec<&str> = tokens.iter().map(|&(_, text)| text).collect();
-                // A line that starts with `}` counts its own brace as closed.
-                let level = if texts[0] == "}" { depth - 1 } else { depth };
-                depth = level + u32::from(texts.last() == Some(&"{"));
-                (level, joined(&texts))
-            }
-        };
-        oracle_line(line, level, &format!("{}{written}", indent(level)))?;
-    }
-    Ok(())
-}
-
-/// Returns the problem with `line`, which the one layout writes as `wanted`, indented `level`
-/// levels: none when they're the same, or the first character that differs.
-fn oracle_line(line: &Line<'_>, level: u32, wanted: &str) -> Result<(), Refusal> {
-    let (bytes, wanted_bytes) = (line.content.as_bytes(), wanted.as_bytes());
-    let shorter = bytes.len().min(wanted_bytes.len());
-    let Some(index) = (0..shorter).find(|&index| bytes[index] != wanted_bytes[index]) else {
-        // The tokens are the same, so either a character differs or nothing does.
-        assert_eq!(line.content, wanted, "a line differs from the one layout by a character");
-        return Ok(());
-    };
-    if index < line.indentation.max(indent(level).len()) {
-        return Err((IndentationNotDepth(level), line.number, column(index)));
-    }
-    // Only a line of code can differ past its indentation, and only in its spaces, so the
-    // character that differs is in a gap between two tokens.
-    let LineKind::Code(tokens) = &line.kind else {
-        unreachable!("a comment is the same text, however it's indented");
-    };
-    let second = tokens.iter().position(|&(start, _)| start >= index).expect("a token follows");
-    assert!(second > 0, "the first token is placed by the indentation");
-    let pair = (kind_of(tokens[second - 1].1), kind_of(tokens[second].1));
-    let kind = match (bytes[index], wanted_bytes[index]) {
-        (b' ', _) if bytes[index - 1] == b' ' => SpacesExtra(between(pair.0, pair.1)),
-        (b' ', _) => SpaceUnwanted(between(pair.0, pair.1)),
-        (_, b' ') => SpaceMissing(between(pair.0, pair.1)),
-        _ => unreachable!("the same tokens differ only in their spaces"),
-    };
-    Err((kind, line.number, column(index)))
-}
-
-// Fuzzing against the oracle, seeded so a failing case replays.
-
-/// These are what a random line of code is made of, before the `{` it ends with.
-const PIECES: &[&str] = &["function", "returns", "main", "Void", "x", "MyType", "(", ")", "(", ")"];
-
-/// These follow a comment's `//`.
-const COMMENT_TEXTS: &[&str] = &["", " a", " café", " { } ( )", " function main() returns Void {"];
-
-/// Returns a random program laid out the one way, as its lines: blank lines, comments, and blocks
-/// nested up to five deep, each opened by a few random tokens and `{`, and closed by `}`.
-fn random_program(rng: &mut Rng) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut depth: u32 = 0;
-    for _ in 0..=rng.below(12) {
-        match rng.below(6) {
-            0 => lines.push(String::new()),
-            1 => lines.push(format!("{}//{}", indent(depth), rng.pick(COMMENT_TEXTS))),
-            2 | 3 if depth > 0 => {
-                depth -= 1;
-                lines.push(format!("{}}}", indent(depth)));
-            }
-            _ if depth < 5 => {
-                let heads = 1 + rng.below(4);
-                let mut texts: Vec<&str> =
-                    std::iter::repeat_with(|| rng.pick(PIECES)).take(heads).collect();
-                texts.push("{");
-                lines.push(format!("{}{}", indent(depth), joined(&texts)));
-                depth += 1;
-            }
-            _ => lines.push(format!("{}// deep", indent(depth))),
-        }
-    }
-    lines.extend((0..depth).rev().map(|level| format!("{}}}", indent(level))));
-    // A source can't end with a blank line, or be empty.
-    while lines.last().is_some_and(String::is_empty) {
-        lines.pop();
-    }
-    if lines.is_empty() {
-        lines.push(String::from("// empty"));
-    }
-    lines
-}
-
-/// Changes `lines` in one random way that can break the layout: a space added beside a symbol,
-/// taken away or doubled; a line indented a level more or less; two lines joined or one split; a
-/// brace taken away; the tokens before a line's `{` taken away; a line or a token added; or, now
-/// and then, a gap or an indentation widened by up to 300 spaces, or up to 300 blank lines
-/// added, so widths and line numbers go past what a byte counts. Spaces are only moved on lines
-/// of code, past their indentation, where the text lint lets them be.
-fn mutate(rng: &mut Rng, lines: &mut Vec<String>) {
-    let index = rng.below(lines.len());
-    let line = lines[index].clone();
-    let code = line.trim_start_matches(' ');
-    let indentation = line.len() - code.len();
-    let in_code = |at: &usize| *at > indentation && !code.starts_with("//");
-    let spaces: Vec<usize> = line.match_indices(' ').map(|(at, _)| at).filter(in_code).collect();
-    let symbols: Vec<usize> = line.match_indices(['(', ')', '{', '}']).map(|(at, _)| at).collect();
-    match rng.below(19) {
-        0..=4 if !symbols.is_empty() && !code.starts_with("//") => {
-            let at = symbols[rng.below(symbols.len())] + rng.below(2);
-            if at > indentation && at < line.len() {
-                lines[index].insert(at, ' ');
-            }
-        }
-        5 | 6 if !spaces.is_empty() => {
-            lines[index].remove(spaces[rng.below(spaces.len())]);
-        }
-        7 if !spaces.is_empty() => lines[index].insert(spaces[rng.below(spaces.len())], ' '),
-        8 => lines[index].insert_str(0, &indent(1)),
-        9 if line.starts_with(&indent(1)) => {
-            lines[index].drain(..usize_from_u32(LEVEL_SPACES));
-        }
-        10 if index + 1 < lines.len() => {
-            let next = lines.remove(index + 1);
-            lines[index] = format!("{line}{}{}", rng.pick(&["", " "]), next.trim_start());
-        }
-        11 if !spaces.is_empty() => {
-            let at = spaces[rng.below(spaces.len())];
-            let levels = u32::try_from(rng.below(6)).expect("a few levels");
-            lines[index] = String::from(slice(&line, 0..at));
-            let rest = slice(&line, at + 1..line.len());
-            lines.insert(index + 1, format!("{}{rest}", indent(levels)));
-        }
-        12 => {
-            if let Some(at) = line.rfind(['{', '}']) {
-                let (before, after) = (slice(&line, 0..at), slice(&line, at + 1..line.len()));
-                lines[index] = format!("{}{after}", before.trim_end());
-            }
-        }
-        13 => {
-            let levels = u32::try_from(rng.below(6)).expect("a few levels");
-            lines.insert(
-                index,
-                format!("{}{}", indent(levels), rng.pick(&["}", "{", "a {", "// c"])),
-            );
-        }
-        14 if !spaces.is_empty() => {
-            let at = spaces[rng.below(spaces.len())];
-            lines[index].insert_str(at, &" ".repeat(rng.below(300)));
-        }
-        15 => {
-            let levels = u32::try_from(rng.below(75)).expect("a few levels");
-            lines[index].insert_str(0, &indent(levels));
-        }
-        16 => {
-            for _ in 0..rng.below(300) {
-                lines.insert(index, String::new());
-            }
-        }
-        17 if code.ends_with('{') && code != "{" && !code.starts_with("//") => {
-            lines[index] = format!("{}{{", slice(&line, 0..indentation));
-        }
-        _ => lines[index].push_str(rng.pick(&[" x", "(", ")", " {", "{", " }", "}"])),
-    }
-}
-
-/// Returns the name of `kind`'s variant, without what it holds.
-fn variant(kind: Kind) -> String {
-    let name = format!("{kind:?}");
-    String::from(name.split('(').next().expect("a name"))
-}
-
 #[test]
 fn fuzz_against_the_oracle() {
     // 40,000 random programs, laid out the one way and then changed up to twice, each checked
@@ -956,6 +952,6 @@ fn fuzz_against_the_oracle() {
     }
     // The oracle made these answers, so each goes straight to the tokens lint.
     for (source, expected) in checks {
-        assert_eq!(checked(source), expected, "for {}", shown(source));
+        assert_eq!(checked(source), expected, "for {}", excerpt(source));
     }
 }
