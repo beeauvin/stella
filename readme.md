@@ -9,6 +9,75 @@ constellations. Every byte of memory, every queue and every loop has a bound the
 compiler proves before anything runs. If it can't fit, it won't build. If it
 builds, it tells you exactly what it needs. Period.
 
+## Where it stands
+
+Stella is at its very start. The compiler can't build a program yet. What it
+can do is lint one: `stella lint` checks a source file's path, its text, its
+tokens and its layout, and says exactly where the first thing wrong is.
+
+```console
+$ stella lint app/bad-indent.stella
+app/bad-indent.stella:2:1: indentation must be a multiple of four spaces.
+      }
+    ^
+```
+
+The [reference](docs/reference/readme.md) describes the language as it stands
+today. Each rule in it links to the tests that check it, or says it isn't built
+yet.
+
+## Trying it
+
+Stella is written in Rust, for macOS. [mise](https://mise.jdx.dev) installs the
+Rust it's pinned to:
+
+```sh
+mise install
+cargo build --release
+```
+
+Then lint one program, or every program under the directory you're in:
+
+```sh
+target/release/stella lint hello.stella
+target/release/stella lint
+```
+
+It exits with 0 when every program passes, 1 when one is refused, and 2 when
+something outside the program went wrong, like a file that doesn't exist.
+
+## Working on it
+
+Four checks must pass before anything merges, and CI runs the same four:
+
+```sh
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+```
+
+The lints are strict on purpose, and they're declared once, in the root
+`Cargo.toml` and `clippy.toml`. Every crate inherits them.
+
+## How it's laid out
+
+A program goes through a line of checks. Each check hands the next a type that
+only it can make, so nothing downstream can be given text that wasn't checked.
+
+| Directory       | What it holds                                                 |
+| --------------- | ------------------------------------------------------------- |
+| `source`        | What every check shares: the size limit and positions.        |
+| `linter/path`   | The check of a source file's path.                            |
+| `linter/text`   | The check of a source file's text.                            |
+| `lexer`         | The lexer, which turns checked text into tokens.              |
+| `linter/tokens` | The check of how tokens are laid out.                         |
+| `blocks`        | The nesting of laid-out lines into blocks.                    |
+| `cli`           | The `stella` command, which reads files and runs the checks.  |
+| `checks`        | Checks of the repository itself, like the reference's links.  |
+| `test-support`  | What the tests share.                                         |
+| `docs`          | The documentation, with the reference in `docs/reference`.    |
+
 ## License
 
 Stella is provided under the [Mozilla Public License 2.0](https://mozilla.org/MPL/2.0/).
