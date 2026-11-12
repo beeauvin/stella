@@ -32,12 +32,13 @@ pub(crate) fn diagnostic(line: &str) -> Result<Option<Diagnostic>, String> {
     if !line.contains("\"reason\":\"compiler-message\"") {
         return Ok(None);
     }
-    let manifest_path =
-        string_after(line, "\"manifest_path\":").ok_or("a diagnostic names no manifest.")?;
+    let manifest_path = manifest_path(line).ok_or("a diagnostic names no manifest.")?;
     let crate_directory = manifest_path
         .strip_suffix("/Cargo.toml")
         .and_then(|directory| directory.rsplit('/').next())
-        .ok_or_else(|| format!("`{manifest_path}` isn't a manifest's path."))?;
+        .filter(|directory| !directory.is_empty())
+        .ok_or_else(|| format!("`{manifest_path}` isn't the path of a crate's manifest."))?;
+    assert!(!crate_directory.contains('/'), "a directory's name is one part of a path");
     // The diagnostic itself is the object after `"message":`. Cargo writes its keys in the order
     // of the alphabet, so the notes under it, in `children`, come before its own `code`, and
     // each note has a `code` that's null. Nothing after its own has one. So the last `code` on
@@ -55,19 +56,22 @@ pub(crate) fn diagnostic(line: &str) -> Result<Option<Diagnostic>, String> {
     Ok(Some(Diagnostic { crate_directory: String::from(crate_directory), code }))
 }
 
-/// Returns the string that's the value right after the first `key` in `text`, without its
-/// quotes, or `None` when the key isn't there, isn't followed by a string, or the string holds
-/// an escape, which nothing read here should.
-fn string_after<'text>(text: &'text str, key: &str) -> Option<&'text str> {
-    let (_, after_key) = text.split_once(key)?;
+/// Returns the path of the manifest `line`, a diagnostic, is about: the string right after its
+/// `manifest_path` key, without its quotes. It's `None` when the key isn't there, isn't followed
+/// by a string, or the string holds an escape, which no path the proof makes does.
+fn manifest_path(line: &str) -> Option<&str> {
+    let (_, after_key) = line.split_once("\"manifest_path\":")?;
     let after_quote = after_key.strip_prefix('"')?;
-    let (value, _) = after_quote.split_once('"')?;
-    (!value.contains('\\')).then_some(value)
+    let (path, _) = after_quote.split_once('"')?;
+    (!path.contains('\\')).then_some(path)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{Diagnostic, diagnostic};
+    use crate::files::read_text;
 
     /// Returns the diagnostic the proof expects of `line`, a line captured from Cargo.
     fn read(line: &str) -> Diagnostic {
@@ -95,6 +99,8 @@ mod tests {
             "{\"reason\":\"compiler-message\",\"message\":{\"code\":null}}",
             "{\"reason\":\"compiler-message\",\"manifest_path\":\"/w/crates/a/Cargo.toml\"}",
             "{\"reason\":\"compiler-message\",\"manifest_path\":\"/w/a.toml\",\"message\":{}}",
+            "{\"reason\":\"compiler-message\",\"manifest_path\":\"/Cargo.toml\",\
+             \"message\":{\"code\":null}}",
         ] {
             assert!(diagnostic(line).is_err(), "for {line}");
         }
@@ -106,13 +112,10 @@ mod tests {
         // toolchain, and are kept whole in `captured/`, but for the workspace's path, which is
         // written `/workspace`. One is a lint. The other is the note the compiler adds after an
         // error that has a code of its own, which no lint made.
-        let captured = std::fs::read_to_string(
-            std::path::Path::new(
-                &std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo says where the crate is"),
-            )
-            .join("captured/diagnostics.jsonl"),
-        )
-        .expect("the captured lines are in the repository");
+        let manifest_directory =
+            std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo says where the crate is");
+        let captured = Path::new(&manifest_directory).join("captured/diagnostics.jsonl");
+        let captured = read_text(&captured).expect("the captured lines are in the repository");
         let read: Vec<Diagnostic> = captured.split_terminator('\n').map(read).collect();
         let of = |directory: &str, code: Option<&str>| Diagnostic {
             crate_directory: String::from(directory),

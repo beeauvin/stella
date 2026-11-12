@@ -22,15 +22,12 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::os::unix::fs::symlink;
 use std::path::Path;
-use std::process::Command;
 
+use crate::cargo::{CLIPPY, REFUSE_WARNINGS, REPORT_ALL_AS_JSON, Run};
 use crate::diagnostics::{Diagnostic, diagnostic};
+use crate::files::{read_text, write_text};
 use crate::fixtures::{Expected, Fixture, Kind, fixtures, uncovered};
 use crate::table::{Tool, claims};
-
-/// This is the most Cargo may write while it builds the fixtures. It's many times what a hundred
-/// small crates make it say, and it bounds what the proof holds in memory.
-const OUTPUT_BYTES_MAX: usize = 64 * 1024 * 1024;
 
 /// This is where the scratch workspace is, from the root.
 const SCRATCH: &str = "target/lint-proof";
@@ -45,9 +42,8 @@ const PACKAGE: &str = "version.workspace = true\nedition.workspace = true\n\
                        repository.workspace = true\npublish.workspace = true\n";
 
 /// Proves that the lints of the workspace at `root` bite.
-pub(crate) fn run(root: &Path) -> Result<(), String> {
-    let manifest = read(&root.join("Cargo.toml"))?;
-    let claims = claims(&manifest)?;
+pub(crate) fn prove(root: &Path) -> Result<(), String> {
+    let claims = claims(&read_text(&root.join("Cargo.toml"))?)?;
     let fixtures = fixtures(&root.join("xtask/fixtures"))?;
     let problems = uncovered(&claims, &fixtures);
     if !problems.is_empty() {
@@ -59,20 +55,27 @@ pub(crate) fn run(root: &Path) -> Result<(), String> {
     let is_cargo = |fixture: &Fixture| fixture.kind == Kind::Group(String::from("cargo"));
     let (apart, together): (Vec<Fixture>, Vec<Fixture>) =
         fixtures.iter().cloned().partition(is_cargo);
-    let scratch = root.join(SCRATCH);
+    let clippy = [&CLIPPY[..], &REPORT_ALL_AS_JSON, &REFUSE_WARNINGS].concat();
     let mut diagnostics = Vec::new();
-    for (scratch, members) in [(&scratch, &together), (&root.join(SCRATCH_CARGO), &apart)] {
+    for (directory, members) in [(SCRATCH, &together), (SCRATCH_CARGO, &apart)] {
         if members.is_empty() {
             continue;
         }
-        write_scratch(root, scratch, members)?;
-        diagnostics.extend(reported(scratch, &["clippy", "--workspace", "--all-targets"])?);
+        let scratch = Scratch { root, directory: &root.join(directory) };
+        scratch.write(members)?;
+        diagnostics.extend(scratch.diagnostics(&clippy)?);
     }
     // Rustdoc's lints are only reported when the documentation is built, so those fixtures are
-    // built again that way.
-    for fixture in fixtures.iter().filter(|fixture| fixture.kind == Kind::Lint(Tool::Rustdoc)) {
-        let package = format!("proof-{}", fixture.crate_directory());
-        diagnostics.extend(reported(&scratch, &["doc", "--no-deps", "--package", &package])?);
+    // built again that way, all in one run.
+    let is_rustdoc = |fixture: &&Fixture| fixture.kind == Kind::Lint(Tool::Rustdoc);
+    let packages: Vec<String> = together.iter().filter(is_rustdoc).map(package_name).collect();
+    if !packages.is_empty() {
+        let mut doc = [&["doc", "--no-deps"][..], &REPORT_ALL_AS_JSON].concat();
+        for package in &packages {
+            doc.extend(["--package", package.as_str()]);
+        }
+        let scratch = Scratch { root, directory: &root.join(SCRATCH) };
+        diagnostics.extend(scratch.diagnostics(&doc)?);
     }
     let failures = failures(&fixtures, &diagnostics);
     if !failures.is_empty() {
@@ -85,7 +88,7 @@ pub(crate) fn run(root: &Path) -> Result<(), String> {
 
 /// Returns every fixture in `fixtures` that didn't do what it's there for, going by
 /// `diagnostics`, each as a sentence. None means the proof holds.
-pub(crate) fn failures(fixtures: &[Fixture], diagnostics: &[Diagnostic]) -> Vec<String> {
+fn failures(fixtures: &[Fixture], diagnostics: &[Diagnostic]) -> Vec<String> {
     let mut failures = Vec::new();
     for fixture in fixtures {
         let directory = fixture.crate_directory();
@@ -112,36 +115,76 @@ pub(crate) fn failures(fixtures: &[Fixture], diagnostics: &[Diagnostic]) -> Vec<
             }
         }
     }
+    assert!(failures.len() <= fixtures.len(), "a fixture fails once at most");
     failures
 }
 
-/// Makes the scratch workspace at `scratch`, anew: the root's manifest with the fixtures' crates
-/// as its members, its `clippy.toml`, and a crate for each of `fixtures`.
-fn write_scratch(root: &Path, scratch: &Path, fixtures: &[Fixture]) -> Result<(), String> {
-    let is_own = scratch.ends_with(SCRATCH) || scratch.ends_with(SCRATCH_CARGO);
-    assert!(is_own, "only the proof's own directories are replaced");
-    let crates = scratch.join("crates");
-    // The crates are made anew, so a fixture that's gone leaves no crate behind. What was built
-    // is kept, since it's beside them.
-    match fs::remove_dir_all(&crates) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("{} can't be removed: {error}.", crates.display())),
-    }
-    let manifest = scratch_manifest(&read(&root.join("Cargo.toml"))?)?;
-    write(&scratch.join("Cargo.toml"), &manifest)?;
-    write(&scratch.join("clippy.toml"), &read(&root.join("clippy.toml"))?)?;
-    for fixture in fixtures {
-        let directory = crates.join(fixture.crate_directory());
-        write(&directory.join("Cargo.toml"), &crate_manifest(fixture)?)?;
-        // A fixture of several files is linked in as its crate's `src`, so its files are inside
-        // the workspace. Clippy's lints about where a module's files are only look there.
-        if let Some(files) = &fixture.directory {
-            symlink(files, directory.join("src"))
-                .map_err(|error| format!("{} can't be linked to: {error}.", files.display()))?;
+/// A scratch workspace is where the proof builds fixtures. Each path is named, so the workspace
+/// that's made anew can't be mistaken for the real one it's made from.
+#[derive(Clone, Copy)]
+struct Scratch<'proof> {
+    /// The real workspace's root, which the lint table and `clippy.toml` are read from.
+    root: &'proof Path,
+    /// The scratch workspace's own directory, which is under the real one's `target`.
+    directory: &'proof Path,
+}
+
+impl Scratch<'_> {
+    /// Makes the scratch workspace, anew: the root's manifest with the fixtures' crates as its
+    /// members, its `clippy.toml`, and a crate for each of `fixtures`.
+    fn write(self, fixtures: &[Fixture]) -> Result<(), String> {
+        let is_own = self.directory.ends_with(SCRATCH) || self.directory.ends_with(SCRATCH_CARGO);
+        assert!(is_own, "only the proof's own directories are replaced");
+        assert!(self.directory.starts_with(self.root), "the proof builds inside the workspace");
+        let crates = self.directory.join("crates");
+        // The crates are made anew, so a fixture that's gone leaves no crate behind. What was
+        // built is kept, since it's beside them.
+        match fs::remove_dir_all(&crates) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("{} can't be removed: {error}.", crates.display())),
         }
+        let manifest = scratch_manifest(&read_text(&self.root.join("Cargo.toml"))?)?;
+        write_text(&self.directory.join("Cargo.toml"), &manifest)?;
+        let clippy = read_text(&self.root.join("clippy.toml"))?;
+        write_text(&self.directory.join("clippy.toml"), &clippy)?;
+        for fixture in fixtures {
+            let directory = crates.join(fixture.crate_directory());
+            write_text(&directory.join("Cargo.toml"), &crate_manifest(fixture)?)?;
+            // A fixture of several files is linked in as its crate's `src`, so its files are
+            // inside the workspace. Clippy's lints about where a module's files are only look
+            // there.
+            if let Some(files) = &fixture.directory {
+                symlink(files, directory.join("src"))
+                    .map_err(|error| format!("{} can't be linked to: {error}.", files.display()))?;
+            }
+        }
+        Ok(())
     }
-    Ok(())
+
+    /// Runs Cargo with `arguments` in the scratch workspace and returns every diagnostic it
+    /// reports. That Cargo fails is expected, since most fixtures break a rule: the diagnostics
+    /// say what happened.
+    fn diagnostics(self, arguments: &[&str]) -> Result<Vec<Diagnostic>, String> {
+        let run = Run { directory: self.directory, arguments };
+        let log = self.directory.join("cargo-stderr.log");
+        let messages = run.messages(&log)?;
+        let mut diagnostics = Vec::new();
+        for line in messages.split_terminator('\n') {
+            diagnostics.extend(diagnostic(line)?);
+        }
+        // A build that reports nothing at all didn't build the fixtures, whatever its status.
+        if diagnostics.is_empty() {
+            let shown = run.shown();
+            return Err(format!("`{shown}` reported nothing. See {}.", log.display()));
+        }
+        Ok(diagnostics)
+    }
+}
+
+/// Returns the name of `fixture`'s package in the scratch workspace.
+fn package_name(fixture: &Fixture) -> String {
+    format!("proof-{}", fixture.crate_directory())
 }
 
 /// Returns the manifest of `fixture`'s crate in the scratch workspace. A fixture of one file is
@@ -157,14 +200,12 @@ fn crate_manifest(fixture: &Fixture) -> Result<String, String> {
         })?;
         format!("[lib]\npath = \"{source}\"\n\n")
     };
-    let extra = match &fixture.manifest_extra {
-        Some(extra) => read(extra)?,
-        None => String::new(),
-    };
-    let directory = fixture.crate_directory();
+    let extra = fixture.manifest_extra.as_deref().unwrap_or_default();
+    let package = package_name(fixture);
+    let is_name = package.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte));
+    assert!(is_name, "a fixture's name was checked when it was found, so `{package}` is a name");
     Ok(format!(
-        "[package]\nname = \"proof-{directory}\"\n{PACKAGE}\n{library}[lints]\nworkspace = true\n\n\
-         {extra}"
+        "[package]\nname = \"{package}\"\n{PACKAGE}\n{library}[lints]\nworkspace = true\n\n{extra}"
     ))
 }
 
@@ -176,53 +217,6 @@ fn scratch_manifest(manifest: &str) -> Result<String, String> {
     let (before, from_members) = manifest.split_once("members = [").ok_or(unread)?;
     let (_, after) = from_members.split_once(']').ok_or(unread)?;
     Ok(format!("{before}members = [\"crates/*\"]{after}"))
-}
-
-/// Runs `cargo` with `arguments` in the scratch workspace at `scratch`, the way CI runs it, and
-/// returns every diagnostic it reports. That it fails is expected, since most fixtures break a
-/// rule, so its status isn't looked at: the diagnostics say what happened.
-fn reported(scratch: &Path, arguments: &[&str]) -> Result<Vec<Diagnostic>, String> {
-    let mut command = Command::new("cargo");
-    command.args(arguments).args(["--keep-going", "--message-format=json"]);
-    if arguments.first() == Some(&"clippy") {
-        command.args(["--", "-D", "warnings"]);
-    }
-    let output = command
-        .current_dir(scratch)
-        .env("RUSTDOCFLAGS", "-D warnings")
-        // The scratch workspace builds beside its crates, wherever the real one builds.
-        .env("CARGO_TARGET_DIR", scratch.join("target"))
-        .output()
-        .map_err(|error| format!("`cargo` can't be run: {error}."))?;
-    if output.stdout.len() > OUTPUT_BYTES_MAX {
-        return Err(format!("`cargo {}` wrote more than the proof reads.", arguments.join(" ")));
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|error| format!("`cargo {}` wrote bad UTF-8: {error}.", arguments.join(" ")))?;
-    let mut diagnostics = Vec::new();
-    for line in stdout.split_terminator('\n') {
-        diagnostics.extend(diagnostic(line)?);
-    }
-    // A build that reports nothing at all didn't build the fixtures, whatever its status.
-    if diagnostics.is_empty() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("`cargo {}` reported nothing:\n{stderr}", arguments.join(" ")));
-    }
-    Ok(diagnostics)
-}
-
-/// Returns the text of the file at `path`.
-fn read(path: &Path) -> Result<String, String> {
-    fs::read_to_string(path).map_err(|error| format!("{} can't be read: {error}.", path.display()))
-}
-
-/// Writes `text` to the file at `path`, making the directories it needs.
-fn write(path: &Path, text: &str) -> Result<(), String> {
-    let unwritable = |error| format!("{} can't be written: {error}.", path.display());
-    let directory =
-        path.parent().ok_or_else(|| format!("{} is in no directory.", path.display()))?;
-    fs::create_dir_all(directory).map_err(unwritable)?;
-    fs::write(path, text).map_err(unwritable)
 }
 
 #[cfg(test)]

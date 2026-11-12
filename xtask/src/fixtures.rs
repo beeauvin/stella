@@ -19,8 +19,10 @@
 //! one lint is told apart by a word after a dot, as in `disallowed_macros.include_str.rs`.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::files::read_text_if_there;
 use crate::table::{Claim, Level, Tool};
 
 /// This is the most fixtures the proof looks for. It's several times what the lint table can
@@ -39,7 +41,7 @@ pub(crate) struct Fixture {
     /// The fixture's directory, when it's a directory and not one file.
     pub directory: Option<PathBuf>,
     /// The lines to add to the fixture's manifest, when it has any.
-    pub manifest_extra: Option<PathBuf>,
+    pub manifest_extra: Option<String>,
 }
 
 /// A kind is what a fixture is there to show, which is where it is.
@@ -85,7 +87,11 @@ impl Fixture {
             Kind::Allowed => String::from("allowed"),
             Kind::Clean => String::from("clean"),
         };
-        format!("{place}-{}", self.name.replace('.', "-"))
+        let directory = format!("{place}-{}", self.name.replace('.', "-"));
+        let is_name =
+            directory.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte));
+        assert!(is_name, "a fixture is found only by a name that can name a crate");
+        directory
     }
 
     /// Returns what the proof expects of the fixture.
@@ -110,8 +116,13 @@ pub(crate) fn fixtures(directory: &Path) -> Result<Vec<Fixture>, String> {
     for tool in [Tool::Rust, Tool::Rustdoc, Tool::Clippy] {
         add(&mut found, &directory.join("lints").join(tool.name()), &Kind::Lint(tool))?;
     }
-    for group in names_in(&directory.join("groups"))? {
-        add(&mut found, &directory.join("groups").join(&group), &Kind::Group(group))?;
+    let groups = directory.join("groups");
+    for group in entries_in(&groups)? {
+        if !group.is_directory || !is_lint_name(&group.name) {
+            let path = groups.join(group.name);
+            return Err(format!("{} isn't a group's directory.", path.display()));
+        }
+        add(&mut found, &groups.join(&group.name), &Kind::Group(group.name))?;
     }
     add(&mut found, &directory.join("settings"), &Kind::Setting)?;
     add(&mut found, &directory.join("warnings"), &Kind::Warning)?;
@@ -125,51 +136,72 @@ pub(crate) fn fixtures(directory: &Path) -> Result<Vec<Fixture>, String> {
 
 /// Adds every fixture in `directory`, each of `kind`, to `found`, sorted by name.
 fn add(found: &mut Vec<Fixture>, directory: &Path, kind: &Kind) -> Result<(), String> {
-    for entry in names_in(directory)? {
-        let path = directory.join(&entry);
-        let (name, source, directory) = if path.is_dir() {
-            (entry.clone(), path.join("lib.rs"), Some(path.clone()))
+    for entry in entries_in(directory)? {
+        let path = directory.join(&entry.name);
+        let kind = kind.clone();
+        let fixture = if entry.is_directory {
+            // The fixture's manifest lines are read now, with the fixture, so what was found is
+            // what's built.
+            let manifest_extra = read_text_if_there(&path.join("manifest.toml"))?;
+            let source = path.join("lib.rs");
+            Fixture {
+                kind,
+                name: entry.name,
+                source,
+                directory: Some(path.clone()),
+                manifest_extra,
+            }
         } else {
-            let name = entry.strip_suffix(".rs").map(String::from);
+            let name = entry.name.strip_suffix(".rs").map(String::from);
             let name = name.ok_or_else(|| format!("{} isn't a fixture.", path.display()))?;
-            (name, path.clone(), None)
+            Fixture { kind, name, source: path.clone(), directory: None, manifest_extra: None }
         };
-        let manifest_extra = directory.as_ref().map(|directory| directory.join("manifest.toml"));
-        let manifest_extra = manifest_extra.filter(|extra| extra.is_file());
-        if !source.is_file() {
-            return Err(format!("{} holds no `lib.rs`.", path.display()));
-        }
-        let is_name = name.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'.'
-        });
-        if !is_name || name.is_empty() {
+        let is_name = fixture.name.split('.').all(is_lint_name);
+        if !is_name {
             return Err(format!("{} isn't named for a lint.", path.display()));
         }
-        found.push(Fixture { kind: kind.clone(), name, source, directory, manifest_extra });
+        found.push(fixture);
     }
     Ok(())
 }
 
-/// Returns the names of what's in `directory`, sorted. A directory that isn't there holds
-/// nothing.
-fn names_in(directory: &Path) -> Result<Vec<String>, String> {
-    if !directory.is_dir() {
-        return Ok(Vec::new());
-    }
-    let unreadable = |error| format!("{} can't be read: {error}.", directory.display());
-    let mut names = Vec::new();
-    for entry in fs::read_dir(directory).map_err(unreadable)? {
-        let name = entry.map_err(unreadable)?.file_name();
-        let name = name.to_str().map(String::from);
-        names.push(
-            name.ok_or_else(|| format!("{} holds a name that isn't UTF-8.", directory.display()))?,
-        );
-        if names.len() > FIXTURES_MAX {
+/// Says whether `name` could be a lint's: lowercase letters, digits and `_`, and at least one.
+fn is_lint_name(name: &str) -> bool {
+    let is_spelled =
+        name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    is_spelled && !name.is_empty()
+}
+
+/// An entry is one thing in a directory of fixtures.
+struct Entry {
+    /// The entry's name.
+    name: String,
+    /// Whether the entry is a directory, as the listing says, without following a symlink.
+    is_directory: bool,
+}
+
+/// Returns what's in `directory`, sorted by name. A directory that isn't there holds nothing.
+fn entries_in(directory: &Path) -> Result<Vec<Entry>, String> {
+    let unreadable = |error: io::Error| format!("{} can't be read: {error}.", directory.display());
+    let listing = match fs::read_dir(directory) {
+        Ok(listing) => listing,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(unreadable(error)),
+    };
+    let mut entries = Vec::new();
+    for entry in listing {
+        let entry = entry.map_err(unreadable)?;
+        let is_directory = entry.file_type().map_err(unreadable)?.is_dir();
+        let name = entry.file_name().to_str().map(String::from);
+        let name =
+            name.ok_or_else(|| format!("{} holds a name that isn't UTF-8.", directory.display()))?;
+        entries.push(Entry { name, is_directory });
+        if entries.len() > FIXTURES_MAX {
             return Err(format!("{} holds more than {FIXTURES_MAX} entries.", directory.display()));
         }
     }
-    names.sort();
-    Ok(names)
+    entries.sort_by(|one, other| one.name.cmp(&other.name));
+    Ok(entries)
 }
 
 /// Returns every way `fixtures` and `claims` don't cover each other: a claim with no fixture to
