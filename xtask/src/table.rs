@@ -10,17 +10,18 @@
 /// A claim is one line of the lint table: what it names, and what it says of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Claim {
-    /// The tool the lint is from.
-    pub tool: Tool,
+    /// Where the lint is from.
+    pub origin: Origin,
     /// The lint's or the group's name, as the table spells it.
     pub name: String,
     /// What the table says of it.
     pub level: Level,
 }
 
-/// A tool is where a lint comes from, which is also the table it's in.
+/// An origin is where a lint comes from: the compiler, rustdoc or Clippy. Each has a table of
+/// its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Tool {
+pub(crate) enum Origin {
     /// The compiler, in `[workspace.lints.rust]`.
     Rust,
     /// Rustdoc, in `[workspace.lints.rustdoc]`.
@@ -29,8 +30,8 @@ pub(crate) enum Tool {
     Clippy,
 }
 
-impl Tool {
-    /// Returns the tool's name, which is its table's and its fixtures' directory's.
+impl Origin {
+    /// Returns the origin's name, which is its table's and its fixtures' directory's.
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Rust => "rust",
@@ -39,8 +40,10 @@ impl Tool {
         }
     }
 
-    /// Returns the code a diagnostic gives the lint `name` from this tool.
+    /// Returns the code a diagnostic gives the lint `name` from this origin.
     pub(crate) fn code(self, name: &str) -> String {
+        assert!(!name.is_empty(), "a lint has a name");
+        assert!(!name.contains("::"), "a lint's name is given without where it's from");
         match (self, name) {
             // The compiler reports this one lint under the error code of the unsafe operation it
             // found, and names the lint only in a note.
@@ -72,26 +75,33 @@ pub(crate) enum Level {
 pub(crate) fn claims(manifest: &str) -> Result<Vec<Claim>, String> {
     let mut claims = Vec::new();
     // The lint table a line is in, when it's in one.
-    let mut tool: Option<Tool> = None;
+    let mut origin: Option<Origin> = None;
     for line in manifest.split('\n') {
         let line = line.trim();
         if line.starts_with('[') {
-            tool = match line {
-                "[workspace.lints.rust]" => Some(Tool::Rust),
-                "[workspace.lints.rustdoc]" => Some(Tool::Rustdoc),
-                "[workspace.lints.clippy]" => Some(Tool::Clippy),
+            origin = match line {
+                "[workspace.lints.rust]" => Some(Origin::Rust),
+                "[workspace.lints.rustdoc]" => Some(Origin::Rustdoc),
+                "[workspace.lints.clippy]" => Some(Origin::Clippy),
                 _ => None,
             };
             continue;
         }
-        let Some(tool) = tool else {
+        let Some(origin) = origin else {
             continue;
         };
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (name, level) = claim_of(line).ok_or_else(|| format!("can't read `{line}`."))?;
-        claims.push(Claim { tool, name: String::from(name), level });
+        let unread = || format!("can't read `{line}`.");
+        let (name, level) = claim_of(line).ok_or_else(unread)?;
+        // Only Clippy's groups have fixtures of their own. A group of the compiler's would be a
+        // claim nothing here knows how to show.
+        if level == Level::GroupRefused && origin != Origin::Clippy {
+            return Err(unread());
+        }
+        assert!(is_lint_name(name), "a claim is read only with a name that can be a lint's");
+        claims.push(Claim { origin, name: String::from(name), level });
     }
     Ok(claims)
 }
@@ -108,16 +118,19 @@ fn claim_of(line: &str) -> Option<(&str, Level)> {
         "{ level = \"deny\", priority = -1 }" => Level::GroupRefused,
         _ => return None,
     };
-    let is_name = !name.is_empty()
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte == b'_' || byte.is_ascii_digit());
-    is_name.then_some((name, level))
+    is_lint_name(name).then_some((name, level))
+}
+
+/// Says whether `name` could be a lint's: lowercase letters, digits and `_`, and at least one.
+pub(crate) fn is_lint_name(name: &str) -> bool {
+    let is_spelled =
+        name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    is_spelled && !name.is_empty()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Claim, Level, Tool, claims};
+    use super::{Claim, Level, Origin, claims};
 
     #[test]
     fn claims_are_the_lines_of_the_three_tables() {
@@ -131,14 +144,14 @@ mod tests {
                         pedantic = { level = \"deny\", priority = -1 } # TS-STRICT-LINTS\n\
                         option_if_let_else = \"allow\"              # off\n\
                         as_conversions = \"deny\"\n\n[profile.dev]\npanic = \"abort\"\n";
-        let claim = |tool, name: &str, level| Claim { tool, name: String::from(name), level };
+        let claim = |origin, name: &str, level| Claim { origin, name: String::from(name), level };
         let expected = [
-            claim(Tool::Rust, "unsafe_code", Level::Refused),
-            claim(Tool::Rust, "unsafe_op_in_unsafe_fn", Level::Refused),
-            claim(Tool::Rustdoc, "broken_intra_doc_links", Level::Refused),
-            claim(Tool::Clippy, "pedantic", Level::GroupRefused),
-            claim(Tool::Clippy, "option_if_let_else", Level::Allowed),
-            claim(Tool::Clippy, "as_conversions", Level::Refused),
+            claim(Origin::Rust, "unsafe_code", Level::Refused),
+            claim(Origin::Rust, "unsafe_op_in_unsafe_fn", Level::Refused),
+            claim(Origin::Rustdoc, "broken_intra_doc_links", Level::Refused),
+            claim(Origin::Clippy, "pedantic", Level::GroupRefused),
+            claim(Origin::Clippy, "option_if_let_else", Level::Allowed),
+            claim(Origin::Clippy, "as_conversions", Level::Refused),
         ];
         assert_eq!(claims(manifest), Ok(expected.to_vec()));
         assert_eq!(claims("[package]\nname = \"x\"\n"), Ok(Vec::new()));
@@ -148,9 +161,19 @@ mod tests {
     fn a_line_written_another_way_is_an_error() {
         // A level the tool doesn't know, and a line with no value, are each named in the error
         // rather than passed over, so the table can't hold a claim nothing checks.
-        for line in ["as_conversions = \"warn\"", "as_conversions", "As-Conversions = \"deny\""] {
+        for line in [
+            "as_conversions = \"warn\"",
+            "as_conversions",
+            "As-Conversions = \"deny\"",
+            " = \"deny\"",
+        ] {
             let manifest = format!("[workspace.lints.clippy]\n{line}\n");
-            assert_eq!(claims(&manifest), Err(format!("can't read `{line}`.")), "for {line}");
+            let unread = format!("can't read `{}`.", line.trim());
+            assert_eq!(claims(&manifest), Err(unread), "for {line}");
         }
+        // A group is read in Clippy's table alone, since only Clippy's groups have fixtures.
+        let group = "warnings = { level = \"deny\", priority = -1 }";
+        let manifest = format!("[workspace.lints.rust]\n{group}\n");
+        assert_eq!(claims(&manifest), Err(format!("can't read `{group}`.")));
     }
 }

@@ -69,8 +69,33 @@ fn root() -> Result<PathBuf, String> {
     let root = Path::new(&manifest_directory)
         .parent()
         .ok_or("the tool's crate has no directory above it to be the workspace's root.")?;
-    if !root.join("Cargo.lock").is_file() {
+    if !files::is_file(&root.join("Cargo.lock"))? {
         return Err(format!("{} holds no `Cargo.lock`, so it isn't the root.", root.display()));
     }
     Ok(root.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    use super::{USAGE, dispatch};
+
+    #[test]
+    fn anything_but_one_known_command_is_refused_with_the_usage() {
+        // No command, two, and one the tool doesn't have. Each is refused before anything is
+        // run, so the root is never looked at, and each refusal ends with the usage.
+        let root = Path::new("/workspace");
+        let refused = |arguments: &[&str]| {
+            let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
+            dispatch(&arguments, root).expect_err("only `ci` and `lints` are commands")
+        };
+        let one_needed = format!("one command is needed.\n{USAGE}");
+        assert_eq!(refused(&[]), one_needed);
+        assert_eq!(refused(&["ci", "lints"]), one_needed);
+        assert_eq!(refused(&["lint"]), format!("`lint` isn't a command.\n{USAGE}"));
+        assert_eq!(refused(&[""]), format!("`` isn't a command.\n{USAGE}"));
+        assert!(USAGE.contains("ci") && USAGE.contains("lints"), "the usage names each command");
+    }
 }

@@ -24,16 +24,28 @@
 //! apart. And `allowed-duplicate-crates` in `clippy.toml` has no fixture, since it takes two
 //! versions of a dependency to show, and the workspace has no dependencies.
 
-use std::fs;
 use std::io::{self, Write as _};
-use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use crate::cargo::{CLIPPY, REFUSE_WARNINGS, REPORT_ALL_AS_JSON, Run};
+use crate::cargo::{CLIPPY, REFUSE_WARNINGS, REPORT_ALL_AS_JSON, Report, Run};
 use crate::diagnostics::{Diagnostic, diagnostic};
-use crate::files::{read_text, write_text};
+use crate::files::{Link, read_text, remove_directory, write_text};
 use crate::fixtures::{Expected, Fixture, Kind, fixtures, uncovered};
-use crate::table::{Tool, claims};
+use crate::table::{Origin, claims};
+
+/// These are what every fixture's manifest takes from the scratch workspace, as the crates of
+/// the real one do.
+const INHERITED_KEYS: &str = "version.workspace = true\nedition.workspace = true\n\
+                              rust-version.workspace = true\nlicense.workspace = true\n\
+                              repository.workspace = true\npublish.workspace = true\n";
+
+/// These are the setups, in the order the proof builds them.
+const SETUPS: [Setup; 4] = [
+    Setup::AsConfigured,
+    Setup::AsConfiguredForCargo,
+    Setup::WithoutAllows,
+    Setup::WithClippyDefaults,
+];
 
 /// A setup is one way the proof builds fixtures. Each has a scratch workspace of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,10 +89,11 @@ impl Setup {
     /// Returns what the proof expects of `fixture` in this setup, and the words a failure puts
     /// before the fixture to say which setup it failed in.
     fn expects(self, fixture: &Fixture) -> (Expected, &'static str) {
+        assert!(self.builds(fixture), "a setup is asked only about a fixture it builds");
         match self {
             Self::AsConfigured | Self::AsConfiguredForCargo => (fixture.expected(), ""),
             Self::WithoutAllows => (
-                Expected::Reported(Tool::Clippy.code(fixture.lint())),
+                Expected::Reported(Origin::Clippy.code(fixture.lint())),
                 "without its `allow` line, ",
             ),
             Self::WithClippyDefaults => (Expected::Silent, "under Clippy's own settings, "),
@@ -88,48 +101,32 @@ impl Setup {
     }
 }
 
-/// These are what every fixture's manifest takes from the scratch workspace, as the crates of
-/// the real one do.
-const PACKAGE: &str = "version.workspace = true\nedition.workspace = true\n\
-                       rust-version.workspace = true\nlicense.workspace = true\n\
-                       repository.workspace = true\npublish.workspace = true\n";
-
 /// Proves that the lints of the workspace at `root` bite.
 pub(crate) fn prove(root: &Path) -> Result<(), String> {
-    let claims = claims(&read_text(&root.join("Cargo.toml"))?)?;
+    // The configuration is read once, so the table the claims are read from is the very text
+    // every scratch workspace is made with.
+    let manifest = read_text(&root.join("Cargo.toml"))?;
+    let settings = read_text(&root.join("clippy.toml"))?;
+    let configuration = Configuration { manifest: &manifest, settings: &settings };
+    let claims = claims(&manifest)?;
     let fixtures = fixtures(&root.join("xtask/fixtures"))?;
     let problems = uncovered(&claims, &fixtures);
     if !problems.is_empty() {
         return Err(problems.join("\n"));
     }
-    let clippy = [&CLIPPY[..], &REPORT_ALL_AS_JSON, &REFUSE_WARNINGS].concat();
+    for fixture in &fixtures {
+        let is_built = SETUPS.iter().any(|setup| setup.builds(fixture));
+        assert!(is_built, "every kind of fixture is built in some setup");
+    }
     let mut failures = Vec::new();
-    for setup in [
-        Setup::AsConfigured,
-        Setup::AsConfiguredForCargo,
-        Setup::WithoutAllows,
-        Setup::WithClippyDefaults,
-    ] {
+    for setup in SETUPS {
         let members: Vec<Fixture> =
             fixtures.iter().filter(|fixture| setup.builds(fixture)).cloned().collect();
         if members.is_empty() {
             continue;
         }
-        let scratch = Scratch { root, setup };
-        scratch.write(&members)?;
-        let mut diagnostics = scratch.diagnostics(&clippy)?;
-        // Rustdoc's lints are only reported when the documentation is built, so those fixtures
-        // are built again that way, all in one run.
-        let is_rustdoc = |fixture: &&Fixture| fixture.kind == Kind::Lint(Tool::Rustdoc);
-        let packages: Vec<String> = members.iter().filter(is_rustdoc).map(package_name).collect();
-        if !packages.is_empty() {
-            let mut doc = [&["doc", "--no-deps"][..], &REPORT_ALL_AS_JSON].concat();
-            for package in &packages {
-                doc.extend(["--package", package.as_str()]);
-            }
-            diagnostics.extend(scratch.diagnostics(&doc)?);
-        }
-        failures.extend(failures_in(Trial { setup, fixtures: &members }, &diagnostics));
+        let scratch = Scratch { root, setup, configuration };
+        failures.extend(scratch.failures(&members)?);
     }
     if !failures.is_empty() {
         return Err(failures.join("\n"));
@@ -162,14 +159,14 @@ fn failures_in(trial: Trial<'_>, diagnostics: &[Diagnostic]) -> Vec<String> {
         let mut codes: Vec<&str> = own.iter().filter_map(|own| own.code.as_deref()).collect();
         codes.sort_unstable();
         codes.dedup();
-        let (expected, setup) = trial.setup.expects(fixture);
+        let (expected, in_setup) = trial.setup.expects(fixture);
         match expected {
             Expected::Reported(code) if codes.contains(&code.as_str()) => {}
             Expected::Reported(code) => {
                 let found =
                     if codes.is_empty() { String::from("nothing") } else { codes.join(", ") };
                 failures.push(format!(
-                    "{setup}`{directory}` should be reported as `{code}`, not {found}."
+                    "{in_setup}`{directory}` should be reported as `{code}`, not {found}."
                 ));
             }
             Expected::Silent if own.is_empty() => {}
@@ -177,7 +174,7 @@ fn failures_in(trial: Trial<'_>, diagnostics: &[Diagnostic]) -> Vec<String> {
                 let found =
                     if codes.is_empty() { String::from("an error") } else { codes.join(", ") };
                 failures.push(format!(
-                    "{setup}`{directory}` should pass, and was reported as {found}."
+                    "{in_setup}`{directory}` should pass, and was reported as {found}."
                 ));
             }
         }
@@ -186,16 +183,47 @@ fn failures_in(trial: Trial<'_>, diagnostics: &[Diagnostic]) -> Vec<String> {
     failures
 }
 
+/// A configuration is what the real workspace holds its code to.
+#[derive(Clone, Copy)]
+struct Configuration<'proof> {
+    /// The text of the root manifest, which holds the lint table.
+    manifest: &'proof str,
+    /// The text of `clippy.toml`.
+    settings: &'proof str,
+}
+
 /// A scratch workspace is where the proof builds the fixtures of one setup.
 #[derive(Clone, Copy)]
 struct Scratch<'proof> {
-    /// The real workspace's root, which the lint table and `clippy.toml` are read from.
+    /// The real workspace's root, which the scratch workspace is under.
     root: &'proof Path,
     /// The setup the workspace is for, which says where it is and what it's made with.
     setup: Setup,
+    /// What the real workspace is configured with, which the setup starts from.
+    configuration: Configuration<'proof>,
 }
 
 impl Scratch<'_> {
+    /// Builds `fixtures` in the scratch workspace, and returns every one that didn't do what
+    /// the setup expects of it, as a sentence each.
+    fn failures(self, fixtures: &[Fixture]) -> Result<Vec<String>, String> {
+        self.write(fixtures)?;
+        let clippy = [&CLIPPY[..], &REPORT_ALL_AS_JSON, &REFUSE_WARNINGS].concat();
+        let mut diagnostics = self.diagnostics(&clippy)?;
+        // Rustdoc's lints are only reported when the documentation is built, so those fixtures
+        // are built again that way, all in one run.
+        let is_rustdoc = |fixture: &&Fixture| fixture.kind == Kind::Lint(Origin::Rustdoc);
+        let packages: Vec<String> = fixtures.iter().filter(is_rustdoc).map(package_name).collect();
+        if !packages.is_empty() {
+            let mut doc = [&["doc", "--no-deps"][..], &REPORT_ALL_AS_JSON].concat();
+            for package in &packages {
+                doc.extend(["--package", package.as_str()]);
+            }
+            diagnostics.extend(self.diagnostics(&doc)?);
+        }
+        Ok(failures_in(Trial { setup: self.setup, fixtures }, &diagnostics))
+    }
+
     /// Makes the scratch workspace, anew: the root's manifest with the fixtures' crates as its
     /// members, its `clippy.toml`, each as the setup has them, and a crate for each of
     /// `fixtures`.
@@ -205,12 +233,8 @@ impl Scratch<'_> {
         let crates = directory.join("crates");
         // The crates are made anew, so a fixture that's gone leaves no crate behind. What was
         // built is kept, since it's beside them.
-        match fs::remove_dir_all(&crates) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("{} can't be removed: {error}.", crates.display())),
-        }
-        let manifest = scratch_manifest(&read_text(&self.root.join("Cargo.toml"))?)?;
+        remove_directory(&crates)?;
+        let manifest = scratch_manifest(self.configuration.manifest)?;
         let manifest = match self.setup {
             Setup::WithoutAllows => without_allows(&manifest),
             Setup::AsConfigured | Setup::AsConfiguredForCargo | Setup::WithClippyDefaults => {
@@ -220,13 +244,13 @@ impl Scratch<'_> {
         write_text(&directory.join("Cargo.toml"), &manifest)?;
         // Clippy takes its settings from the nearest `clippy.toml`, so an empty one here is its
         // own settings, though the real one is in a directory above.
-        let clippy = match self.setup {
-            Setup::WithClippyDefaults => String::new(),
+        let settings = match self.setup {
+            Setup::WithClippyDefaults => "",
             Setup::AsConfigured | Setup::AsConfiguredForCargo | Setup::WithoutAllows => {
-                read_text(&self.root.join("clippy.toml"))?
+                self.configuration.settings
             }
         };
-        write_text(&directory.join("clippy.toml"), &clippy)?;
+        write_text(&directory.join("clippy.toml"), settings)?;
         for fixture in fixtures {
             let crate_directory = crates.join(fixture.crate_directory());
             write_text(&crate_directory.join("Cargo.toml"), &crate_manifest(fixture)?)?;
@@ -234,33 +258,41 @@ impl Scratch<'_> {
             // inside the workspace. Clippy's lints about where a module's files are only look
             // there.
             if let Some(files) = &fixture.directory {
-                symlink(files, crate_directory.join("src"))
-                    .map_err(|error| format!("{} can't be linked to: {error}.", files.display()))?;
+                Link { at: &crate_directory.join("src"), to: files }.make()?;
             }
         }
         Ok(())
     }
 
     /// Runs Cargo with `arguments` in the scratch workspace and returns every diagnostic it
-    /// reports. Cargo's status isn't looked at, since most setups build fixtures that break a
-    /// rule: the diagnostics say what happened.
+    /// reports.
     fn diagnostics(self, arguments: &[&str]) -> Result<Vec<Diagnostic>, String> {
         let directory = self.root.join(self.setup.directory());
         let run = Run { directory: &directory, arguments };
         let log = directory.join("cargo-stderr.log");
-        let messages = run.messages(&log)?;
-        let mut diagnostics = Vec::new();
-        for line in messages.split_terminator('\n') {
-            diagnostics.extend(diagnostic(line)?);
-        }
-        // Fixtures that should pass report nothing when all is well. Any other build that
-        // reports nothing didn't build its fixtures, whatever its status.
-        if diagnostics.is_empty() && self.setup != Setup::WithClippyDefaults {
-            let shown = run.shown();
-            return Err(format!("`{shown}` reported nothing. See {}.", log.display()));
-        }
-        Ok(diagnostics)
+        let report = run.report(&log)?;
+        diagnostics_in(&report)
+            .map_err(|reason| format!("`{}`: {reason} See {}.", run.shown(), log.display()))
     }
+}
+
+/// Returns every diagnostic in `report`, which is what came of building some fixtures.
+///
+/// # Errors
+///
+/// Returns why when a diagnostic can't be read, or when Cargo failed without one. A build that
+/// fails because a fixture broke a rule says so in a diagnostic, so a failure with none is some
+/// other failure, such as a manifest Cargo can't read, and nothing was shown about any fixture.
+/// That holds in every setup, the ones whose fixtures should pass among them.
+fn diagnostics_in(report: &Report) -> Result<Vec<Diagnostic>, String> {
+    let mut diagnostics = Vec::new();
+    for line in report.messages.split_terminator('\n') {
+        diagnostics.extend(diagnostic(line)?);
+    }
+    if !report.succeeded && diagnostics.is_empty() {
+        return Err(String::from("Cargo failed without reporting a diagnostic."));
+    }
+    Ok(diagnostics)
 }
 
 /// Returns `manifest` without the lines of its lint table that leave a lint off.
@@ -296,7 +328,8 @@ fn crate_manifest(fixture: &Fixture) -> Result<String, String> {
     let is_name = package.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte));
     assert!(is_name, "a fixture's name was checked when it was found, so `{package}` is a name");
     Ok(format!(
-        "[package]\nname = \"{package}\"\n{PACKAGE}\n{library}[lints]\nworkspace = true\n\n{extra}"
+        "[package]\nname = \"{package}\"\n{INHERITED_KEYS}\n{library}[lints]\nworkspace = true\n\n\
+         {extra}"
     ))
 }
 
@@ -314,10 +347,14 @@ fn scratch_manifest(manifest: &str) -> Result<String, String> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Setup, Trial, crate_manifest, failures_in, scratch_manifest, without_allows};
+    use super::{
+        SETUPS, Setup, Trial, crate_manifest, diagnostics_in, failures_in, scratch_manifest,
+        without_allows,
+    };
+    use crate::cargo::Report;
     use crate::diagnostics::Diagnostic;
     use crate::fixtures::{Fixture, Kind};
-    use crate::table::Tool;
+    use crate::table::Origin;
 
     /// Returns a fixture of `kind` named `name`, of one file.
     fn fixture(kind: Kind, name: &str) -> Fixture {
@@ -339,7 +376,7 @@ mod tests {
     fn a_fixture_fails_unless_it_did_what_its_there_for() {
         // One fixture that must be reported as a lint, and one that must pass. Each is tried
         // with what it should have been reported as, and with every way that can go wrong.
-        let lint = [fixture(Kind::Lint(Tool::Clippy), "panic")];
+        let lint = [fixture(Kind::Lint(Origin::Clippy), "panic")];
         let clean = [fixture(Kind::Clean, "library")];
         let own = reported("lints-clippy-panic", Some("clippy::panic"));
         let other = reported("lints-clippy-panic", Some("clippy::todo"));
@@ -387,7 +424,7 @@ mod tests {
     fn a_fixtures_crate_inherits_the_workspace_as_a_real_crate_does() {
         // A fixture of one file is its crate's library where it is. One of several files is
         // linked in as `src`, so its manifest names no library. Both inherit the lints.
-        let one_file = fixture(Kind::Lint(Tool::Clippy), "panic");
+        let one_file = fixture(Kind::Lint(Origin::Clippy), "panic");
         let manifest = crate_manifest(&one_file).expect("the path has nothing to escape");
         assert!(manifest.starts_with("[package]\nname = \"proof-lints-clippy-panic\"\n"));
         assert!(manifest.contains("\n[lib]\npath = \"/workspace/xtask/fixtures/panic.rs\"\n"));
@@ -408,7 +445,7 @@ mod tests {
         // One fixture of each kind. As configured, all but the `cargo` group's are built, which
         // is built apart. The two second ways each build one kind, and expect the opposite of
         // what that kind does as configured.
-        let lint = fixture(Kind::Lint(Tool::Clippy), "panic");
+        let lint = fixture(Kind::Lint(Origin::Clippy), "panic");
         let cargo = fixture(Kind::Group(String::from("cargo")), "negative_feature_names");
         let allowed = fixture(Kind::Allowed, "option_if_let_else");
         let setting = fixture(Kind::Setting, "too_many_lines");
@@ -444,6 +481,53 @@ mod tests {
             ["under Clippy's own settings, `settings-too_many_lines` should pass, and was \
                  reported as clippy::too_many_lines."]
         );
+    }
+
+    #[test]
+    fn a_build_that_fails_without_a_diagnostic_is_an_error() {
+        // What Cargo says of a build with nothing to report, written here since it's only the
+        // lines that aren't diagnostics. With success, that's a build that passed. With failure,
+        // nothing was shown about any fixture, so it's an error and not a pass.
+        let messages = String::from("{\"reason\":\"build-finished\",\"success\":true}\n");
+        let passed = Report { messages: messages.clone(), succeeded: true };
+        assert_eq!(diagnostics_in(&passed), Ok(Vec::new()));
+        let failed = Report { messages, succeeded: false };
+        assert_eq!(
+            diagnostics_in(&failed),
+            Err(String::from("Cargo failed without reporting a diagnostic."))
+        );
+        let silent = Report { messages: String::new(), succeeded: false };
+        assert!(diagnostics_in(&silent).is_err());
+        // A diagnostic that can't be read is an error whatever the status.
+        let unread = String::from("{\"reason\":\"compiler-message\",\"message\":{}}\n");
+        assert!(diagnostics_in(&Report { messages: unread, succeeded: false }).is_err());
+    }
+
+    #[test]
+    fn every_kind_of_fixture_is_built_in_some_setup() {
+        // One fixture of each kind there is. Each is built as configured, in exactly one of the
+        // two workspaces that are, and the two second ways build only what they're for.
+        for kind in [
+            Kind::Lint(Origin::Rust),
+            Kind::Lint(Origin::Rustdoc),
+            Kind::Lint(Origin::Clippy),
+            Kind::Group(String::from("pedantic")),
+            Kind::Group(String::from("cargo")),
+            Kind::Setting,
+            Kind::Warning,
+            Kind::Allowed,
+            Kind::Clean,
+        ] {
+            let fixture = fixture(kind, "name");
+            let as_configured = [Setup::AsConfigured, Setup::AsConfiguredForCargo]
+                .iter()
+                .filter(|setup| setup.builds(&fixture))
+                .count();
+            assert_eq!(as_configured, 1, "for {:?}", fixture.kind);
+            let built = SETUPS.iter().filter(|setup| setup.builds(&fixture)).count();
+            let second = matches!(fixture.kind, Kind::Allowed | Kind::Setting);
+            assert_eq!(built, if second { 2 } else { 1 }, "for {:?}", fixture.kind);
+        }
     }
 
     #[test]

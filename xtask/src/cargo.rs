@@ -7,10 +7,11 @@
 //! This is the one module that starts Cargo, so there's one place that says how CI runs it, and
 //! one sentence for when it can't be started.
 
-use std::fs::File;
 use std::io::Read as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
+
+use crate::files::create;
 
 /// These have Clippy look at every target of every crate in a workspace.
 pub(crate) const CLIPPY: [&str; 3] = ["clippy", "--workspace", "--all-targets"];
@@ -24,6 +25,15 @@ pub(crate) const REPORT_ALL_AS_JSON: [&str; 2] = ["--keep-going", "--message-for
 /// This is the most Cargo may write to its stdout when its messages are read. It's many times
 /// what a hundred small crates make it say, and it bounds what a tool holds in memory.
 const MESSAGES_BYTES_MAX: u64 = 64 * 1024 * 1024;
+
+/// A report is what came of a run of Cargo whose messages were read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Report {
+    /// What Cargo wrote to its stdout.
+    pub messages: String,
+    /// Whether Cargo said it succeeded.
+    pub succeeded: bool,
+}
 
 /// A run is one way of running Cargo: where, and what it's asked.
 #[derive(Clone, Copy)]
@@ -46,16 +56,16 @@ impl Run<'_> {
     }
 
     /// Runs Cargo in a scratch workspace, which builds beside its own crates, and returns what
-    /// it wrote to stdout. What it wrote to stderr goes to the file at `log`. Cargo's status
-    /// isn't looked at, since a run whose messages are read is expected to find problems.
+    /// it wrote to stdout and whether it succeeded. What it wrote to stderr goes to the file at
+    /// `log`. A run that fails isn't an error here, since a run whose messages are read is often
+    /// one that's meant to find problems: the caller says what a failure means.
     ///
     /// # Errors
     ///
     /// Returns why when Cargo can't be started, the log can't be made, or what Cargo wrote
     /// isn't UTF-8 or is more than `MESSAGES_BYTES_MAX`.
-    pub(crate) fn messages(self, log: &Path) -> Result<String, String> {
-        let stderr = File::create(log)
-            .map_err(|error| format!("{} can't be written: {error}.", log.display()))?;
+    pub(crate) fn report(self, log: &Path) -> Result<Report, String> {
+        let stderr = create(log)?;
         let mut child = self
             .command()
             .env("CARGO_TARGET_DIR", self.directory.join("target"))
@@ -76,11 +86,12 @@ impl Run<'_> {
         }
         let waited = child.wait();
         read.map_err(|error| format!("`{}` wrote something unreadable: {error}.", self.shown()))?;
-        waited.map_err(|error| format!("`{}` couldn't be waited for: {error}.", self.shown()))?;
+        let status = waited
+            .map_err(|error| format!("`{}` couldn't be waited for: {error}.", self.shown()))?;
         if !is_bounded {
             return Err(format!("`{}` wrote more than a tool reads.", self.shown()));
         }
-        Ok(messages)
+        Ok(Report { messages, succeeded: status.success() })
     }
 
     /// Returns the run as a person would type it.
