@@ -22,8 +22,9 @@ use std::ptr;
 use stella_blocks::{Block, Blocks, Children, LINES_MAX, Line, LineBuffer, nest};
 use stella_lexer::TokenKind::*;
 use stella_lexer::{TokenBuffer, lex};
-use stella_linter_text::{LEVEL_SPACES, Position, SOURCE_BYTES_MAX, lint};
+use stella_linter_text::{LEVEL_SPACES, lint};
 use stella_linter_tokens::lint_tokens;
+use stella_source::{Position, SOURCE_BYTES_MAX};
 
 /// One line of an outline: the line's number in the source, how many tokens it holds, the number
 /// of the line whose block it's in, or 0 for none, and the number of the line whose `}` closes
@@ -342,7 +343,7 @@ fn heads() {
         let every = [Name, TypeName, Function, Returns, ParenOpen, Name, ParenClose, ParenOpen];
         assert_eq!(kinds, [&every[..], &[ParenClose, BraceOpen]].concat());
         let close = blocks.tokens().as_slice()[line.block.expect("a block").close as usize];
-        assert_eq!((close.kind, close.position), (BraceClose, Position { line: 2, column: 1 }));
+        assert_eq!((close.kind, close.position), (BraceClose, Position::new(2, 1)));
     });
 }
 

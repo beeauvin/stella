@@ -11,13 +11,14 @@
 //! is one table of whole messages.
 
 use stella_linter_text::Kind::*;
-use stella_linter_text::{Kind, Place, Position, Problem};
+use stella_linter_text::{Kind, Place, Problem};
+use stella_source::Position;
 
 use stella_cli::{message, shown};
 
 /// Returns a problem at `line` and `column`.
 fn at(kind: Kind, line: u32, column: u32) -> Problem {
-    Problem { kind, place: Place::At(Position { line, column }) }
+    Problem { kind, place: Place::At(Position::new(line, column)) }
 }
 
 /// Returns a problem with the file as a whole.

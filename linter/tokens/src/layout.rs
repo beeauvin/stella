@@ -32,7 +32,8 @@ use std::cmp::Ordering;
 
 use stella_lexer::TokenKind::{BraceClose, BraceOpen, Comment, ParenClose, ParenOpen};
 use stella_lexer::{TOKENS_MAX, Token, Tokens};
-use stella_linter_text::{LEVEL_SPACES, Position, SOURCE_BYTES_MAX};
+use stella_linter_text::LEVEL_SPACES;
+use stella_source::{Position, SOURCE_BYTES_MAX};
 
 use crate::problem::{Kind, Problem};
 
@@ -90,8 +91,8 @@ fn lint_lines(tokens: &[Token]) -> Result<(), Problem> {
             _ => {
                 // The line ends with a token that isn't a brace. It's code, so it's ASCII, and
                 // the column just past it is its column and its length.
-                let column = token.position.column + token.length;
-                let position = Position { line: token.position.line, column };
+                let column = token.position.column() + token.length;
+                let position = Position::new(token.position.line(), column);
                 return Err(at(Kind::LineEndsWithoutBrace, position));
             }
         };
@@ -176,13 +177,13 @@ fn indentation_problem(token: &Token, depth: u32) -> Option<Problem> {
         depth
     };
     let wanted = level * LEVEL_SPACES + 1;
-    if token.position.column == wanted {
+    if token.position.column() == wanted {
         return None;
     }
     // Too deep, the first space past the right indentation is at fault. Too shallow, the token
     // is. Indentation is spaces, so either way the column is the lesser.
-    let column = token.position.column.min(wanted);
-    let position = Position { line: token.position.line, column };
+    let column = token.position.column().min(wanted);
+    let position = Position::new(token.position.line(), column);
     Some(at(Kind::IndentationNotDepth(level), position))
 }
 
@@ -201,21 +202,21 @@ fn gap_problem(previous: &Token, token: &Token) -> Option<Problem> {
     let end = previous.start + previous.length;
     assert!(token.start >= end, "tokens don't overlap");
     let gap = token.start - end;
-    assert_eq!(token.position.column - previous.position.column, token.start - previous.start);
+    assert_eq!(token.position.column() - previous.position.column(), token.start - previous.start);
     let wanted = spaces_wanted(previous, token);
-    let line = token.position.line;
-    let first_space = previous.position.column + previous.length;
+    let line = token.position.line();
+    let first_space = previous.position.column() + previous.length;
     let (first, second) = (previous.kind, token.kind);
     match gap.cmp(&wanted) {
         Ordering::Equal => None,
         // The second token is where the space should be.
         Ordering::Less => Some(at(Kind::SpaceMissing(first, second), token.position)),
         Ordering::Greater if wanted == 0 => {
-            let position = Position { line, column: first_space };
+            let position = Position::new(line, first_space);
             Some(at(Kind::SpaceUnwanted(first, second), position))
         }
         Ordering::Greater => {
-            let position = Position { line, column: first_space + 1 };
+            let position = Position::new(line, first_space + 1);
             Some(at(Kind::SpacesExtra(first, second), position))
         }
     }
@@ -239,16 +240,16 @@ fn spaces_wanted(previous: &Token, token: &Token) -> u32 {
 
 /// Says whether `first` and `second`, which come one right after the other, are on the same line.
 fn same_line(first: &Token, second: &Token) -> bool {
-    assert!(first.position.line <= second.position.line, "tokens come in order");
-    first.position.line == second.position.line
+    assert!(first.position.line() <= second.position.line(), "tokens come in order");
+    first.position.line() == second.position.line()
 }
 
 /// Returns the problem `kind` at `position`, which is in a source: a character on one of its
 /// lines, or just past the end of one.
 fn at(kind: Kind, position: Position) -> Problem {
-    assert!(position.line >= 1);
-    assert!(position.line <= SOURCE_BYTES_MAX);
-    assert!(position.column >= 1);
-    assert!(position.column <= SOURCE_BYTES_MAX);
+    assert!(position.line() >= 1);
+    assert!(position.line() <= SOURCE_BYTES_MAX);
+    assert!(position.column() >= 1);
+    assert!(position.column() <= SOURCE_BYTES_MAX);
     Problem { kind, position }
 }

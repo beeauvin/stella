@@ -16,5 +16,5 @@ mod problem;
 mod text;
 
 pub use path::{SourcePath, lint_path};
-pub use problem::{Kind, Place, Position, Problem};
-pub use text::{LEVEL_SPACES, SOURCE_BYTES_MAX, Text, lint};
+pub use problem::{Kind, Place, Problem};
+pub use text::{LEVEL_SPACES, Text, lint};

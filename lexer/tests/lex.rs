@@ -20,7 +20,8 @@ use std::cell::RefCell;
 use stella_lexer::Kind::{NameNotSnakeCase, TypeNameNotPascalCase, Unexpected};
 use stella_lexer::TokenKind::*;
 use stella_lexer::{Kind, Problem, TOKENS_MAX, TokenBuffer, TokenKind, Tokens, lex};
-use stella_linter_text::{Position, SOURCE_BYTES_MAX, lint};
+use stella_linter_text::lint;
+use stella_source::{Position, SOURCE_BYTES_MAX};
 
 /// An expected token: its kind, its line and column, and its text.
 type Expected<'source> = (TokenKind, u32, u32, &'source str);
@@ -60,7 +61,7 @@ fn expected_of<'source>(
             let start = token.start as usize;
             assert_eq!(text.as_ptr(), source[start..].as_ptr(), "{text:?} starts at its start");
             assert_eq!(text.len(), token.length as usize, "{text:?} is its length");
-            (token.kind, token.position.line, token.position.column, text)
+            (token.kind, token.position.line(), token.position.column(), text)
         })
         .collect();
     assert_in_place(source, &found);
@@ -122,7 +123,7 @@ fn refuses(source: &str, kind: Kind, line: u32, column: u32) {
     let lexed =
         BUFFER.with_borrow_mut(|buffer| lex(text, buffer).map(|tokens| tokens.as_slice().len()));
     let found = lexed.expect_err("source should be refused");
-    assert_eq!(found, Problem { kind, position: Position { line, column } }, "for {source:?}");
+    assert_eq!(found, Problem { kind, position: Position::new(line, column) }, "for {source:?}");
 }
 
 /// Returns the tokens of the smallest program's first line, `function main() returns Void {`,
@@ -576,7 +577,7 @@ fn one_buffer_for_every_source() {
     let refused = "function main() returns Void { ;\n}\n";
     let mut smallest_tokens = first_line(1).to_vec();
     smallest_tokens.push((BraceClose, 2, 1, "}"));
-    let refusal = Problem { kind: Unexpected(';'), position: Position { line: 1, column: 32 } };
+    let refusal = Problem { kind: Unexpected(';'), position: Position::new(1, 32) };
     let mut room = None;
     for source in [smallest, &largest, refused, smallest, &largest, refused, &largest, smallest] {
         let text = lint(source.as_bytes()).expect("source should pass the text lint");

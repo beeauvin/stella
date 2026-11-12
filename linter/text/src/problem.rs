@@ -6,7 +6,9 @@
 
 use std::fmt;
 
-use crate::text::{LEVEL_SPACES, SOURCE_BYTES_MAX};
+use stella_source::{Position, SOURCE_BYTES_MAX};
+
+use crate::text::LEVEL_SPACES;
 
 // `FileTooBig`'s sentence names the limit, so a new limit needs a new sentence.
 const _: () = assert!(SOURCE_BYTES_MAX == 16_384);
@@ -40,7 +42,7 @@ impl Problem {
         // the end of a line that long.
         assert!(line <= SOURCE_BYTES_MAX);
         assert!(column <= SOURCE_BYTES_MAX + 1);
-        Problem { kind, place: Place::At(Position { line, column }) }
+        Problem { kind, place: Place::At(Position::new(line, column)) }
     }
 }
 
@@ -51,16 +53,6 @@ pub enum Place {
     File,
     /// The problem is at one position: a character, or just past the end of the last line.
     At(Position),
-}
-
-/// A position is a line and a column, both counted from 1. A column counts code points, not
-/// bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Position {
-    /// The line is counted from 1.
-    pub line: u32,
-    /// The column is counted in code points from 1.
-    pub column: u32,
 }
 
 /// A kind is one of the problems the text lint can find, or, for `PathSymlink`, that the command

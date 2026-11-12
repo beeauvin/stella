@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use stella_cli::WALK_ENTRIES_MAX;
-use stella_linter_text::SOURCE_BYTES_MAX;
+use stella_source::SOURCE_BYTES_MAX;
 
 /// This is the smallest program, which passes.
 const GOOD: &[u8] = b"function main() returns Void {\n}\n";

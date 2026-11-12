@@ -18,14 +18,9 @@
 //!    and code never holds `//`.
 //! 5. ASCII: every character on a line of code is ASCII.
 
+use stella_source::SOURCE_BYTES_MAX;
+
 use crate::problem::{Kind, Problem};
-
-/// This is the largest source file, in bytes. Anything larger is refused before its characters
-/// are read.
-pub const SOURCE_BYTES_MAX: u32 = 16_384;
-
-// Positions are `u32`, and a column can be one past the longest line.
-const _: () = assert!(SOURCE_BYTES_MAX < u32::MAX);
 
 /// A level of indentation is four spaces, for now. The tokens lint indents one level for each `{`
 /// still open on a line, so this is its level too.

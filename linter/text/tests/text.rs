@@ -11,7 +11,8 @@
 //! comes first in the file.
 
 use stella_linter_text::Kind::*;
-use stella_linter_text::{Kind, Place, Position, Problem, SOURCE_BYTES_MAX, lint};
+use stella_linter_text::{Kind, Place, Problem, lint};
+use stella_source::{Position, SOURCE_BYTES_MAX};
 
 /// Lints `source`, which must pass, and checks the `Text` holds it unchanged.
 fn accepts(source: &str) {
@@ -27,7 +28,7 @@ fn refuses(bytes: &[u8], problem: Problem) {
 
 /// Returns a problem at `line` and `column`.
 fn at(kind: Kind, line: u32, column: u32) -> Problem {
-    Problem { kind, place: Place::At(Position { line, column }) }
+    Problem { kind, place: Place::At(Position::new(line, column)) }
 }
 
 /// Returns a problem with the file as a whole.

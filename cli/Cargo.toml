@@ -19,3 +19,4 @@ path = "src/main.rs"
 stella-lexer = { path = "../lexer" }
 stella-linter-text = { path = "../linter/text" }
 stella-linter-tokens = { path = "../linter/tokens" }
+stella-source = { path = "../source" }

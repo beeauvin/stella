@@ -20,13 +20,14 @@ use std::panic::Location;
 
 use stella_lexer::TokenKind::{self, *};
 use stella_lexer::{TokenBuffer, lex};
-use stella_linter_text::{LEVEL_SPACES, Position, SOURCE_BYTES_MAX, lint};
+use stella_linter_text::{LEVEL_SPACES, lint};
 use stella_linter_tokens::Kind::{
     BraceCloseNotAlone, BraceClosesNothing, BraceNeverClosed, BraceOpenNotLast,
     BraceOpenStartsLine, IndentationNotDepth, LineEndsWithoutBrace, SpaceMissing, SpaceUnwanted,
     SpacesExtra,
 };
 use stella_linter_tokens::{Kind, Problem, lint_tokens};
+use stella_source::SOURCE_BYTES_MAX;
 
 /// An expected refusal: the problem's kind, and its line and column.
 type Refusal = (Kind, u32, u32);
@@ -53,7 +54,7 @@ fn checked(source: &str) -> Result<(), Refusal> {
                 assert!(std::ptr::eq(given, back), "the layout holds the tokens it was given");
                 Ok(())
             }
-            Err(Problem { kind, position: Position { line, column } }) => Err((kind, line, column)),
+            Err(Problem { kind, position }) => Err((kind, position.line(), position.column())),
         }
     })
 }

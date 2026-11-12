@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use stella_linter_text::Position;
+use stella_source::Position;
 
 /// A problem is one thing the lexer refused, and where it is. The lexer only reads characters, so
 /// a problem is always at a position, never with the file as a whole.

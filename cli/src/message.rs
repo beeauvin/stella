@@ -25,14 +25,14 @@ pub fn message(path: &[u8], source: &[u8], place: Place, sentence: impl fmt::Dis
     let text = match place {
         Place::File => format!("{path}: {sentence}\n"),
         Place::At(position) => {
-            assert!(position.line >= 1);
+            assert!(position.line() >= 1);
             let source_line = source
                 .split(|&byte| byte == b'\n')
-                .nth(position.line as usize - 1)
+                .nth(position.line() as usize - 1)
                 .expect("the problem's line is in the source");
-            let (echo, caret_width) = echo(source_line, position.column);
+            let (echo, caret_width) = echo(source_line, position.column());
             let caret = " ".repeat(caret_width);
-            let (line, column) = (position.line, position.column);
+            let (line, column) = (position.line(), position.column());
             format!("{path}:{line}:{column}: {sentence}\n    {echo}\n    {caret}^\n")
         }
     };

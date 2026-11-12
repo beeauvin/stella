@@ -9,6 +9,7 @@ dependencies = [
  "stella-lexer",
  "stella-linter-text",
  "stella-linter-tokens",
+ "stella-source",
 ]
 
 [[package]]
@@ -22,6 +23,7 @@ dependencies = [
  "stella-lexer",
  "stella-linter-text",
  "stella-linter-tokens",
+ "stella-source",
 ]
 
 [[package]]
@@ -29,11 +31,15 @@ name = "stella-lexer"
 version = "0.0.0"
 dependencies = [
  "stella-linter-text",
+ "stella-source",
 ]
 
 [[package]]
 name = "stella-linter-text"
 version = "0.0.0"
+dependencies = [
+ "stella-source",
+]
 
 [[package]]
 name = "stella-linter-tokens"
@@ -41,4 +47,9 @@ version = "0.0.0"
 dependencies = [
  "stella-lexer",
  "stella-linter-text",
+ "stella-source",
 ]
+
+[[package]]
+name = "stella-source"
+version = "0.0.0"

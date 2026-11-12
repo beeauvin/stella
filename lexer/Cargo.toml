@@ -9,3 +9,4 @@ publish.workspace = true
 
 [dependencies]
 stella-linter-text = { path = "../linter/text" }
+stella-source = { path = "../source" }

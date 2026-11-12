@@ -7,7 +7,8 @@
 use std::fmt;
 
 use stella_lexer::TokenKind;
-use stella_linter_text::{LEVEL_SPACES, Position};
+use stella_linter_text::LEVEL_SPACES;
+use stella_source::Position;
 
 // `IndentationNotDepth`'s sentence names a level's spaces, so a new level needs a new sentence.
 const _: () = assert!(LEVEL_SPACES == 4);

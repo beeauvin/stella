@@ -10,3 +10,4 @@ publish.workspace = true
 [dependencies]
 stella-lexer = { path = "../../lexer" }
 stella-linter-text = { path = "../text" }
+stella-source = { path = "../../source" }

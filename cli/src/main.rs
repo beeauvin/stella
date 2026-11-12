@@ -26,8 +26,9 @@ use std::process::ExitCode;
 
 use stella_cli::{Found, WALK_ENTRIES_MAX, message, shown, walk};
 use stella_lexer::{TokenBuffer, lex};
-use stella_linter_text::{Kind, Place, Problem, SOURCE_BYTES_MAX, lint, lint_path};
+use stella_linter_text::{Kind, Place, Problem, lint, lint_path};
 use stella_linter_tokens::lint_tokens;
+use stella_source::SOURCE_BYTES_MAX;
 
 /// Every program the command checked passed.
 const PASSED: u8 = 0;

@@ -24,8 +24,9 @@ use std::iter::FusedIterator;
 
 use stella_lexer::TokenKind::{BraceClose, BraceOpen, Comment};
 use stella_lexer::{TOKENS_MAX, Token, Tokens};
-use stella_linter_text::{LEVEL_SPACES, SOURCE_BYTES_MAX};
+use stella_linter_text::LEVEL_SPACES;
 use stella_linter_tokens::Layout;
+use stella_source::SOURCE_BYTES_MAX;
 
 /// This is a bound on how many lines a source can hold. Every line holds a token and ends with a
 /// `\n`, so it's at least two bytes. No source reaches it today: a comment is at least three bytes,
@@ -194,7 +195,7 @@ pub fn nest<'source, 'buffer>(
             assert_eq!(line.len(), 1, "a `}}` is alone on its line");
             assert!(depth > 0, "the braces pair up");
             depth -= 1;
-            let indented = line[0].position.column == column_at(depth);
+            let indented = line[0].position.column() == column_at(depth);
             assert!(indented, "a `}}` is indented like the line whose block it closes");
             let opener = open.expect("a block is open");
             open = close(&mut buffer.lines, opener, index_of(start));
@@ -223,10 +224,13 @@ pub fn nest<'source, 'buffer>(
 /// Returns how many of `tokens` are on the first one's line, which is at least that one. The
 /// tokens come in order, so they're the first few.
 fn on_its_line(tokens: &[Token]) -> usize {
-    let line = tokens[0].position.line;
-    let count = tokens.iter().take_while(|token| token.position.line == line).count();
+    let line = tokens[0].position.line();
+    let count = tokens.iter().take_while(|token| token.position.line() == line).count();
     assert!(count >= 1);
-    assert!(tokens.get(count).is_none_or(|next| next.position.line > line), "tokens come in order");
+    assert!(
+        tokens.get(count).is_none_or(|next| next.position.line() > line),
+        "tokens come in order"
+    );
     count
 }
 
@@ -235,7 +239,7 @@ fn on_its_line(tokens: &[Token]) -> usize {
 /// be a `{`, and a `{` doesn't start it, no `}` is on it, and a comment is alone on it.
 fn assert_line(line: &[Token], depth: u32) {
     let (last, before) = line.split_last().expect("a line holds a token");
-    let indented = line[0].position.column == column_at(depth);
+    let indented = line[0].position.column() == column_at(depth);
     assert!(indented, "a line is indented a level for each block it's in");
     for token in before {
         assert!(!matches!(token.kind, BraceOpen | BraceClose | Comment));

@@ -29,7 +29,8 @@
 //! Each source the buffer is lent to replaces the last one's tokens, so lexing every program in a
 //! tree uses the same memory as lexing one.
 
-use stella_linter_text::{Position, SOURCE_BYTES_MAX, Text};
+use stella_linter_text::Text;
+use stella_source::{Position, SOURCE_BYTES_MAX};
 
 use crate::problem::{Kind, Problem};
 
@@ -293,7 +294,7 @@ fn problem(kind: Kind, line: Line<'_>, index: usize) -> Problem {
 /// ASCII, either code or indentation, so its column is one more than its index.
 fn position(line: Line<'_>, index: usize) -> Position {
     assert!(index < line.content.len());
-    Position { line: line.number, column: offset(index) + 1 }
+    Position::new(line.number, offset(index) + 1)
 }
 
 /// Returns `count`, which is within a source, as a `u32`.
