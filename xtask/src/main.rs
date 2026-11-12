@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// This is what the tool says when it's asked for something it doesn't do.
-const USAGE: &str = "usage: cargo xtask <ci|lints>\n";
+const USAGE: &str = "usage: cargo xtask <ci|lints>";
 
 fn main() -> ExitCode {
     // TS-BOUNDED: the operating system bounds a process's arguments, and std has copied every
