@@ -15,4 +15,4 @@ mod layout;
 mod problem;
 
 pub use layout::{Layout, lint_tokens};
-pub use problem::{Kind, Problem};
+pub use problem::{Kind, Neighbors, Problem};

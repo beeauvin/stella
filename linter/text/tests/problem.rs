@@ -62,7 +62,7 @@ fn sentences() {
         ),
     ] {
         assert_eq!(kind.to_string(), sentence, "for {kind:?}");
-        let position = Position::new(3, 32);
+        let position = Position::on_line(3).at_column(32);
         let problem = Problem::At { kind, position };
         assert_eq!(problem.to_string(), sentence, "for {problem:?}");
         assert_eq!(problem.position(), Some(position), "for {problem:?}");

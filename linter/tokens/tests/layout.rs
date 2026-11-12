@@ -18,7 +18,8 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 
 use stella_lexer::TokenKind::{
-    self, BraceClose, BraceOpen, Function, Name, ParenClose, ParenOpen, Returns, TypeName,
+    self, BraceClose, BraceOpen, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
+    TypeName,
 };
 use stella_lexer::{TokenBuffer, lex};
 use stella_linter_text::{LEVEL_SPACES, lint};
@@ -27,11 +28,18 @@ use stella_linter_tokens::Kind::{
     BraceOpenStartsLine, IndentationNotDepth, LineEndsWithoutBrace, SpaceMissing, SpaceUnwanted,
     SpacesExtra,
 };
-use stella_linter_tokens::{Kind, Problem, lint_tokens};
+use stella_linter_tokens::{Kind, Neighbors, Problem, lint_tokens};
 use stella_source::{SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 use stella_test_support::{
     Example, Examples, Rng, indent, joined, nested_blocks, shown, slice, source_of,
 };
+
+/// Returns the two kinds as neighbors, `before` first.
+// TS-DISTINCT-ARGS: the two kinds are in the order the source has them, and an expectation with
+// them swapped fails its test.
+const fn between(before: TokenKind, after: TokenKind) -> Neighbors {
+    Neighbors { before, after }
+}
 
 /// An expected refusal: the problem's kind, and its line and column.
 type Refusal = (Kind, u32, u32);
@@ -45,7 +53,7 @@ const SMALLEST: &str = "function main() returns Void {\n}\n";
 
 thread_local! {
     /// Each test lexes every source it tries into this one buffer, as the command does.
-    static BUFFER: RefCell<TokenBuffer> = RefCell::new(TokenBuffer::new());
+    static TOKEN_BUFFER: RefCell<TokenBuffer> = RefCell::new(TokenBuffer::new());
 }
 
 /// Lints and lexes `source`, which must pass both, and then lints its tokens. Returns nothing when
@@ -53,8 +61,8 @@ thread_local! {
 /// was given.
 fn checked(source: &str) -> Expected {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
-    BUFFER.with_borrow_mut(|buffer| {
-        let lexed = lex(text, buffer);
+    TOKEN_BUFFER.with_borrow_mut(|token_buffer| {
+        let lexed = lex(text, token_buffer);
         assert!(lexed.is_ok(), "{source:?} should lex: {:?}", lexed.as_ref().err());
         let tokens = lexed.expect("it lexed, as just asserted");
         match lint_tokens(tokens) {
@@ -73,7 +81,7 @@ fn has_tokens(source: &str) -> bool {
     let Ok(text) = lint(source.as_bytes()) else {
         return false;
     };
-    BUFFER.with_borrow_mut(|buffer| lex(text, buffer).is_ok())
+    TOKEN_BUFFER.with_borrow_mut(|token_buffer| lex(text, token_buffer).is_ok())
 }
 
 /// Checks that every example passes the text lint and the lexer, as the oracle assumes, and
@@ -209,7 +217,7 @@ fn indentation() {
     examples.add("a {\n    // café } {\n}\n", Ok(()));
     examples.add("a {\n// } {\n}\n", Err((IndentationNotDepth(1), 2, 1)));
     // A line after a comment that isn't ASCII is placed by its own columns.
-    examples.add("// café\nmain  {\n}\n", Err((SpacesExtra(Name, BraceOpen), 2, 6)));
+    examples.add("// café\nmain  {\n}\n", Err((SpacesExtra(between(Name, BraceOpen)), 2, 6)));
     check(examples);
 }
 
@@ -272,37 +280,53 @@ fn spaces() {
     let mut examples = Examples::new();
     // A function's first line is written one way, with single spaces as shown.
     examples.add(SMALLEST, Ok(()));
-    examples
-        .add("function main () returns Void {\n}\n", Err((SpaceUnwanted(Name, ParenOpen), 1, 14)));
-    examples
-        .add("function main() returns Void{\n}\n", Err((SpaceMissing(TypeName, BraceOpen), 1, 29)));
-    examples.add("function  main() returns Void {\n}\n", Err((SpacesExtra(Function, Name), 1, 10)));
+    examples.add(
+        "function main () returns Void {\n}\n",
+        Err((SpaceUnwanted(between(Name, ParenthesisOpen)), 1, 14)),
+    );
+    examples.add(
+        "function main() returns Void{\n}\n",
+        Err((SpaceMissing(between(TypeName, BraceOpen)), 1, 29)),
+    );
+    examples.add(
+        "function  main() returns Void {\n}\n",
+        Err((SpacesExtra(between(Function, Name)), 1, 10)),
+    );
     examples.add(
         "function main( ) returns Void {\n}\n",
-        Err((SpaceUnwanted(ParenOpen, ParenClose), 1, 15)),
+        Err((SpaceUnwanted(between(ParenthesisOpen, ParenthesisClose)), 1, 15)),
     );
-    examples
-        .add("function main()returns Void {\n}\n", Err((SpaceMissing(ParenClose, Returns), 1, 16)));
+    examples.add(
+        "function main()returns Void {\n}\n",
+        Err((SpaceMissing(between(ParenthesisClose, Returns)), 1, 16)),
+    );
     examples.add(
         "function main()  returns Void {\n}\n",
-        Err((SpacesExtra(ParenClose, Returns), 1, 17)),
+        Err((SpacesExtra(between(ParenthesisClose, Returns)), 1, 17)),
     );
-    examples
-        .add("function main() returns   Void {\n}\n", Err((SpacesExtra(Returns, TypeName), 1, 25)));
+    examples.add(
+        "function main() returns   Void {\n}\n",
+        Err((SpacesExtra(between(Returns, TypeName)), 1, 25)),
+    );
     examples.add(
         "function main() returns Void  {\n}\n",
-        Err((SpacesExtra(TypeName, BraceOpen), 1, 30)),
+        Err((SpacesExtra(between(TypeName, BraceOpen)), 1, 30)),
     );
     // More than one space too many is still at the first one too many.
-    examples
-        .add("function    main() returns Void {\n}\n", Err((SpacesExtra(Function, Name), 1, 10)));
+    examples.add(
+        "function    main() returns Void {\n}\n",
+        Err((SpacesExtra(between(Function, Name)), 1, 10)),
+    );
     examples.add(
         "function main   () returns Void {\n}\n",
-        Err((SpaceUnwanted(Name, ParenOpen), 1, 14)),
+        Err((SpaceUnwanted(between(Name, ParenthesisOpen)), 1, 14)),
     );
     // Lines that are indented are spaced the same way.
-    examples.add("a {\n    b  {\n    }\n}\n", Err((SpacesExtra(Name, BraceOpen), 2, 7)));
-    examples.add("a {\n    b( {\n    }\n}\n", Err((SpaceUnwanted(ParenOpen, BraceOpen), 2, 7)));
+    examples.add("a {\n    b  {\n    }\n}\n", Err((SpacesExtra(between(Name, BraceOpen)), 2, 7)));
+    examples.add(
+        "a {\n    b( {\n    }\n}\n",
+        Err((SpaceUnwanted(between(ParenthesisOpen, BraceOpen)), 2, 7)),
+    );
     // No space goes after `(`, or before `(` or `)`.
     examples.add("a(b)(c) {\n}\n", Ok(()));
     check(examples);
@@ -315,8 +339,8 @@ const FIRSTS: [(TokenKind, &str); 6] = [
     (Returns, "returns"),
     (Name, "main"),
     (TypeName, "Void"),
-    (ParenOpen, "("),
-    (ParenClose, ")"),
+    (ParenthesisOpen, "("),
+    (ParenthesisClose, ")"),
 ];
 
 /// The tokens that can come second: the same ones, and `{`.
@@ -325,8 +349,8 @@ const SECONDS: [(TokenKind, &str); 7] = [
     (Returns, "returns"),
     (Name, "main"),
     (TypeName, "Void"),
-    (ParenOpen, "("),
-    (ParenClose, ")"),
+    (ParenthesisOpen, "("),
+    (ParenthesisClose, ")"),
     (BraceOpen, "{"),
 ];
 
@@ -366,8 +390,11 @@ fn every_gap() {
                 }
                 let rest = match second {
                     BraceOpen => "",
-                    ParenOpen => ") {",
-                    _ => " {",
+                    ParenthesisOpen => ") {",
+                    Function | Returns | Name | TypeName | ParenthesisClose => " {",
+                    BraceClose | TokenKind::Comment => {
+                        unreachable!("no line here has a `}}` or a comment second")
+                    }
                 };
                 let spaces = " ".repeat(gap);
                 let source = format!("{first_text}{spaces}{second_text}{rest}\n}}\n");
@@ -376,14 +403,22 @@ fn every_gap() {
                     Ordering::Equal => examples.add(&source, Ok(())),
                     // The second token is where the space should be.
                     Ordering::Less => {
-                        examples.add(&source, Err((SpaceMissing(first, second), 1, after_first)));
+                        examples.add(
+                            &source,
+                            Err((SpaceMissing(between(first, second)), 1, after_first)),
+                        );
                     }
                     Ordering::Greater if wanted == 0 => {
-                        examples.add(&source, Err((SpaceUnwanted(first, second), 1, after_first)));
+                        examples.add(
+                            &source,
+                            Err((SpaceUnwanted(between(first, second)), 1, after_first)),
+                        );
                     }
                     Ordering::Greater => {
-                        examples
-                            .add(&source, Err((SpacesExtra(first, second), 1, after_first + 1)));
+                        examples.add(
+                            &source,
+                            Err((SpacesExtra(between(first, second)), 1, after_first + 1)),
+                        );
                     }
                 }
                 cases_count += 1;
@@ -433,15 +468,18 @@ fn the_first_problem_wins() {
     examples.add("a {\n}\n}\nb {\n", Err((BraceClosesNothing, 3, 1)));
     examples.add("}\n}\n", Err((BraceClosesNothing, 1, 1)));
     // Indentation and spaces are checked in one pass, so whichever comes first wins.
-    examples.add("a  {\n// x\n}\n", Err((SpacesExtra(Name, BraceOpen), 1, 3)));
+    examples.add("a  {\n// x\n}\n", Err((SpacesExtra(between(Name, BraceOpen)), 1, 3)));
     examples.add("a {\n// x\n    b  {\n    }\n}\n", Err((IndentationNotDepth(1), 2, 1)));
-    examples.add("a {\n    b  {\n// x\n    }\n}\n", Err((SpacesExtra(Name, BraceOpen), 2, 7)));
+    examples
+        .add("a {\n    b  {\n// x\n    }\n}\n", Err((SpacesExtra(between(Name, BraceOpen)), 2, 7)));
     // On one line, its indentation comes before the spaces after it.
     examples.add("a {\n        b  {\n    }\n}\n", Err((IndentationNotDepth(1), 2, 5)));
     examples.add("a {\nb  {\n    }\n}\n", Err((IndentationNotDepth(1), 2, 1)));
     // And of two gaps on a line, the first.
-    examples
-        .add("function main ()  returns Void{\n}\n", Err((SpaceUnwanted(Name, ParenOpen), 1, 14)));
+    examples.add(
+        "function main ()  returns Void{\n}\n",
+        Err((SpaceUnwanted(between(Name, ParenthesisOpen)), 1, 14)),
+    );
     check(examples);
 }
 
@@ -490,7 +528,7 @@ fn the_largest_sources() {
     // lays out, the last refused within its line, and the last refused for its braces.
     examples.add(&format!("{}//\n", "\n".repeat(size - 3)), Ok(()));
     let last_gap = format!("{}a{{\n}}\n", "\n".repeat(size - 5));
-    examples.add(&last_gap, Err((SpaceMissing(Name, BraceOpen), SOURCE_BYTES_MAX - 4, 2)));
+    examples.add(&last_gap, Err((SpaceMissing(between(Name, BraceOpen)), SOURCE_BYTES_MAX - 4, 2)));
     let last_comment = format!("{}    //\n", "\n".repeat(size - 7));
     examples.add(&last_comment, Err((IndentationNotDepth(0), SOURCE_BYTES_MAX - 6, 1)));
     let last_brace = format!("{}{{\n", "\n".repeat(size - 2));
@@ -508,7 +546,7 @@ fn the_widest_lines() {
     // Gaps of two spaces, just past what a byte counts, and the widest.
     for spaces in [2, 256, 257, size - 5] {
         let source = format!("a{}{{\n}}\n", " ".repeat(spaces));
-        examples.add(&source, Err((SpacesExtra(Name, BraceOpen), 1, 3)));
+        examples.add(&source, Err((SpacesExtra(between(Name, BraceOpen)), 1, 3)));
     }
     // Indentation of one level, just past what a byte counts, and the widest.
     for levels in [1, 64, 65, (SOURCE_BYTES_MAX - 4) / LEVEL_SPACES] {
@@ -521,7 +559,10 @@ fn the_widest_lines() {
     let longest = format!("a{}\n", ")".repeat(size - 2));
     examples.add(&longest, Err((LineEndsWithoutBrace, 1, SOURCE_BYTES_MAX)));
     let spaced = format!("a{}  {{\n}}\n", ")".repeat(size - 7));
-    examples.add(&spaced, Err((SpacesExtra(ParenClose, BraceOpen), 1, SOURCE_BYTES_MAX - 4)));
+    examples.add(
+        &spaced,
+        Err((SpacesExtra(between(ParenthesisClose, BraceOpen)), 1, SOURCE_BYTES_MAX - 4)),
+    );
     // The most tokens that lay out: a `(` in every byte but the last four.
     examples.add(&format!("{}{{\n}}\n", "(".repeat(size - 4)), Ok(()));
     check(examples);
@@ -529,10 +570,10 @@ fn the_widest_lines() {
 
 // The oracle, which works from each line's text.
 
-/// What a line holds, as the oracle sees it.
-enum Holds<'source> {
+/// A line's kind says what the line holds, as the oracle sees it.
+enum LineKind<'source> {
     /// Nothing: the line is blank.
-    Nothing,
+    Blank,
     /// A comment, from its `//` to the end of the line.
     Comment(&'source str),
     /// Code, as its tokens: each one's first byte in the line, and its text.
@@ -547,8 +588,8 @@ struct Line<'source> {
     content: &'source str,
     /// The indentation is how many spaces the line starts with.
     indentation: usize,
-    /// The holds says what's on the line.
-    holds: Holds<'source>,
+    /// The kind says what's on the line.
+    kind: LineKind<'source>,
 }
 
 /// Returns the column of the byte at `index` on a line, where everything before it is ASCII.
@@ -569,14 +610,14 @@ fn lines_of(source: &str) -> Vec<Line<'_>> {
 fn line_of(content: &str, number: u32) -> Line<'_> {
     let code = content.trim_start_matches(' ');
     let indentation = content.len() - code.len();
-    let holds = if code.is_empty() {
-        Holds::Nothing
+    let kind = if code.is_empty() {
+        LineKind::Blank
     } else if code.starts_with("//") {
-        Holds::Comment(code)
+        LineKind::Comment(code)
     } else {
-        Holds::Code(split(content, indentation))
+        LineKind::Code(split(content, indentation))
     };
-    Line { number, content, indentation, holds }
+    Line { number, content, indentation, kind }
 }
 
 /// Splits a line of code into its tokens, starting at byte `from`: each of `(`, `)`, `{` and `}`
@@ -607,8 +648,8 @@ fn kind_of(text: &str) -> TokenKind {
     match text {
         "function" => Function,
         "returns" => Returns,
-        "(" => ParenOpen,
-        ")" => ParenClose,
+        "(" => ParenthesisOpen,
+        ")" => ParenthesisClose,
         "{" => BraceOpen,
         "}" => BraceClose,
         _ if text.starts_with(|character: char| character.is_ascii_uppercase()) => TypeName,
@@ -631,7 +672,7 @@ fn oracle(source: &str) -> Expected {
 /// the same `{`, the first listed wins.
 fn oracle_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
     for line in lines {
-        let Holds::Code(_) = line.holds else {
+        let LineKind::Code(_) = line.kind else {
             continue;
         };
         let code = line.content.trim_start_matches(' ');
@@ -658,16 +699,18 @@ fn oracle_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
 fn oracle_braces(lines: &[Line<'_>]) -> Result<(), Refusal> {
     let mut open: Vec<(u32, u32)> = Vec::new();
     for line in lines {
-        let Holds::Code(tokens) = &line.holds else {
+        let LineKind::Code(tokens) = &line.kind else {
             continue;
         };
         for &(index, text) in tokens {
             if text == "{" {
                 open.push((line.number, column(index)));
             }
-            let closes_nothing = text == "}" && open.pop().is_none();
-            if closes_nothing {
-                return Err((BraceClosesNothing, line.number, column(index)));
+            if text == "}" {
+                let closed = open.pop();
+                if closed.is_none() {
+                    return Err((BraceClosesNothing, line.number, column(index)));
+                }
             }
         }
     }
@@ -682,10 +725,10 @@ fn oracle_braces(lines: &[Line<'_>]) -> Result<(), Refusal> {
 fn oracle_within_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
     let mut depth: u32 = 0;
     for line in lines {
-        let (level, written) = match &line.holds {
-            Holds::Nothing => continue,
-            Holds::Comment(comment) => (depth, String::from(*comment)),
-            Holds::Code(tokens) => {
+        let (level, written) = match &line.kind {
+            LineKind::Blank => continue,
+            LineKind::Comment(comment) => (depth, String::from(*comment)),
+            LineKind::Code(tokens) => {
                 let texts: Vec<&str> = tokens.iter().map(|&(_, text)| text).collect();
                 // A line that starts with `}` counts its own brace as closed.
                 let level = if texts[0] == "}" { depth - 1 } else { depth };
@@ -713,16 +756,16 @@ fn oracle_line(line: &Line<'_>, level: u32, wanted: &str) -> Result<(), Refusal>
     }
     // Only a line of code can differ past its indentation, and only in its spaces, so the
     // character that differs is in a gap between two tokens.
-    let Holds::Code(tokens) = &line.holds else {
+    let LineKind::Code(tokens) = &line.kind else {
         unreachable!("a comment is the same text, however it's indented");
     };
     let second = tokens.iter().position(|&(start, _)| start >= index).expect("a token follows");
     assert!(second > 0, "the first token is placed by the indentation");
     let pair = (kind_of(tokens[second - 1].1), kind_of(tokens[second].1));
     let kind = match (bytes[index], wanted_bytes[index]) {
-        (b' ', _) if bytes[index - 1] == b' ' => SpacesExtra(pair.0, pair.1),
-        (b' ', _) => SpaceUnwanted(pair.0, pair.1),
-        (_, b' ') => SpaceMissing(pair.0, pair.1),
+        (b' ', _) if bytes[index - 1] == b' ' => SpacesExtra(between(pair.0, pair.1)),
+        (b' ', _) => SpaceUnwanted(between(pair.0, pair.1)),
+        (_, b' ') => SpaceMissing(between(pair.0, pair.1)),
         _ => unreachable!("the same tokens differ only in their spaces"),
     };
     Err((kind, line.number, column(index)))
@@ -874,9 +917,9 @@ fn fuzz_against_the_oracle() {
         BraceClosesNothing,
         BraceNeverClosed,
         IndentationNotDepth(0),
-        SpaceMissing(Name, Name),
-        SpaceUnwanted(Name, Name),
-        SpacesExtra(Name, Name),
+        SpaceMissing(between(Name, Name)),
+        SpaceUnwanted(between(Name, Name)),
+        SpacesExtra(between(Name, Name)),
     ];
     let mut kind_counts: Vec<(String, u32)> =
         kinds.iter().map(|&kind| (variant(kind), 0)).collect();

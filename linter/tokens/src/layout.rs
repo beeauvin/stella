@@ -31,13 +31,14 @@
 use std::cmp::Ordering;
 
 use stella_lexer::TokenKind::{
-    BraceClose, BraceOpen, Comment, Function, Name, ParenClose, ParenOpen, Returns, TypeName,
+    BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
+    TypeName,
 };
 use stella_lexer::{TOKENS_MAX, Token, Tokens};
 use stella_linter_text::LEVEL_SPACES;
-use stella_source::{Position, SOURCE_BYTES_MAX, usize_from_u32};
+use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 
-use crate::problem::{Kind, Problem};
+use crate::problem::{Kind, Neighbors, Problem};
 
 /// A layout is tokens laid out the one way, whose braces pair up.
 ///
@@ -56,8 +57,8 @@ impl<'source, 'buffer> Layout<'source, 'buffer> {
     }
 }
 
-/// Checks that `tokens` are laid out the one way, step by step, and stops at the first step that
-/// fails. Returns them as a `Layout`.
+/// Checks that `lexed`, a source's tokens, are laid out the one way, step by step, and stops at
+/// the first step that fails. Returns them as a `Layout`.
 ///
 /// # Errors
 ///
@@ -68,17 +69,17 @@ impl<'source, 'buffer> Layout<'source, 'buffer> {
 /// Never, whatever the tokens. The assertions check what the lexer guarantees and the lint's own
 /// work, so one that fails is a bug in the compiler.
 pub fn lint_tokens<'source, 'buffer>(
-    tokens: Tokens<'source, 'buffer>,
+    lexed: Tokens<'source, 'buffer>,
 ) -> Result<Layout<'source, 'buffer>, Problem> {
-    let slice = tokens.as_slice();
+    let tokens = lexed.as_slice();
     assert!(
-        slice.len() <= usize_from_u32(TOKENS_MAX),
+        tokens.len() <= usize_from_u32(TOKENS_MAX),
         "the lexer makes no more tokens than a source can hold"
     );
-    lint_lines(slice)?;
-    lint_braces(slice)?;
-    lint_within_lines(slice)?;
-    Ok(Layout { tokens })
+    lint_lines(tokens)?;
+    lint_braces(tokens)?;
+    lint_within_lines(tokens)?;
+    Ok(Layout { tokens: lexed })
 }
 
 /// The first step: `{` ends its line and doesn't start it, `}` is the only token on its line, and
@@ -86,41 +87,46 @@ pub fn lint_tokens<'source, 'buffer>(
 /// found is the earliest.
 fn lint_lines(tokens: &[Token]) -> Result<(), Problem> {
     for (index, token) in tokens.iter().enumerate() {
-        assert!(token.length >= 1, "a token is at least one character");
+        assert!(!token.span().is_empty(), "a token is at least one character");
         // Whether a token comes before this one on its line, and whether one comes after it.
         let before =
             index.checked_sub(1).is_some_and(|previous| same_line(&tokens[previous], token));
         let after = tokens.get(index + 1).is_some_and(|next| same_line(token, next));
-        let kind = match (token.kind, before, after) {
+        let kind = match (token.kind(), before, after) {
             // Of the two problems a `{` can have, not ending its line is the one reported.
             (BraceOpen, true | false, true) => Some(Kind::BraceOpenNotLast),
             (BraceOpen, false, false) => Some(Kind::BraceOpenStartsLine),
             (BraceClose, true, true | false) | (BraceClose, false, true) => {
                 Some(Kind::BraceCloseNotAlone)
             }
-            (BraceOpen, true, false) | (BraceClose, false, false) => None,
+            // A `{` that ends its line and doesn't start it, a `}` alone on its line, and any
+            // other code with a token after it are all as they should be.
+            (BraceOpen, true, false)
+            | (BraceClose, false, false)
+            | (
+                Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose,
+                true | false,
+                true,
+            ) => None,
             (Comment, comes_before, comes_after) => {
                 assert!(!comes_before, "the lexer makes a comment of a whole line");
                 assert!(!comes_after, "the lexer makes a comment of a whole line");
                 None
             }
-            (Function | Returns | Name | TypeName | ParenOpen | ParenClose, true | false, true) => {
-                None
-            }
             (
-                Function | Returns | Name | TypeName | ParenOpen | ParenClose,
+                Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose,
                 true | false,
                 false,
             ) => {
-                // The line ends with a token that isn't a brace. It's code, so it's ASCII, and
-                // the column just past it is its column and its length.
-                let column = token.position.column() + token.length;
-                let position = Position::new(token.position.line(), column);
+                // The line ends with a token that isn't a brace, and the problem is just past
+                // it.
+                let column = column_after(token);
+                let position = Position::on_line(token.position().line()).at_column(column);
                 return Err(at(Kind::LineEndsWithoutBrace, position));
             }
         };
         if let Some(kind) = kind {
-            return Err(at(kind, token.position));
+            return Err(at(kind, token.position()));
         }
     }
     Ok(())
@@ -136,23 +142,24 @@ fn lint_braces(tokens: &[Token]) -> Result<(), Problem> {
     // This is where the outermost `{` still open is, whenever one is.
     let mut outermost: Option<Position> = None;
     for token in tokens {
-        match token.kind {
+        match token.kind() {
             BraceOpen => {
                 if depth == 0 {
-                    outermost = Some(token.position);
+                    outermost = Some(token.position());
                 }
                 depth += 1;
             }
             BraceClose => {
                 if depth == 0 {
-                    return Err(at(Kind::BraceClosesNothing, token.position));
+                    return Err(at(Kind::BraceClosesNothing, token.position()));
                 }
                 depth -= 1;
                 if depth == 0 {
                     outermost = None;
                 }
             }
-            Function | Returns | Name | TypeName | ParenOpen | ParenClose | Comment => {}
+            Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose | Comment => {
+            }
         }
         assert!(depth <= TOKENS_MAX, "every `{{` that's open is a token");
         assert_eq!(outermost.is_some(), depth > 0, "an outermost `{{` is open when any is");
@@ -178,13 +185,14 @@ fn lint_within_lines(tokens: &[Token]) -> Result<(), Problem> {
         if let Some(problem) = found {
             return Err(problem);
         }
-        match token.kind {
+        match token.kind() {
             BraceOpen => depth += 1,
             BraceClose => {
                 assert!(depth > 0, "the braces pair up, so a `}}` closes a `{{` before it");
                 depth -= 1;
             }
-            Function | Returns | Name | TypeName | ParenOpen | ParenClose | Comment => {}
+            Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose | Comment => {
+            }
         }
         assert!(depth <= TOKENS_MAX, "every `{{` that's open is a token");
     }
@@ -196,20 +204,20 @@ fn lint_within_lines(tokens: &[Token]) -> Result<(), Problem> {
 /// braces are open before it. The line is indented one level for each `{` still open on it, and
 /// a `}` counts its own brace as closed.
 fn indentation_problem(token: &Token, depth: u32) -> Option<Problem> {
-    let level = if token.kind == BraceClose {
+    let level = if token.kind() == BraceClose {
         assert!(depth > 0, "the braces pair up, so a `}}` closes a `{{` before it");
         depth - 1
     } else {
         depth
     };
     let wanted = level * LEVEL_SPACES + 1;
-    if token.position.column() == wanted {
+    if token.position().column() == wanted {
         return None;
     }
     // Too deep, the first space past the right indentation is at fault. Too shallow, the token
     // is. Indentation is spaces, so either way the column is the lesser.
-    let column = token.position.column().min(wanted);
-    let position = Position::new(token.position.line(), column);
+    let column = token.position().column().min(wanted);
+    let position = Position::on_line(token.position().line()).at_column(column);
     Some(at(Kind::IndentationNotDepth(level), position))
 }
 
@@ -219,46 +227,66 @@ fn gap_problem(previous: &Token, token: &Token) -> Option<Problem> {
     assert!(same_line(previous, token), "a gap is between two tokens on one line");
     // A comment is a whole line, so both of these are code. Code is ASCII, so a column is a
     // byte, and the gap can be counted either way.
-    assert_ne!(previous.kind, Comment, "the lexer makes a comment of a whole line");
-    assert_ne!(token.kind, Comment, "the lexer makes a comment of a whole line");
-    assert_ne!(previous.kind, BraceOpen, "the first step passed, so a `{{` ends its line");
-    assert_ne!(previous.kind, BraceClose, "the first step passed, so a `}}` is alone on its line");
-    assert_ne!(token.kind, BraceClose, "the first step passed, so a `}}` is alone on its line");
-    let end = previous.start + previous.length;
-    assert!(token.start >= end, "tokens don't overlap");
-    let gap = token.start - end;
+    assert_ne!(previous.kind(), Comment, "the lexer makes a comment of a whole line");
+    assert_ne!(token.kind(), Comment, "the lexer makes a comment of a whole line");
+    assert_ne!(previous.kind(), BraceOpen, "the first step passed, so a `{{` ends its line");
+    assert_ne!(
+        previous.kind(),
+        BraceClose,
+        "the first step passed, so a `}}` is alone on its line"
+    );
+    assert_ne!(token.kind(), BraceClose, "the first step passed, so a `}}` is alone on its line");
+    let (previous_span, token_span) = (previous.span(), token.span());
+    assert!(token_span.start >= previous_span.end, "tokens don't overlap");
+    let gap_count = u32_from_usize(token_span.start - previous_span.end);
     assert_eq!(
-        token.position.column() - previous.position.column(),
-        token.start - previous.start,
+        usize_from_u32(token.position().column() - previous.position().column()),
+        token_span.start - previous_span.start,
         "code is ASCII, so on a line columns and bytes move together"
     );
-    let wanted = spaces_wanted(previous, token);
-    let line = token.position.line();
-    let first_space = previous.position.column() + previous.length;
-    let (first, second) = (previous.kind, token.kind);
-    match gap.cmp(&wanted) {
+    let neighbors = Neighbors { before: previous.kind(), after: token.kind() };
+    let wanted_count = spaces_wanted(neighbors);
+    let line = token.position().line();
+    let first_space_column = column_after(previous);
+    match gap_count.cmp(&wanted_count) {
         Ordering::Equal => None,
         // The second token is where the space should be.
-        Ordering::Less => Some(at(Kind::SpaceMissing(first, second), token.position)),
-        Ordering::Greater if wanted == 0 => {
-            let position = Position::new(line, first_space);
-            Some(at(Kind::SpaceUnwanted(first, second), position))
+        Ordering::Less => Some(at(Kind::SpaceMissing(neighbors), token.position())),
+        Ordering::Greater if wanted_count == 0 => {
+            let position = Position::on_line(line).at_column(first_space_column);
+            Some(at(Kind::SpaceUnwanted(neighbors), position))
         }
         Ordering::Greater => {
-            let position = Position::new(line, first_space + 1);
-            Some(at(Kind::SpacesExtra(first, second), position))
+            let position = Position::on_line(line).at_column(first_space_column + 1);
+            Some(at(Kind::SpacesExtra(neighbors), position))
         }
     }
 }
 
-/// Returns how many spaces go between `previous` and `token`, one right after the other on a
-/// line: none after `(`, and none before `(` or `)`, and otherwise one.
-fn spaces_wanted(previous: &Token, token: &Token) -> u32 {
-    assert!(same_line(previous, token), "a gap is between two tokens on one line");
-    match (previous.kind, token.kind) {
-        (ParenOpen, _) | (_, ParenOpen | ParenClose) => 0,
+/// Returns the column just past `token`, which is code. Code is ASCII, so a token is as many
+/// columns wide as it is bytes long.
+fn column_after(token: &Token) -> u32 {
+    assert_ne!(token.kind(), Comment, "a comment can hold any character, so it isn't measured");
+    token.position().column() + u32_from_usize(token.span().len())
+}
+
+/// Returns how many spaces go between `neighbors`: none after `(`, and none before `(` or `)`,
+/// and otherwise one. Every pair of kinds is named, so a new kind has to be given its place.
+const fn spaces_wanted(neighbors: Neighbors) -> u32 {
+    match (neighbors.before, neighbors.after) {
         (
-            Function | Returns | Name | TypeName | ParenClose | BraceOpen | BraceClose | Comment,
+            ParenthesisOpen,
+            Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose | BraceOpen
+            | BraceClose | Comment,
+        )
+        | (
+            Function | Returns | Name | TypeName | ParenthesisClose | BraceOpen | BraceClose
+            | Comment,
+            ParenthesisOpen | ParenthesisClose,
+        ) => 0,
+        (
+            Function | Returns | Name | TypeName | ParenthesisClose | BraceOpen | BraceClose
+            | Comment,
             Function | Returns | Name | TypeName | BraceOpen | BraceClose | Comment,
         ) => 1,
     }
@@ -266,8 +294,8 @@ fn spaces_wanted(previous: &Token, token: &Token) -> u32 {
 
 /// Says whether `first` and `second`, which come one right after the other, are on the same line.
 fn same_line(first: &Token, second: &Token) -> bool {
-    assert!(first.position.line() <= second.position.line(), "tokens come in order");
-    first.position.line() == second.position.line()
+    assert!(first.position().line() <= second.position().line(), "tokens come in order");
+    first.position().line() == second.position().line()
 }
 
 /// Returns the problem `kind` at `position`, which is a character on a line of the source, or

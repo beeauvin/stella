@@ -13,7 +13,7 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use stella_blocks::{LineBuffer, nest};
+use stella_blocks::{NodeBuffer, nest};
 use stella_lexer::{TokenBuffer, lex};
 use stella_linter_path::lint_path;
 use stella_linter_text::lint;
@@ -24,7 +24,7 @@ use crate::message::{Place, message, reason};
 use crate::read::{SourceBuffer, read};
 use crate::status::Status;
 use crate::stored::{Unstored, stored};
-use crate::walk::{Found, walk};
+use crate::walk::{Find, walk};
 
 /// An outcome is what linting one program came to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,22 +67,22 @@ pub struct Linter<'root> {
     source: SourceBuffer,
     /// Each source's tokens go in this.
     tokens: TokenBuffer,
-    /// Each source's lines go in this.
-    lines: LineBuffer,
+    /// Each source's nodes go in this.
+    nodes: NodeBuffer,
 }
 
 impl<'root> Linter<'root> {
     /// Returns a linter for the programs under `root`, the directory the command runs in.
     #[must_use]
     pub fn new(root: &'root Path) -> Self {
-        let (source, tokens, lines) = (SourceBuffer::new(), TokenBuffer::new(), LineBuffer::new());
-        Self { root, source, tokens, lines }
+        let (source, tokens, nodes) = (SourceBuffer::new(), TokenBuffer::new(), NodeBuffer::new());
+        Self { root, source, tokens, nodes }
     }
 
     /// Lints the program at `path`, as it was typed. The path is checked before the file is read.
     /// Its message shows the path as it was typed, except where the path as it's stored is what's
     /// refused.
-    pub fn one(&mut self, path: &[u8]) -> Outcome {
+    pub fn lint_one(&mut self, path: &[u8]) -> Outcome {
         // A path that isn't UTF-8 can't be kebab, so it's refused like any other bad name.
         let typed = String::from_utf8_lossy(path);
         let source_path = match lint_path(&typed) {
@@ -92,7 +92,7 @@ impl<'root> Linter<'root> {
         // On macOS, which ignores case, `hello.stella` can name `Hello.stella`, so the path is
         // found as it's stored before it's checked again.
         match stored(self.root, source_path) {
-            Ok(as_stored) => self.stored(path, &as_stored),
+            Ok(as_stored) => self.lint_stored(Named { typed: path, stored: &as_stored }),
             Err(unstored @ Unstored::Symlink) => {
                 Outcome::Refused(message(path, Place::File, unstored))
             }
@@ -106,8 +106,9 @@ impl<'root> Linter<'root> {
     }
 
     /// Lints every program the walk finds, writing each message to `stderr` as it's made, with a
-    /// blank line between messages. So linting every file holds one message at a time, however
-    /// many there are. Returns the worst status any program gets.
+    /// blank line between messages, and flushing after each. So linting every file holds one
+    /// message at a time, however many there are, and each is seen as soon as it's made. Returns
+    /// the worst status any program gets.
     ///
     /// # Errors
     ///
@@ -116,25 +117,25 @@ impl<'root> Linter<'root> {
     /// # Panics
     ///
     /// Never, whatever is under the directory. The assertion checks this function's own work.
-    pub fn every(&mut self, stderr: &mut impl Write) -> io::Result<Status> {
-        let found = match walk(self.root) {
-            Ok(found) => found,
+    pub fn lint_every(&mut self, stderr: &mut impl Write) -> io::Result<Status> {
+        let finds = match walk(self.root) {
+            Ok(finds) => finds,
             Err(too_many) => {
                 writeln!(stderr, "stella: {too_many}")?;
                 return Ok(Status::Failed);
             }
         };
-        if found.is_empty() {
+        if finds.is_empty() {
             writeln!(stderr, "stella: there are no `.stella` files under this directory.")?;
             return Ok(Status::Failed);
         }
         let mut status = Status::Passed;
         let mut messages_count: u32 = 0;
-        for find in &found {
+        for find in &finds {
             let outcome = match find {
                 // The walk finds each name as it's stored, and it never follows a symlink.
-                Found::Source(path) => self.stored(path, path),
-                Found::Unreadable { directory, error } => {
+                Find::Source(path) => self.lint_stored(Named { typed: path, stored: path }),
+                Find::Unreadable { directory, error } => {
                     let reason = reason(error);
                     let sentence = format_args!("this directory can't be read: {reason}.");
                     Outcome::Failed(message(directory, Place::File, sentence))
@@ -146,6 +147,7 @@ impl<'root> Linter<'root> {
                     stderr.write_all(b"\n")?;
                 }
                 stderr.write_all(text.as_bytes())?;
+                stderr.flush()?;
                 messages_count += 1;
             }
         }
@@ -154,10 +156,11 @@ impl<'root> Linter<'root> {
         Ok(status)
     }
 
-    /// Lints the program stored at `stored`, which `path` names: its path, then its text, its
-    /// tokens, their layout and its blocks. A problem with the path is shown at `stored`, and any
-    /// other at `path`, as it was given.
-    fn stored(&mut self, path: &[u8], stored: &[u8]) -> Outcome {
+    /// Lints `program`: its path as it's stored, then its text, its tokens, their layout and its
+    /// blocks. A problem with the path is shown at the path as it's stored, and any other at the
+    /// path as it was typed.
+    fn lint_stored(&mut self, program: Named<'_>) -> Outcome {
+        let Named { typed: path, stored } = program;
         let stored_text = String::from_utf8_lossy(stored);
         let stored_path = match lint_path(&stored_text) {
             Ok(stored_path) => stored_path,
@@ -168,7 +171,7 @@ impl<'root> Linter<'root> {
             Ok(source) => source,
             Err(unread) => return Outcome::Failed(message(path, Place::File, unread)),
         };
-        match check(source, &mut self.tokens, &mut self.lines) {
+        match check(source, &mut self.tokens, &mut self.nodes) {
             Ok(()) => Outcome::Passed,
             Err(Refusal { position, sentence }) => {
                 let place = match position {
@@ -179,6 +182,16 @@ impl<'root> Linter<'root> {
             }
         }
     }
+}
+
+/// A program to lint, by both of its names. Each is named, so the two can't be given the wrong
+/// way round.
+#[derive(Clone, Copy)]
+struct Named<'path> {
+    /// The program's path as it was typed, or as the walk found it.
+    typed: &'path [u8],
+    /// The program's path as it's stored, which the file is read by.
+    stored: &'path [u8],
 }
 
 /// A refusal is what a check found wrong with a source: where, when it's at a position, and the
@@ -195,9 +208,9 @@ impl Refusal {
     }
 }
 
-/// Checks `source`'s text, then its tokens, lexed into `tokens`, then their layout, and nests its
-/// lines into `lines`. Stops at the first check that fails, and returns its refusal.
-fn check(source: &[u8], tokens: &mut TokenBuffer, lines: &mut LineBuffer) -> Result<(), Refusal> {
+/// Checks `source`'s text, then its tokens, lexed into `tokens`, then their layout, and nests
+/// them into `nodes`. Stops at the first check that fails, and returns its refusal.
+fn check(source: &[u8], tokens: &mut TokenBuffer, nodes: &mut NodeBuffer) -> Result<(), Refusal> {
     let text = lint(source).map_err(|problem| Refusal {
         position: problem.position(),
         sentence: problem.to_string(),
@@ -209,6 +222,6 @@ fn check(source: &[u8], tokens: &mut TokenBuffer, lines: &mut LineBuffer) -> Res
     // Nothing reads the blocks yet, since the grammar isn't built. They're still nested, so every
     // program that's linted goes through nesting's assertions, and a layout that nesting can't
     // hold stops here, where it's found, rather than when the grammar first meets it.
-    _ = nest(layout, lines);
+    _ = nest(layout, nodes);
     Ok(())
 }

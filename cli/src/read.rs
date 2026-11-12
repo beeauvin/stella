@@ -34,9 +34,15 @@ pub struct SourceBuffer {
 
 impl SourceBuffer {
     /// Returns a buffer with room for one byte more than the largest source.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there isn't the memory for it, as any allocation does.
     #[must_use]
     pub fn new() -> Self {
-        Self { bytes: vec![0; BUFFER_BYTES].into_boxed_slice() }
+        let bytes = vec![0; BUFFER_BYTES].into_boxed_slice();
+        assert_eq!(bytes.len(), BUFFER_BYTES, "the buffer holds one byte more than a source");
+        Self { bytes }
     }
 }
 
@@ -77,12 +83,16 @@ impl fmt::Display for Unread {
 ///
 /// Returns why the file couldn't be read: nothing is there, it isn't a regular file, or it
 /// can't be looked at, opened or read.
+///
+/// # Panics
+///
+/// Never, whatever the file holds. The assertion checks `fill`'s own work.
 pub fn read<'buffer>(
     path: &Path,
     buffer: &'buffer mut SourceBuffer,
 ) -> Result<&'buffer [u8], Unread> {
-    // The file is checked before it's opened, since opening something that isn't a file, like a
-    // FIFO, can wait forever. Something swapped in between the two could still do that, or be a
+    // TS-CLOSE-USE: the file is checked before it's opened, and not after, since opening
+    // something that isn't a file, like a FIFO, can wait forever. Something swapped in between the two could still do that, or be a
     // symlink by the time it's opened. Opening without waiting or following takes flags std
     // doesn't name, whose numbers differ from one system to the next, and even then a directory
     // on the way could be swapped. Only someone who can already write where the program is could
@@ -96,6 +106,8 @@ pub fn read<'buffer>(
     }
     let mut file = File::open(path).map_err(Unread::Unreadable)?;
     let length = fill(&mut file, &mut buffer.bytes).map_err(Unread::Unreadable)?;
+    assert!(length <= BUFFER_BYTES, "a fill writes no more than the buffer holds");
+    // Only what this read wrote is returned, never what an earlier file left further on.
     Ok(&buffer.bytes[..length])
 }
 

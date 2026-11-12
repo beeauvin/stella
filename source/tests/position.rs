@@ -18,34 +18,34 @@ fn a_position_holds_its_line_and_column() {
         (1, SOURCE_BYTES_MAX + 1),
         (SOURCE_BYTES_MAX, SOURCE_BYTES_MAX + 1),
     ] {
-        let position = Position::new(line, column);
+        let position = Position::on_line(line).at_column(column);
         assert_eq!((position.line(), position.column()), (line, column));
     }
     // Two positions are the same when both parts are.
-    assert_eq!(Position::new(2, 5), Position::new(2, 5));
-    assert_ne!(Position::new(2, 5), Position::new(5, 2));
+    assert_eq!(Position::on_line(2).at_column(5), Position::on_line(2).at_column(5));
+    assert_ne!(Position::on_line(2).at_column(5), Position::on_line(5).at_column(2));
 }
 
 #[test]
 #[should_panic(expected = "lines count from 1")]
 fn line_zero_is_a_bug() {
-    _ = Position::new(0, 1);
+    _ = Position::on_line(0).at_column(1);
 }
 
 #[test]
 #[should_panic(expected = "columns count from 1")]
 fn column_zero_is_a_bug() {
-    _ = Position::new(1, 0);
+    _ = Position::on_line(1).at_column(0);
 }
 
 #[test]
 #[should_panic(expected = "every line but the last ends with a byte of its own")]
 fn a_line_past_the_largest_source_is_a_bug() {
-    _ = Position::new(SOURCE_BYTES_MAX + 1, 1);
+    _ = Position::on_line(SOURCE_BYTES_MAX + 1).at_column(1);
 }
 
 #[test]
 #[should_panic(expected = "a column is in a line")]
 fn a_column_past_the_longest_line_is_a_bug() {
-    _ = Position::new(1, SOURCE_BYTES_MAX + 2);
+    _ = Position::on_line(1).at_column(SOURCE_BYTES_MAX + 2);
 }

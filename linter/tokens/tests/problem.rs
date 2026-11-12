@@ -5,14 +5,24 @@
 //! Unit tests for the sentences the tokens lint's problems print. Each sentence is pinned exactly,
 //! because people and tools both read them.
 
+use stella_lexer::TokenKind;
 use stella_lexer::TokenKind::{
-    BraceClose, BraceOpen, Comment, Function, Name, ParenClose, ParenOpen, Returns, TypeName,
+    BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
+    TypeName,
 };
 use stella_linter_tokens::Kind::{
     BraceCloseNotAlone, BraceClosesNothing, BraceNeverClosed, BraceOpenNotLast,
     BraceOpenStartsLine, IndentationNotDepth, LineEndsWithoutBrace, SpaceMissing, SpaceUnwanted,
     SpacesExtra,
 };
+use stella_linter_tokens::Neighbors;
+
+/// Returns the two kinds as neighbors, `before` first.
+// TS-DISTINCT-ARGS: the two kinds are in the order the source has them, and an expectation with
+// them swapped fails its test.
+const fn between(before: TokenKind, after: TokenKind) -> Neighbors {
+    Neighbors { before, after }
+}
 
 #[test]
 fn sentences() {
@@ -40,11 +50,23 @@ fn sentences() {
             "this line must be indented 356 spaces, one level of four for each `{` still open on \
              it.",
         ),
-        (SpaceMissing(TypeName, BraceOpen), "one space must go between a type's name and `{`."),
-        (SpaceMissing(ParenClose, Returns), "one space must go between `)` and `returns`."),
-        (SpaceUnwanted(Name, ParenOpen), "no space can go between a name and `(`."),
-        (SpaceUnwanted(ParenOpen, ParenClose), "no space can go between `(` and `)`."),
-        (SpacesExtra(Function, Name), "only one space can go between `function` and a name."),
+        (
+            SpaceMissing(between(TypeName, BraceOpen)),
+            "one space must go between a type's name and `{`.",
+        ),
+        (
+            SpaceMissing(between(ParenthesisClose, Returns)),
+            "one space must go between `)` and `returns`.",
+        ),
+        (SpaceUnwanted(between(Name, ParenthesisOpen)), "no space can go between a name and `(`."),
+        (
+            SpaceUnwanted(between(ParenthesisOpen, ParenthesisClose)),
+            "no space can go between `(` and `)`.",
+        ),
+        (
+            SpacesExtra(between(Function, Name)),
+            "only one space can go between `function` and a name.",
+        ),
     ] {
         assert_eq!(kind.to_string(), sentence, "for {kind:?}");
     }
@@ -55,19 +77,20 @@ fn sentences() {
         (Returns, "`returns`"),
         (Name, "a name"),
         (TypeName, "a type's name"),
-        (ParenOpen, "`(`"),
-        (ParenClose, "`)`"),
+        (ParenthesisOpen, "`(`"),
+        (ParenthesisClose, "`)`"),
         (BraceOpen, "`{`"),
         (BraceClose, "`}`"),
         (Comment, "a comment"),
     ];
     for (first, first_named) in named {
         for (second, second_named) in named {
-            let between = format!("between {first_named} and {second_named}.");
+            let neighbors = between(first, second);
+            let ending = format!("between {first_named} and {second_named}.");
             for (kind, sentence) in [
-                (SpaceMissing(first, second), format!("one space must go {between}")),
-                (SpaceUnwanted(first, second), format!("no space can go {between}")),
-                (SpacesExtra(first, second), format!("only one space can go {between}")),
+                (SpaceMissing(neighbors), format!("one space must go {ending}")),
+                (SpaceUnwanted(neighbors), format!("no space can go {ending}")),
+                (SpacesExtra(neighbors), format!("only one space can go {ending}")),
             ] {
                 assert_eq!(kind.to_string(), sentence, "for {kind:?}");
             }

@@ -104,9 +104,7 @@ pub fn stored(root: &Path, path: SourcePath<'_>) -> Result<Vec<u8>, Unstored> {
         if metadata.file_type().is_symlink() {
             return Err(Unstored::Symlink);
         }
-        // It was there when it was looked at, so if no entry is it, it's gone since.
         let name = stored_name(part, FileId::of(&metadata), &mut entries_count)?;
-        let name = name.ok_or(Unstored::Missing)?;
         assert!(!name.is_empty(), "an entry has a name");
         if !stored.is_empty() {
             stored.push(b'/');
@@ -155,15 +153,18 @@ enum Closeness {
     Exact,
 }
 
-/// Returns the name `part` is stored by in its directory, or nothing if no entry is it. Of
-/// several names that match, the closest to the part typed is taken. `file` is the file the
-/// typed part reaches. Every entry is looked at, and counted in `entries_count`, so the bound
-/// doesn't depend on the order a directory lists its entries in.
+/// Returns the name `part` is stored by in its directory. Of several names that match, the
+/// closest to the part typed is taken. `reached` is the file the typed part reaches. Every entry
+/// is looked at, and counted in `entries_count`, so the bound doesn't depend on the order a
+/// directory lists its entries in.
+///
+/// The part was there when it was looked at, so if no entry is it, it's gone since, and it's
+/// `Unstored::Missing`.
 fn stored_name(
     part: Part<'_>,
-    file: FileId,
+    reached: FileId,
     entries_count: &mut u32,
-) -> Result<Option<Vec<u8>>, Unstored> {
+) -> Result<Vec<u8>, Unstored> {
     assert!(*entries_count <= WALK_ENTRIES_MAX, "the search stops at the bound");
     let mut found: Option<(Vec<u8>, Closeness)> = None;
     for entry in fs::read_dir(part.directory).map_err(Unstored::DirectoryUnreadable)? {
@@ -173,19 +174,21 @@ fn stored_name(
             return Err(Unstored::TooManyEntries);
         }
         let name = entry.file_name();
-        let Some(closeness) = closeness(part, name.as_bytes(), file) else {
+        let Some(closeness) = closeness(part, name.as_bytes(), reached) else {
             continue;
         };
         if found.as_ref().is_none_or(|&(_, best)| closeness > best) {
             found = Some((name.as_bytes().to_vec(), closeness));
         }
     }
-    Ok(found.map(|(name, _)| name))
+    assert!(*entries_count <= WALK_ENTRIES_MAX, "the search stopped at the bound");
+    let (name, _) = found.ok_or(Unstored::Missing)?;
+    Ok(name)
 }
 
 /// Returns how closely `name`, an entry of the part's directory, matches the part typed, or
-/// nothing when it isn't a name for it. `file` is the file the typed part reaches.
-fn closeness(part: Part<'_>, name: &[u8], file: FileId) -> Option<Closeness> {
+/// nothing when it isn't a name for it. `reached` is the file the typed part reaches.
+fn closeness(part: Part<'_>, name: &[u8], reached: FileId) -> Option<Closeness> {
     let typed = part.typed.as_bytes();
     if name == typed {
         return Some(Closeness::Exact);
@@ -201,5 +204,5 @@ fn closeness(part: Part<'_>, name: &[u8], file: FileId) -> Option<Closeness> {
     // A name that isn't ASCII may fold to the one typed, and only the entry itself can say
     // whether it's the same file. One that can't be looked at isn't.
     let metadata = fs::symlink_metadata(part.directory.join(OsStr::from_bytes(name))).ok()?;
-    (FileId::of(&metadata) == file).then_some(Closeness::Folded)
+    (FileId::of(&metadata) == reached).then_some(Closeness::Folded)
 }

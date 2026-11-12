@@ -15,26 +15,30 @@ use crate::status::Status;
 /// Runs the command `arguments` ask for under `root`, the directory the command runs in, and
 /// returns the status to exit with.
 ///
-/// Everything it says goes to `stderr`, each message as soon as it's made. A misuse says what's
-/// wrong and ends with a usage line.
+/// Everything it says goes to `stderr`, each message as soon as it's made, and `stderr` is
+/// flushed before this returns. A misuse says what's wrong and ends with a usage line.
 ///
 /// # Errors
 ///
 /// Returns the error from `stderr` when something can't be written to it. There's nowhere left
 /// to say so, so the caller exits with the status of a failure.
 pub fn run(arguments: &[OsString], root: &Path, stderr: &mut impl Write) -> io::Result<Status> {
-    match command(arguments) {
+    let status = match command(arguments) {
         Err(misuse) => {
             write!(stderr, "stella: {misuse}\n{USAGE}")?;
-            Ok(Status::Failed)
+            Status::Failed
         }
-        Ok(Command::LintEvery) => Linter::new(root).every(stderr),
+        Ok(Command::LintEvery) => Linter::new(root).lint_every(stderr)?,
         Ok(Command::LintOne(path)) => {
-            let outcome = Linter::new(root).one(path);
+            let outcome = Linter::new(root).lint_one(path);
             if let Some(text) = outcome.message() {
                 stderr.write_all(text.as_bytes())?;
             }
-            Ok(outcome.status())
+            outcome.status()
         }
-    }
+    };
+    // A writer that buffers holds what was written until it's flushed, and only then says
+    // whether it could be written.
+    stderr.flush()?;
+    Ok(status)
 }

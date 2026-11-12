@@ -53,13 +53,23 @@ pub enum Kind {
     // Within lines.
     /// A line isn't indented one level for each `{` still open on it. This is how many are.
     IndentationNotDepth(u32),
-    /// Two tokens on a line, in this order, need one space between them, and have none.
-    SpaceMissing(TokenKind, TokenKind),
-    /// Two tokens on a line, in this order, have a space between them, and need none: the first
-    /// is `(`, or the second is `(` or `)`.
-    SpaceUnwanted(TokenKind, TokenKind),
-    /// Two tokens on a line, in this order, have more than one space between them, and need one.
-    SpacesExtra(TokenKind, TokenKind),
+    /// Two tokens on a line need one space between them, and have none.
+    SpaceMissing(Neighbors),
+    /// Two tokens on a line have a space between them, and need none: the first is `(`, or the
+    /// second is `(` or `)`.
+    SpaceUnwanted(Neighbors),
+    /// Two tokens on a line have more than one space between them, and need one.
+    SpacesExtra(Neighbors),
+}
+
+/// Neighbors are two tokens on a line, one right after the other, by their kinds. Each is named,
+/// so the two can't be given the wrong way round.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Neighbors {
+    /// The before is the kind of the token that comes first.
+    pub before: TokenKind,
+    /// The after is the kind of the token that comes right after it.
+    pub after: TokenKind,
 }
 
 /// A kind displays as the sentence that says what's wrong. A message prints it after the file,
@@ -85,17 +95,17 @@ impl fmt::Display for Kind {
                      still open on it."
                 );
             }
-            Self::SpaceMissing(first, second) => {
-                let (first, second) = (named(first), named(second));
-                return write!(f, "one space must go between {first} and {second}.");
+            Self::SpaceMissing(Neighbors { before, after }) => {
+                let (before, after) = (named(before), named(after));
+                return write!(f, "one space must go between {before} and {after}.");
             }
-            Self::SpaceUnwanted(first, second) => {
-                let (first, second) = (named(first), named(second));
-                return write!(f, "no space can go between {first} and {second}.");
+            Self::SpaceUnwanted(Neighbors { before, after }) => {
+                let (before, after) = (named(before), named(after));
+                return write!(f, "no space can go between {before} and {after}.");
             }
-            Self::SpacesExtra(first, second) => {
-                let (first, second) = (named(first), named(second));
-                return write!(f, "only one space can go between {first} and {second}.");
+            Self::SpacesExtra(Neighbors { before, after }) => {
+                let (before, after) = (named(before), named(after));
+                return write!(f, "only one space can go between {before} and {after}.");
             }
         };
         f.write_str(sentence)
@@ -110,8 +120,8 @@ const fn named(kind: TokenKind) -> &'static str {
         TokenKind::Returns => "`returns`",
         TokenKind::Name => "a name",
         TokenKind::TypeName => "a type's name",
-        TokenKind::ParenOpen => "`(`",
-        TokenKind::ParenClose => "`)`",
+        TokenKind::ParenthesisOpen => "`(`",
+        TokenKind::ParenthesisClose => "`)`",
         TokenKind::BraceOpen => "`{`",
         TokenKind::BraceClose => "`}`",
         TokenKind::Comment => "a comment",

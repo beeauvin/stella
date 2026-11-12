@@ -12,6 +12,11 @@
 //!
 //! A directory it can't read is found too, so the problem can be reported while every other file
 //! is still checked.
+//!
+//! The walk holds one path for each find and each directory still to read. Each of those was
+//! counted as an entry, so there are never more than `WALK_ENTRIES_MAX` of them, and one for the
+//! directory the walk starts in. A path is as long as the filesystem lets one be: on macOS,
+//! 1,024 bytes for a directory the walk can read, and 255 more for a name in it.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -35,7 +40,7 @@ const _: () = assert!(
 
 /// A find is something the walk found. Its path is relative to the directory the walk started in.
 #[derive(Debug)]
-pub enum Found {
+pub enum Find {
     /// This is a `.stella` source file, by its path as it's stored.
     Source(Vec<u8>),
     /// This is a directory the walk couldn't read. The directory the walk started in is called
@@ -48,7 +53,7 @@ pub enum Found {
     },
 }
 
-impl Found {
+impl Find {
     /// Returns the find's path, which it's sorted by.
     fn path(&self) -> &[u8] {
         match self {
@@ -79,8 +84,8 @@ impl fmt::Display for TooManyEntries {
 /// # Panics
 ///
 /// Never, whatever the directory holds. The assertions check the walk's own work.
-pub fn walk(root: &Path) -> Result<Vec<Found>, TooManyEntries> {
-    let mut found = Vec::new();
+pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
+    let mut finds = Vec::new();
     // These are the directories still to read, by their paths relative to the root, which is the
     // empty path.
     let mut directories: Vec<Vec<u8>> = vec![Vec::new()];
@@ -89,7 +94,7 @@ pub fn walk(root: &Path) -> Result<Vec<Found>, TooManyEntries> {
         let entries = match fs::read_dir(directory_path(root, &directory)) {
             Ok(entries) => entries,
             Err(error) => {
-                found.push(unreadable(directory, error));
+                finds.push(unreadable(directory, error));
                 continue;
             }
         };
@@ -98,7 +103,7 @@ pub fn walk(root: &Path) -> Result<Vec<Found>, TooManyEntries> {
                 match entry.and_then(|entry| Ok((entry.file_name(), entry.file_type()?))) {
                     Ok(named) => named,
                     Err(error) => {
-                        found.push(unreadable(directory.clone(), error));
+                        finds.push(unreadable(directory.clone(), error));
                         break;
                     }
                 };
@@ -110,7 +115,7 @@ pub fn walk(root: &Path) -> Result<Vec<Found>, TooManyEntries> {
             if name.starts_with(b".") || name == b"target" {
                 continue;
             }
-            let path = joined(&directory, name);
+            let path = Entry { directory: &directory, name }.path();
             if file_type.is_dir() {
                 directories.push(path);
                 let bounded = directories.len() <= usize_from_u32(WALK_ENTRIES_MAX);
@@ -126,26 +131,30 @@ pub fn walk(root: &Path) -> Result<Vec<Found>, TooManyEntries> {
             if is_source {
                 assert!(!path.starts_with(b"."), "every name that starts with `.` was skipped");
                 assert!(!path.starts_with(b"/"), "a find's path is relative to the root");
-                found.push(Found::Source(path));
+                finds.push(Find::Source(path));
             }
         }
     }
-    found.sort_by(|one, other| one.path().cmp(other.path()));
+    finds.sort_by(|one, other| one.path().cmp(other.path()));
     // Some filesystems can list a name twice if it's renamed away and back while the walk reads
     // its directory, so a path found twice is kept once.
-    found.dedup_by(|one, other| one.path() == other.path());
+    finds.dedup_by(|one, other| one.path() == other.path());
     assert!(entries_count <= WALK_ENTRIES_MAX, "the walk stopped at the bound");
-    let in_order = found.is_sorted_by(|one, other| one.path() < other.path());
+    let in_order = finds.is_sorted_by(|one, other| one.path() < other.path());
     assert!(in_order, "every find has a path of its own, and they're sorted");
-    Ok(found)
+    assert!(
+        finds.len() <= usize_from_u32(WALK_ENTRIES_MAX) + 1,
+        "every find was counted as an entry, but for the directory the walk started in"
+    );
+    Ok(finds)
 }
 
 /// Returns a find for `directory`, which couldn't be read for `error`. The empty path is the
 /// root, called `.`.
-fn unreadable(directory: Vec<u8>, error: io::Error) -> Found {
+fn unreadable(directory: Vec<u8>, error: io::Error) -> Find {
     let directory = if directory.is_empty() { b".".to_vec() } else { directory };
     assert!(!directory.starts_with(b"/"), "a find's path is relative to the root");
-    Found::Unreadable { directory, error }
+    Find::Unreadable { directory, error }
 }
 
 /// Returns the path to read `directory` by, which is relative to `root`. The empty path is the
@@ -154,8 +163,25 @@ fn directory_path(root: &Path, directory: &[u8]) -> PathBuf {
     if directory.is_empty() { root.to_path_buf() } else { root.join(OsStr::from_bytes(directory)) }
 }
 
-/// Returns the path of `name` in `directory`, where the empty path is the root.
-fn joined(directory: &[u8], name: &[u8]) -> Vec<u8> {
-    assert!(!name.is_empty(), "an entry has a name");
-    if directory.is_empty() { name.to_vec() } else { [directory, b"/", name].concat() }
+/// An entry is a name in a directory the walk is reading. Each is named, so the two can't be
+/// given the wrong way round.
+#[derive(Clone, Copy)]
+struct Entry<'walk> {
+    /// The directory's path, relative to the root, where the empty path is the root.
+    directory: &'walk [u8],
+    /// The entry's name in the directory.
+    name: &'walk [u8],
+}
+
+impl Entry<'_> {
+    /// Returns the entry's path, relative to the root.
+    fn path(self) -> Vec<u8> {
+        assert!(!self.name.is_empty(), "an entry has a name");
+        assert!(!self.name.contains(&b'/'), "an entry's name is one part of a path");
+        if self.directory.is_empty() {
+            self.name.to_vec()
+        } else {
+            [self.directory, b"/", self.name].concat()
+        }
+    }
 }

@@ -8,7 +8,7 @@
 //!
 //! `nest` can't refuse, so every source here is laid out the one way, and each row says what
 //! nesting should make of it, as an outline: written by hand, or for the largest, by a formula
-//! from how they're built. An oracle works out the whole table of lines from each line's text,
+//! from how they're built. An oracle works out the whole table of nodes from each line's text,
 //! and every row checks the oracle against its outline before `nest` sees any. An outline names
 //! lines by number, so `children` also states one whole table by hand, with its tokens' indices
 //! and where its blocks end. A seeded fuzz test checks random laid-out programs against the
@@ -18,11 +18,11 @@
 use std::cell::RefCell;
 use std::ptr;
 
-use stella_blocks::{Block, Blocks, Children, LINES_MAX, Line, LineBuffer, nest};
+use stella_blocks::{Blocks, Children, NODES_MAX, Node, NodeBuffer, nest};
 use stella_lexer::TokenKind::{
-    BraceClose, BraceOpen, Function, Name, ParenClose, ParenOpen, Returns, TypeName,
+    BraceClose, BraceOpen, Function, Name, ParenthesisClose, ParenthesisOpen, Returns, TypeName,
 };
-use stella_lexer::{TokenBuffer, lex};
+use stella_lexer::{Token, TokenBuffer, lex};
 use stella_linter_text::{LEVEL_SPACES, lint};
 use stella_linter_tokens::lint_tokens;
 use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
@@ -45,8 +45,8 @@ const CLOSES_BACK_OUT: &str = "a {\n    b {\n        c {\n            d {\n     
 
 thread_local! {
     /// Each test lexes and nests every source it tries into these buffers, as the command does.
-    static BUFFERS: RefCell<(TokenBuffer, LineBuffer)> =
-        RefCell::new((TokenBuffer::new(), LineBuffer::new()));
+    static BUFFERS: RefCell<(TokenBuffer, NodeBuffer)> =
+        RefCell::new((TokenBuffer::new(), NodeBuffer::new()));
 }
 
 /// Says whether `source` passes the text lint, the lexer and the tokens lint, so it can be nested.
@@ -63,59 +63,96 @@ fn lays_out(source: &str) -> bool {
 /// must hold the very tokens the lexer made.
 fn with_blocks<T>(source: &str, then: impl FnOnce(Blocks<'_, '_>) -> T) -> T {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
-    BUFFERS.with_borrow_mut(|(token_buffer, line_buffer)| {
+    BUFFERS.with_borrow_mut(|(token_buffer, node_buffer)| {
         let tokens = lex(text, token_buffer).expect("source should lex");
         let layout = lint_tokens(tokens).expect("source should be laid out the one way");
-        let blocks = nest(layout, line_buffer);
+        let blocks = nest(layout, node_buffer);
         let (given, back) = (tokens.as_slice(), blocks.tokens().as_slice());
         assert!(ptr::eq(given, back), "the blocks hold the tokens the lexer made");
         then(blocks)
     })
 }
 
-/// What nesting makes of a source, as the tests compare it: its lines, the lines `top` yields,
-/// and for each line, the lines `children` yields when it opens a block.
+/// A node with its parts in the open, as the tests state and compare one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlainNode {
+    /// The index of the node's first token, in the source's tokens.
+    first: u32,
+    /// How many tokens the node holds.
+    count: u32,
+    /// The index of the node whose block this one is directly in.
+    parent: Option<u32>,
+    /// The block the node opens.
+    block: Option<PlainBlock>,
+}
+
+/// A block with its parts in the open, as the tests state and compare one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlainBlock {
+    /// The index just past the block's last node.
+    end: u32,
+    /// The index of the `}` that closes the block, in the source's tokens.
+    close: u32,
+}
+
+/// Returns `node` with its parts in the open.
+fn plain(node: &Node) -> PlainNode {
+    let span = node.token_span();
+    PlainNode {
+        first: u32_from_usize(span.start),
+        count: u32_from_usize(span.len()),
+        parent: node.parent_index(),
+        block: node.block().map(|block| PlainBlock {
+            end: block.end_node_index(),
+            close: block.close_token_index(),
+        }),
+    }
+}
+
+/// What nesting makes of a source, as the tests compare it: its nodes, the nodes `top` yields,
+/// and for each node, the nodes `children` yields when it opens a block.
 #[derive(Debug, PartialEq, Eq)]
 struct Nested {
-    lines: Vec<Line>,
+    nodes: Vec<PlainNode>,
     top: Vec<u32>,
     children: Vec<Option<Vec<u32>>>,
 }
 
 /// Nests `source`, which must be laid out the one way, and returns what `nest` made of it. On the
-/// way, it checks that each line's tokens are its own, and that every token is in exactly one
-/// line, or is exactly one block's `}`.
+/// way, it checks that each node's tokens are its own, and that every token is in exactly one
+/// node, or is exactly one block's `}`.
 fn checked(source: &str) -> Nested {
     with_blocks(source, |blocks| {
-        let (tokens, lines) = (blocks.tokens().as_slice(), blocks.lines());
+        let (tokens, nodes) = (blocks.tokens().as_slice(), blocks.nodes());
         let mut seen = vec![0_u32; tokens.len()];
-        for line in lines {
-            let (first, count) = (usize_from_u32(line.first), usize_from_u32(line.count));
-            let own = &tokens[first..first + count];
-            assert!(ptr::eq(blocks.tokens_of(line), own), "a line's tokens are its own");
-            seen[first..first + count].iter_mut().for_each(|each| *each += 1);
-            if let Some(block) = line.block {
-                seen[usize_from_u32(block.close)] += 1;
+        for node in nodes {
+            let span = node.token_span();
+            let own = &tokens[span.clone()];
+            assert!(ptr::eq(blocks.tokens_of(node), own), "a node's tokens are its own");
+            seen[span].iter_mut().for_each(|each| *each += 1);
+            if let Some(block) = node.block() {
+                seen[usize_from_u32(block.close_token_index())] += 1;
             }
         }
         let once = seen.iter().all(|&each| each == 1);
-        assert!(once, "every token is in exactly one line, or is exactly one block's `}}`");
-        let children = (0..lines.len())
+        assert!(once, "every token is in exactly one node, or is exactly one block's `}}`");
+        let children = (0..nodes.len())
             .map(|index| {
-                let opens = lines[index].block.is_some();
-                opens.then(|| yielded(blocks.children(u32_from_usize(index)), lines.len()))
+                let opens = nodes[index].block().is_some();
+                opens.then(|| yielded(blocks.children(u32_from_usize(index)), nodes.len()))
             })
             .collect();
-        Nested { lines: lines.to_vec(), top: yielded(blocks.top(), lines.len()), children }
+        let top = yielded(blocks.top(), nodes.len());
+        Nested { nodes: nodes.iter().map(plain).collect(), top, children }
     })
 }
 
-/// Returns what `children` yield, but no more than one more than the `lines` there are, so
+/// Returns what `children` yield, but no more than one more than the `nodes` there are, so
 /// children that never stop make a test fail rather than hang. Children that are done must stay
 /// done.
-fn yielded(mut children: Children<'_>, lines: usize) -> Vec<u32> {
-    let found: Vec<u32> = children.by_ref().take(lines + 1).collect();
-    if found.len() <= lines {
+fn yielded(mut children: Children<'_>, nodes: usize) -> Vec<u32> {
+    let found: Vec<u32> = children.by_ref().take(nodes + 1).collect();
+    if found.len() <= nodes {
         assert_eq!(children.next(), None, "children that are done stay done");
     }
     found
@@ -164,10 +201,10 @@ fn blocks_outline(count: u32) -> Vec<Outlined> {
 
 #[test]
 fn the_smallest_program() {
-    // The smallest program is one line that opens a block, and comments around it are lines too.
+    // The smallest program is one line that opens a block, and comments around it are nodes too.
     let mut examples = Examples::new();
     nests(&mut examples, SMALLEST, &[(1, 7, 0, 2)]);
-    // Comments are lines, in the block they're in. Blank lines hold no tokens, so they aren't.
+    // Comments are nodes, in the block they're in. Blank lines hold no tokens, so they aren't.
     nests(
         &mut examples,
         "// above\n\nfunction main() returns Void {\n    // inside\n\n    //\n}\n\n// below\n",
@@ -178,10 +215,10 @@ fn the_smallest_program() {
 
 #[test]
 fn comments() {
-    // A comment is a line in the block it's in, at every depth, and its text opens and closes
+    // A comment is a node in the block it's in, at every depth, and its text opens and closes
     // nothing.
     let mut examples = Examples::new();
-    // A source of only comments is lines in no block.
+    // A source of only comments is nodes in no block.
     nests(&mut examples, "// only a comment\n", &[(1, 1, 0, 0)]);
     nests(&mut examples, "//\n\n// and another\n", &[(1, 1, 0, 0), (3, 1, 0, 0)]);
     // A comment at every depth is in the block it's in, before, between and after the blocks
@@ -281,7 +318,7 @@ fn nesting() {
 
 #[test]
 fn heads() {
-    // A line holds every token on it, whatever their kinds and however many there are.
+    // A node holds every token on its line, whatever their kinds and however many there are.
     let mut examples = Examples::new();
     // Every kind of token that can come before a `{`, in one line, and long lines in blocks.
     let every_kind = "x Y function returns(z)() {\n}\n";
@@ -292,37 +329,50 @@ fn heads() {
         &[(1, 9, 0, 4), (2, 6, 1, 3)],
     );
     check(examples);
-    // A line's tokens end with its `{`, and its block's close is the `}` that closes it.
+    // A node's tokens end with its `{`, and its block's close is the `}` that closes it.
     with_blocks(every_kind, |blocks| {
-        let line = blocks.lines()[0];
-        let kinds: Vec<_> = blocks.tokens_of(&line).iter().map(|token| token.kind).collect();
-        let every = [Name, TypeName, Function, Returns, ParenOpen, Name, ParenClose, ParenOpen];
-        assert_eq!(kinds, [&every[..], &[ParenClose, BraceOpen]].concat());
-        let close = usize_from_u32(line.block.expect("the line opens a block").close);
+        let node = blocks.nodes()[0];
+        let kinds: Vec<_> = blocks.tokens_of(&node).iter().map(Token::kind).collect();
+        let every = [
+            Name,
+            TypeName,
+            Function,
+            Returns,
+            ParenthesisOpen,
+            Name,
+            ParenthesisClose,
+            ParenthesisOpen,
+        ];
+        assert_eq!(kinds, [&every[..], &[ParenthesisClose, BraceOpen]].concat());
+        let close =
+            usize_from_u32(node.block().expect("the node opens a block").close_token_index());
         let close = blocks.tokens().as_slice()[close];
-        assert_eq!((close.kind, close.position), (BraceClose, Position::new(2, 1)));
+        assert_eq!(
+            (close.kind(), close.position()),
+            (BraceClose, Position::on_line(2).at_column(1))
+        );
     });
 }
 
 #[test]
 fn children() {
-    // The table of lines and their children, worked out by hand. The tokens are numbered in
+    // The table of nodes and their children, worked out by hand. The tokens are numbered in
     // order: `a` is 0 and its `{` is 1, up to the last `}`, which is 19.
-    let line = |first, count, parent, block| Line { first, count, parent, block };
-    let block = |end, close| Some(Block { end, close });
+    let node = |first, count, parent, block| PlainNode { first, count, parent, block };
+    let block = |end, close| Some(PlainBlock { end, close });
     let table = [
-        line(0, 2, None, block(6, 15)),
-        line(2, 2, Some(0), block(4, 10)),
-        line(4, 2, Some(1), block(4, 9)),
-        line(6, 2, Some(2), block(4, 8)),
-        line(11, 2, Some(0), block(5, 13)),
-        line(14, 1, Some(0), None),
-        line(16, 2, None, block(8, 19)),
-        line(18, 1, Some(6), None),
+        node(0, 2, None, block(6, 15)),
+        node(2, 2, Some(0), block(4, 10)),
+        node(4, 2, Some(1), block(4, 9)),
+        node(6, 2, Some(2), block(4, 8)),
+        node(11, 2, Some(0), block(5, 13)),
+        node(14, 1, Some(0), None),
+        node(16, 2, None, block(8, 19)),
+        node(18, 1, Some(6), None),
     ];
-    assert_eq!(oracle(CLOSES_BACK_OUT).nested.lines, table, "the oracle's table");
+    assert_eq!(oracle(CLOSES_BACK_OUT).nested.nodes, table, "the oracle's table");
     with_blocks(CLOSES_BACK_OUT, |blocks| {
-        assert_eq!(blocks.lines(), table);
+        assert_eq!(blocks.nodes().iter().map(plain).collect::<Vec<_>>(), table);
         // The children step over the blocks inside them, and an empty block has none.
         let children = |index| yielded(blocks.children(index), table.len());
         assert_eq!(yielded(blocks.top(), table.len()), [0, 6]);
@@ -360,11 +410,11 @@ fn the_largest_sources() {
     let mut outline: Vec<Outlined> = (1..=63).map(|line| (line, 2, line - 1, 128 - line)).collect();
     outline.push((64, 1, 63, 0));
     nests(&mut examples, &source_of(&deepest), &outline);
-    // The most lines: a comment on every line. The buffer has room for a line in every two
+    // The most nodes: a comment on every line. The buffer has room for a node in every two
     // bytes, so lines of code that open no block, once there are any, will fit too.
     assert!("//\n".repeat(5_461).len() <= size);
     assert!("//\n".repeat(5_462).len() > size);
-    const { assert!(LINES_MAX == SOURCE_BYTES_MAX / 2, "room for a line in every two bytes") };
+    const { assert!(NODES_MAX == SOURCE_BYTES_MAX / 2, "room for a node in every two bytes") };
     nests(&mut examples, &"//\n".repeat(5_461), &comments_outline(5_461));
     // Lines 256 apart, which a byte can't tell from lines side by side.
     let apart = format!("//\n{}//\n", "\n".repeat(255));
@@ -408,7 +458,7 @@ fn the_largest_sources() {
 #[test]
 fn one_buffer_serves_every_source() {
     // The same buffers serve every source in turn, as they do in the command, so each source's
-    // lines replace the last one's, however many more or fewer there were.
+    // nodes replace the last one's, however many more or fewer there were.
     let mut examples = Examples::new();
     let most_lines = "//\n".repeat(5_461);
     nests(&mut examples, &most_lines, &comments_outline(5_461));
@@ -419,15 +469,15 @@ fn one_buffer_serves_every_source() {
     check(examples);
     // And they're always in the same room, since a buffer is made once and never grows. These
     // buffers are new, so nothing has had a chance to grow them before the smallest source.
-    let (mut token_buffer, mut line_buffer) = (TokenBuffer::new(), LineBuffer::new());
+    let (mut token_buffer, mut node_buffer) = (TokenBuffer::new(), NodeBuffer::new());
     let most_blocks = "({\n}\n".repeat(3_276);
     let mut room = None;
     for source in [SMALLEST, &most_lines, "// x\n", &most_blocks, SMALLEST, &most_lines] {
         let text = lint(source.as_bytes()).expect("source should pass the text lint");
         let tokens = lex(text, &mut token_buffer).expect("source should lex");
         let layout = lint_tokens(tokens).expect("source should lay out");
-        let here = nest(layout, &mut line_buffer).lines().as_ptr().addr();
-        assert_eq!(*room.get_or_insert(here), here, "the lines are in the same room");
+        let here = nest(layout, &mut node_buffer).nodes().as_ptr().addr();
+        assert_eq!(*room.get_or_insert(here), here, "the nodes are in the same room");
     }
 }
 
@@ -455,14 +505,14 @@ fn tokens_in(code: &str) -> u32 {
 }
 
 /// Returns what nesting should make of `source`, which is laid out the one way, worked out from
-/// each line's text. A blank line isn't a line. A comment is one token, and a line of code is as
-/// many as `tokens_in` counts. A line's depth is its indentation, a level for each block it's
-/// in, and it's in the block opened by the latest line that ends with `{` one level out. A `}`
-/// isn't a line: it's at the depth of the line whose block it closes, and that block ends with
-/// the lines before it.
+/// each line's text. A blank line isn't a node. A comment is a node of one token, and a line of
+/// code is a node of as many as `tokens_in` counts. A node's depth is its line's indentation, a
+/// level for each block it's in, and it's in the block opened by the latest line that ends with
+/// `{` one level out. A `}` isn't a node: it's at the depth of the line whose block it closes,
+/// and that block ends with the nodes before it.
 fn oracle(source: &str) -> Expected {
-    let (mut lines, mut outline) = (Vec::<Line>::new(), Vec::<Outlined>::new());
-    // The lines that open the blocks still open, outermost first, so one for each level.
+    let (mut nodes, mut outline) = (Vec::<PlainNode>::new(), Vec::<Outlined>::new());
+    // The nodes that open the blocks still open, outermost first, so one for each level.
     let mut open: Vec<usize> = Vec::new();
     let mut token: u32 = 0;
     for (content, number) in source.split_terminator('\n').zip(1_u32..) {
@@ -476,12 +526,13 @@ fn oracle(source: &str) -> Expected {
         if code == "}" {
             assert_eq!(open.len(), depth + 1, "a `}}` is at the depth of the block it closes");
             let opener = open.pop().expect("a block is open");
-            lines[opener].block = Some(Block { end: u32_from_usize(lines.len()), close: token });
+            nodes[opener].block =
+                Some(PlainBlock { end: u32_from_usize(nodes.len()), close: token });
             outline[opener].3 = number;
         } else {
             assert_eq!(open.len(), depth, "a line is in every block still open");
             let parent = open.last().copied();
-            lines.push(Line {
+            nodes.push(PlainNode {
                 first: token,
                 count,
                 parent: parent.map(u32_from_usize),
@@ -489,25 +540,25 @@ fn oracle(source: &str) -> Expected {
             });
             outline.push((number, count, parent.map_or(0, |parent| outline[parent].0), 0));
             if code.ends_with('{') && !is_comment {
-                open.push(lines.len() - 1);
+                open.push(nodes.len() - 1);
             }
         }
         token += count;
     }
     assert!(open.is_empty(), "every block is closed");
-    let top = children_by_parent(&lines, None);
-    let children = (0..lines.len())
+    let top = children_by_parent(&nodes, None);
+    let children = (0..nodes.len())
         .map(|index| {
-            let opens = lines[index].block.is_some();
-            opens.then(|| children_by_parent(&lines, Some(u32_from_usize(index))))
+            let opens = nodes[index].block.is_some();
+            opens.then(|| children_by_parent(&nodes, Some(u32_from_usize(index))))
         })
         .collect();
-    Expected { nested: Nested { lines, top, children }, outline }
+    Expected { nested: Nested { nodes, top, children }, outline }
 }
 
-/// Returns the indices of the lines in `lines` whose parent is `parent`, in order.
-fn children_by_parent(lines: &[Line], parent: Option<u32>) -> Vec<u32> {
-    (0..lines.len()).filter(|&index| lines[index].parent == parent).map(u32_from_usize).collect()
+/// Returns the indices of the nodes in `nodes` whose parent is `parent`, in order.
+fn children_by_parent(nodes: &[PlainNode], parent: Option<u32>) -> Vec<u32> {
+    (0..nodes.len()).filter(|&index| nodes[index].parent == parent).map(u32_from_usize).collect()
 }
 
 // Fuzzing against the oracle, seeded so a failing case replays.
@@ -564,22 +615,22 @@ struct Reached {
 }
 
 impl Reached {
-    /// Counts the shapes `source`, which nests as `lines`, reaches.
-    fn count(&mut self, source: &str, lines: &[Line]) {
+    /// Counts the shapes `source`, which nests as `nodes`, reaches.
+    fn count(&mut self, source: &str, nodes: &[PlainNode]) {
         let mut depths: Vec<u32> = Vec::new();
-        for line in lines {
-            depths.push(line.parent.map_or(0, |parent| depths[usize_from_u32(parent)] + 1));
+        for node in nodes {
+            depths.push(node.parent.map_or(0, |parent| depths[usize_from_u32(parent)] + 1));
         }
         let opens_at_top =
-            lines.iter().filter(|line| line.parent.is_none() && line.block.is_some());
-        let is_empty = |(index, line): (usize, &Line)| {
-            line.block.is_some_and(|block| block.end == u32_from_usize(index) + 1)
+            nodes.iter().filter(|node| node.parent.is_none() && node.block.is_some());
+        let is_empty = |(index, node): (usize, &PlainNode)| {
+            node.block.is_some_and(|block| block.end == u32_from_usize(index) + 1)
         };
         self.deep += u32::from(depths.iter().any(|&depth| depth >= 6));
         self.many_at_top += u32::from(opens_at_top.count() >= 3);
-        self.empty_blocks += u32::from(lines.iter().enumerate().any(is_empty));
-        let in_block = |line: &Line| line.parent.is_some() && line.block.is_none();
-        self.comments_in_blocks += u32::from(lines.iter().any(in_block));
+        self.empty_blocks += u32::from(nodes.iter().enumerate().any(is_empty));
+        let in_block = |node: &PlainNode| node.parent.is_some() && node.block.is_none();
+        self.comments_in_blocks += u32::from(nodes.iter().any(in_block));
         self.blank_lines += u32::from(source.starts_with('\n') || source.contains("\n\n"));
     }
 }
@@ -596,7 +647,7 @@ fn fuzz_against_the_oracle() {
         let source = source_of(&random_program(&mut rng));
         assert!(lays_out(&source), "the generator lays out {}", shown(&source));
         let expected = oracle(&source).nested;
-        reached.count(&source, &expected.lines);
+        reached.count(&source, &expected.nodes);
         checks.push((source, expected));
     }
     // The fuzzing only means something if the sources reach the shapes that matter, often. This
@@ -608,7 +659,7 @@ fn fuzz_against_the_oracle() {
         ("three blocks at the top", many_at_top, 2_500),
         ("an empty block", empty_blocks, 9_000),
         ("a comment in a block", comments_in_blocks, 8_500),
-        ("a blank line", blank_lines, 8_000),
+        ("a blank node", blank_lines, 8_000),
     ] {
         assert!(count > floor, "only {count} reached {shape}");
     }

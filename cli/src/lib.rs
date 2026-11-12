@@ -33,4 +33,4 @@ pub use read::{READ_INTERRUPTIONS_MAX, SourceBuffer, Unread, fill, read};
 pub use run::run;
 pub use status::Status;
 pub use stored::{Unstored, stored};
-pub use walk::{Found, TooManyEntries, WALK_ENTRIES_MAX, walk};
+pub use walk::{Find, TooManyEntries, WALK_ENTRIES_MAX, walk};

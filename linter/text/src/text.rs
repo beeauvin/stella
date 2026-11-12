@@ -18,7 +18,7 @@
 //!    and code never holds `//`.
 //! 5. ASCII: every character on a line of code is ASCII.
 
-use stella_source::{SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
+use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 
 use crate::problem::{Kind, Problem};
 
@@ -93,7 +93,7 @@ fn lint_characters(bytes: &[u8]) -> Result<&str, Problem> {
     let mut column: u32 = 1;
     for character in valid.chars() {
         if let Some(kind) = character_kind(character) {
-            return Err(Problem::at(kind, line, column));
+            return Err(Problem::at(kind, Position::on_line(line).at_column(column)));
         }
         if character == '\n' {
             line += 1;
@@ -105,7 +105,7 @@ fn lint_characters(bytes: &[u8]) -> Result<&str, Problem> {
     if valid.len() == bytes.len() {
         Ok(valid)
     } else {
-        Err(Problem::at(Kind::NotUtf8, line, column))
+        Err(Problem::at(Kind::NotUtf8, Position::on_line(line).at_column(column)))
     }
 }
 
@@ -152,10 +152,16 @@ fn lint_lines(source: &str) -> Result<(), Problem> {
         let trimmed = content.trim_end_matches(' ');
         let indentation = trimmed.len() - trimmed.trim_start_matches(' ').len();
         if !indentation.is_multiple_of(usize_from_u32(LEVEL_SPACES)) {
-            return Err(Problem::at(Kind::IndentationNotFour, line, 1));
+            return Err(Problem::at(
+                Kind::IndentationNotFour,
+                Position::on_line(line).at_column(1),
+            ));
         }
         if trimmed.len() < content.len() {
-            return Err(Problem::at(Kind::TrailingSpace, line, column_after(trimmed)));
+            return Err(Problem::at(
+                Kind::TrailingSpace,
+                Position::on_line(line).at_column(column_after(trimmed)),
+            ));
         }
         if piece.ends_with('\n') {
             if content.is_empty() {
@@ -165,11 +171,14 @@ fn lint_lines(source: &str) -> Result<(), Problem> {
             }
         } else {
             // Only the file's last piece can be missing its `\n`.
-            return Err(Problem::at(Kind::NoFinalNewline, line, column_after(content)));
+            return Err(Problem::at(
+                Kind::NoFinalNewline,
+                Position::on_line(line).at_column(column_after(content)),
+            ));
         }
     }
     match blank_line_first {
-        Some(line) => Err(Problem::at(Kind::BlankLineAtEnd, line, 1)),
+        Some(line) => Err(Problem::at(Kind::BlankLineAtEnd, Position::on_line(line).at_column(1))),
         None => Ok(()),
     }
 }
@@ -193,7 +202,7 @@ fn lint_comments(source: &str) -> Result<(), Problem> {
             None => content.split_once("//").map(|(before, _)| (Kind::CommentSharesLine, before)),
         };
         if let Some((kind, before)) = problem {
-            return Err(Problem::at(kind, line, column_after(before)));
+            return Err(Problem::at(kind, Position::on_line(line).at_column(column_after(before))));
         }
     }
     Ok(())
@@ -211,7 +220,10 @@ fn lint_ascii(source: &str) -> Result<(), Problem> {
         // number before it.
         let found = content.chars().zip(1_u32..).find(|&(character, _)| !character.is_ascii());
         if let Some((character, column)) = found {
-            return Err(Problem::at(Kind::NotAscii(character), line, column));
+            return Err(Problem::at(
+                Kind::NotAscii(character),
+                Position::on_line(line).at_column(column),
+            ));
         }
     }
     Ok(())

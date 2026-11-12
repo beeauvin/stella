@@ -43,18 +43,46 @@ pub const TOKENS_MAX: u32 = SOURCE_BYTES_MAX - 1;
 /// A token is one piece of code, a name, a keyword, a symbol or a comment, and where it is.
 ///
 /// It holds where its text is rather than the text, so a buffer of tokens can serve one source
-/// after another. `Tokens::text` gives the text back.
+/// after another. `Tokens::text` gives the text back. Only `lex` makes one, so a token always
+/// names text that's in some source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token {
     /// The kind says what the token is.
-    pub kind: TokenKind,
+    kind: TokenKind,
     /// The position is the token's first character, by line and column.
-    pub position: Position,
-    /// The start is the token's first byte in the source, counted from 0.
-    pub start: u32,
-    /// The length is how many bytes the token has. A comment's length runs from its `//` to just
-    /// before the `\n`.
-    pub length: u32,
+    position: Position,
+    /// The start is the index of the token's first byte in the source.
+    start_index: u32,
+    /// The end is the index just past the token's last byte in the source. A comment ends just
+    /// before its `\n`.
+    end_index: u32,
+}
+
+impl Token {
+    /// Returns what the token is.
+    #[must_use]
+    pub const fn kind(&self) -> TokenKind {
+        self.kind
+    }
+
+    /// Returns where the token's first character is, by line and column.
+    #[must_use]
+    pub const fn position(&self) -> Position {
+        self.position
+    }
+
+    /// Returns where the token's text is in its source, as a range of bytes. A comment's runs
+    /// from its `//` to just before the `\n`.
+    ///
+    /// # Panics
+    ///
+    /// Never, for a token `lex` made, and nothing else makes one. The assertion checks the
+    /// lexer's own work.
+    #[must_use]
+    pub const fn span(&self) -> Range<usize> {
+        assert!(self.start_index < self.end_index, "a token is at least one byte");
+        usize_from_u32(self.start_index)..usize_from_u32(self.end_index)
+    }
 }
 
 const _: () = assert!(
@@ -74,9 +102,9 @@ pub enum TokenKind {
     /// A name that starts with a capital, like `Void`. It's Pascal case.
     TypeName,
     /// The symbol `(`.
-    ParenOpen,
+    ParenthesisOpen,
     /// The symbol `)`.
-    ParenClose,
+    ParenthesisClose,
     /// The symbol `{`.
     BraceOpen,
     /// The symbol `}`.
@@ -138,17 +166,15 @@ impl<'source, 'buffer> Tokens<'source, 'buffer> {
     ///
     /// # Panics
     ///
-    /// Panics if `token` isn't in this source: one from another source, or made by hand, can
-    /// reach past the source's end or into the middle of a character. One that happens to fit
-    /// gives some other text.
+    /// Panics if `token` isn't in this source: one from another source can reach past this
+    /// source's end or into the middle of a character. One that happens to fit gives some other
+    /// text, which nothing here can tell.
     #[must_use]
     pub fn text(&self, token: &Token) -> &'source str {
         let source = self.text.as_str();
-        let start = usize_from_u32(token.start);
-        let end = start + usize_from_u32(token.length);
-        assert!(start < end, "a token is at least one byte");
-        assert!(end <= source.len(), "a token is in its source");
-        source.get(start..end).expect("a token starts and ends between characters")
+        let span = token.span();
+        assert!(span.end <= source.len(), "a token is in its source");
+        source.get(span).expect("a token starts and ends between characters")
     }
 }
 
@@ -174,7 +200,7 @@ pub fn lex<'source, 'buffer>(
         "the text lint refuses a larger source"
     );
     assert!(source.ends_with('\n'), "the text lint refuses a last line without its `\\n`");
-    let capacity = buffer.tokens.capacity();
+    let capacity_before = buffer.tokens.capacity();
     buffer.tokens.clear();
     let mut line_start: usize = 0;
     for (content, number) in source.split_terminator('\n').zip(1_u32..) {
@@ -186,7 +212,7 @@ pub fn lex<'source, 'buffer>(
         buffer.tokens.len() <= usize_from_u32(TOKENS_MAX),
         "every token is at least a byte, and the last byte is in none"
     );
-    assert_eq!(buffer.tokens.capacity(), capacity, "the buffer never grows");
+    assert_eq!(buffer.tokens.capacity(), capacity_before, "the buffer never grows");
     Ok(Tokens { text, tokens: &buffer.tokens })
 }
 
@@ -209,8 +235,8 @@ impl Line<'_> {
         Token {
             kind,
             position: self.position(span.start),
-            start: u32_from_usize(self.start + span.start),
-            length: u32_from_usize(span.len()),
+            start_index: u32_from_usize(self.start + span.start),
+            end_index: u32_from_usize(self.start + span.end),
         }
     }
 
@@ -223,7 +249,7 @@ impl Line<'_> {
     /// is ASCII, either code or indentation, so its column is one more than its index.
     fn position(self, index: usize) -> Position {
         assert!(index < self.content.len(), "the byte is on the line");
-        Position::new(self.number, u32_from_usize(index) + 1)
+        Position::on_line(self.number).at_column(u32_from_usize(index) + 1)
     }
 }
 
@@ -244,8 +270,8 @@ fn lex_line(line: Line<'_>, tokens: &mut Vec<Token>) -> Result<(), Problem> {
     while index < bytes.len() {
         let (kind, length) = match bytes[index] {
             b' ' => (None, 1),
-            b'(' => (Some(TokenKind::ParenOpen), 1),
-            b')' => (Some(TokenKind::ParenClose), 1),
+            b'(' => (Some(TokenKind::ParenthesisOpen), 1),
+            b')' => (Some(TokenKind::ParenthesisClose), 1),
             b'{' => (Some(TokenKind::BraceOpen), 1),
             b'}' => (Some(TokenKind::BraceClose), 1),
             b'a'..=b'z' | b'A'..=b'Z' => {
@@ -287,7 +313,8 @@ fn word_kind(word: &[u8]) -> Result<TokenKind, (Kind, usize)> {
         b"function" => TokenKind::Function,
         b"returns" => TokenKind::Returns,
         [b'A'..=b'Z', ..] => TokenKind::TypeName,
-        _ => TokenKind::Name,
+        [b'a'..=b'z', ..] => TokenKind::Name,
+        _ => unreachable!("a word starts with a letter"),
     };
     Ok(kind)
 }
@@ -319,7 +346,8 @@ fn breaks_snake_case(word: &[u8], index: usize) -> bool {
         b'A'..=b'Z' => true,
         b'_' if word[index - 1] == b'_' => true,
         b'_' => index == word.len() - 1,
-        _ => false,
+        b'a'..=b'z' | b'0'..=b'9' => false,
+        other => unreachable!("a word holds only letters, digits and `_`, not byte {other}"),
     }
 }
 
@@ -332,6 +360,7 @@ fn breaks_pascal_case(word: &[u8], index: usize) -> bool {
     match word[index] {
         b'_' => true,
         b'A'..=b'Z' => word[index - 1].is_ascii_uppercase(),
-        _ => false,
+        b'a'..=b'z' | b'0'..=b'9' => false,
+        other => unreachable!("a word holds only letters, digits and `_`, not byte {other}"),
     }
 }

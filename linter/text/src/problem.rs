@@ -41,9 +41,9 @@ pub enum Problem {
 }
 
 impl Problem {
-    /// Returns a problem of `kind` at `line` and `column`.
-    pub(crate) const fn at(kind: Kind, line: u32, column: u32) -> Self {
-        Self::At { kind, position: Position::new(line, column) }
+    /// Returns a problem of `kind` at `position`.
+    pub(crate) const fn at(kind: Kind, position: Position) -> Self {
+        Self::At { kind, position }
     }
 
     /// Returns where the problem is, or `None` when it's with the file as a whole.

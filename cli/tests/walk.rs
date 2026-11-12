@@ -13,7 +13,7 @@ use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use stella_cli::{Found, TooManyEntries, walk};
+use stella_cli::{Find, TooManyEntries, walk};
 use stella_test_support::{Lock, fifo, write};
 
 /// Returns a new, empty directory for one test to work in.
@@ -29,8 +29,8 @@ fn found(root: &Path) -> Vec<(String, bool)> {
     found
         .iter()
         .map(|find| match find {
-            Found::Source(path) => (String::from_utf8_lossy(path).into_owned(), true),
-            Found::Unreadable { directory, .. } => {
+            Find::Source(path) => (String::from_utf8_lossy(path).into_owned(), true),
+            Find::Unreadable { directory, .. } => {
                 (String::from_utf8_lossy(directory).into_owned(), false)
             }
         })
@@ -101,7 +101,7 @@ fn a_directory_that_cant_be_read_is_found_too() {
     write(&directory, "programs/a.stella", b"");
     let lock = Lock::new(directory.join("locked"), 0o000);
     let walked = walk(&directory).expect("the directory holds few entries");
-    let [Found::Source(first), Found::Unreadable { directory: locked, error }, Found::Source(last)] =
+    let [Find::Source(first), Find::Unreadable { directory: locked, error }, Find::Source(last)] =
         walked.as_slice()
     else {
         unreachable!("the walk finds a source, the locked directory and a source: {walked:?}");
