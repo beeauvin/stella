@@ -30,7 +30,7 @@ use std::path::Path;
 use crate::cargo::{CLIPPY, REFUSE_WARNINGS, REPORT_ALL_AS_JSON, Report, Run};
 use crate::diagnostics::{Diagnostic, diagnostic};
 use crate::files::{Link, read_text, remove_directory, write_text};
-use crate::fixtures::{Expected, Fixture, Kind, fixtures, uncovered};
+use crate::fixtures::{Expectation, Fixture, Kind, fixtures, uncovered};
 use crate::table::{Origin, claims};
 
 /// These are what every fixture's manifest takes from the scratch workspace, as the crates of
@@ -88,15 +88,15 @@ impl Setup {
 
     /// Returns what the proof expects of `fixture` in this setup, and the words a failure puts
     /// before the fixture to say which setup it failed in.
-    fn expects(self, fixture: &Fixture) -> (Expected, &'static str) {
+    fn expects(self, fixture: &Fixture) -> (Expectation, &'static str) {
         assert!(self.builds(fixture), "a setup is asked only about a fixture it builds");
         match self {
             Self::AsConfigured | Self::AsConfiguredForCargo => (fixture.expected(), ""),
             Self::WithoutAllows => (
-                Expected::Reported(Origin::Clippy.code(fixture.lint())),
+                Expectation::Reported(Origin::Clippy.code(fixture.lint())),
                 "without its `allow` line, ",
             ),
-            Self::WithClippyDefaults => (Expected::Silent, "under Clippy's own settings, "),
+            Self::WithClippyDefaults => (Expectation::Silent, "under Clippy's own settings, "),
         }
     }
 }
@@ -161,16 +161,16 @@ fn failures_in(trial: Trial<'_>, diagnostics: &[Diagnostic]) -> Vec<String> {
         codes.dedup();
         let (expected, in_setup) = trial.setup.expects(fixture);
         match expected {
-            Expected::Reported(code) if codes.contains(&code.as_str()) => {}
-            Expected::Reported(code) => {
+            Expectation::Reported(code) if codes.contains(&code.as_str()) => {}
+            Expectation::Reported(code) => {
                 let found =
                     if codes.is_empty() { String::from("nothing") } else { codes.join(", ") };
                 failures.push(format!(
                     "{in_setup}`{directory}` should be reported as `{code}`, not {found}."
                 ));
             }
-            Expected::Silent if own.is_empty() => {}
-            Expected::Silent => {
+            Expectation::Silent if own.is_empty() => {}
+            Expectation::Silent => {
                 let found =
                     if codes.is_empty() { String::from("an error") } else { codes.join(", ") };
                 failures.push(format!(

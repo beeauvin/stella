@@ -15,7 +15,7 @@ use std::io::{self, Read};
 use std::iter::repeat_n;
 use std::path::PathBuf;
 
-use stella_cli::{READ_INTERRUPTIONS_MAX, SourceBuffer, Unreached, Unread, fill, read};
+use stella_cli::{AccessFailure, READ_INTERRUPTIONS_MAX, ReadFailure, SourceBuffer, fill, read};
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
 use stella_test_support::{ModeGuard, Scratch, fifo, write};
 
@@ -31,19 +31,19 @@ enum Step {
 }
 
 /// A reader that answers each read with the next step of a script, and then ends.
-struct Scripted {
+struct ScriptedReader {
     steps: Vec<Step>,
     next: usize,
 }
 
-impl Scripted {
+impl ScriptedReader {
     /// Returns a reader that follows `steps`.
     fn new(steps: &[Step]) -> Self {
         Self { steps: steps.to_vec(), next: 0 }
     }
 }
 
-impl Read for Scripted {
+impl Read for ScriptedReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let Some(&step) = self.steps.get(self.next) else {
             return Ok(0);
@@ -70,19 +70,21 @@ fn fresh_directory(name: &str) -> PathBuf {
 fn fill_reads_until_the_reader_ends() {
     // A reader may give its bytes a few at a time. `fill` keeps reading until it ends, and says
     // how many bytes that was. Only those bytes were written.
-    let mut reader = Scripted::new(&[Step::Bytes(b"ab"), Step::Bytes(b"c"), Step::Bytes(b"de")]);
+    let mut reader =
+        ScriptedReader::new(&[Step::Bytes(b"ab"), Step::Bytes(b"c"), Step::Bytes(b"de")]);
     let mut buffer = [b'-'; 8];
     assert_eq!(fill(&mut reader, &mut buffer).expect("the reader ends"), 5);
     assert_eq!(&buffer, b"abcde---");
     // A reader with nothing to give fills nothing.
-    assert_eq!(fill(&mut Scripted::new(&[]), &mut buffer).expect("the reader ends"), 0);
+    assert_eq!(fill(&mut ScriptedReader::new(&[]), &mut buffer).expect("the reader ends"), 0);
 }
 
 #[test]
 fn fill_stops_when_the_buffer_is_full() {
     // A reader with more than the buffer holds is read only as far as the buffer goes, and no
     // read is made once it's full.
-    let mut reader = Scripted::new(&[Step::Bytes(b"abc"), Step::Bytes(b"defgh"), Step::Fails]);
+    let mut reader =
+        ScriptedReader::new(&[Step::Bytes(b"abc"), Step::Bytes(b"defgh"), Step::Fails]);
     let mut buffer = [b'-'; 5];
     assert_eq!(fill(&mut reader, &mut buffer).expect("the buffer fills"), 5);
     assert_eq!(&buffer, b"abcde");
@@ -96,7 +98,7 @@ fn fill_waits_out_a_few_interruptions() {
     steps.extend(repeat_n(Step::Interrupted, usize_from_u32(READ_INTERRUPTIONS_MAX)));
     steps.push(Step::Bytes(b"cd"));
     let mut buffer = [b'-'; 8];
-    assert_eq!(fill(&mut Scripted::new(&steps), &mut buffer).expect("the reader ends"), 4);
+    assert_eq!(fill(&mut ScriptedReader::new(&steps), &mut buffer).expect("the reader ends"), 4);
     assert_eq!(&buffer, b"abcd----");
 }
 
@@ -105,7 +107,7 @@ fn fill_gives_up_on_too_many_interruptions() {
     // One interruption more than there may be is an error, so a reader that only ever says it
     // was interrupted can't hold the command forever.
     let steps = vec![Step::Interrupted; usize_from_u32(READ_INTERRUPTIONS_MAX) + 1];
-    let mut reader = Scripted::new(&steps);
+    let mut reader = ScriptedReader::new(&steps);
     let error = fill(&mut reader, &mut [0; 8]).expect_err("the reader interrupts too often");
     assert_eq!(error.kind(), io::ErrorKind::Interrupted);
     assert_eq!(reader.next, steps.len(), "every interruption was tried");
@@ -114,7 +116,7 @@ fn fill_gives_up_on_too_many_interruptions() {
 #[test]
 fn fill_returns_the_readers_error() {
     // A read that fails stops the fill with the reader's own error.
-    let mut reader = Scripted::new(&[Step::Bytes(b"ab"), Step::Fails, Step::Bytes(b"cd")]);
+    let mut reader = ScriptedReader::new(&[Step::Bytes(b"ab"), Step::Fails, Step::Bytes(b"cd")]);
     let error = fill(&mut reader, &mut [0; 8]).expect_err("the reader fails");
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
 }
@@ -179,31 +181,31 @@ fn one_buffer_serves_every_file() {
 fn what_cant_be_read_says_why() {
     // Each thing that isn't a readable file, with what `read` says of it and the sentence that
     // prints. A FIFO is answered at once, with nothing writing to it.
-    let directory = fresh_directory("unread");
+    let directory = fresh_directory("not-read");
     std::fs::create_dir(directory.join("folder.stella")).expect("the directory is ours to make");
     fifo(&directory.join("pipe.stella"));
     write(&directory, "locked.stella", b"// x\n");
     write(&directory, "file", b"");
     let _guard = ModeGuard::new(directory.join("locked.stella"), 0o000);
     let mut buffer = SourceBuffer::new();
-    let mut unread = |name: &str| {
+    let mut failure_of = |name: &str| {
         read(&directory.join(name), &mut buffer).map(<[u8]>::len).expect_err("it can't be read")
     };
-    let missing = unread("missing.stella");
-    assert!(matches!(missing, Unread::Unreached(Unreached::Missing)), "{missing:?}");
+    let missing = failure_of("missing.stella");
+    assert!(matches!(missing, ReadFailure::Access(AccessFailure::Missing)), "{missing:?}");
     assert_eq!(missing.to_string(), "this file doesn't exist.");
     for name in ["folder.stella", "pipe.stella"] {
-        let not_a_file = unread(name);
-        assert!(matches!(not_a_file, Unread::NotAFile), "for {name}: {not_a_file:?}");
+        let not_a_file = failure_of(name);
+        assert!(matches!(not_a_file, ReadFailure::NotAFile), "for {name}: {not_a_file:?}");
         assert_eq!(not_a_file.to_string(), "this isn't a file.", "for {name}");
     }
-    let locked = unread("locked.stella");
-    assert!(matches!(locked, Unread::Unreached(Unreached::Unreadable(_))), "{locked:?}");
+    let locked = failure_of("locked.stella");
+    assert!(matches!(locked, ReadFailure::Access(AccessFailure::Unreadable(_))), "{locked:?}");
     assert_eq!(locked.to_string(), "this file can't be read: Permission denied (os error 13).");
     // A file where a directory should be can't be looked through.
-    let through_a_file = unread("file/hello.stella");
+    let through_a_file = failure_of("file/hello.stella");
     assert!(
-        matches!(through_a_file, Unread::Unreached(Unreached::Unreadable(_))),
+        matches!(through_a_file, ReadFailure::Access(AccessFailure::Unreadable(_))),
         "{through_a_file:?}"
     );
     let sentence = "this file can't be read: Not a directory (os error 20).";

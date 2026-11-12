@@ -41,7 +41,7 @@ type Refusal = (Kind, u32, u32);
 
 /// What the tokens lint should make of a source: nothing, when it's laid out the one way, or its
 /// first problem.
-type Expected = Result<(), Refusal>;
+type Expectation = Result<(), Refusal>;
 
 /// This is the smallest program, laid out the one way.
 const SMALLEST: &str = "function main() returns Void {\n}\n";
@@ -124,7 +124,7 @@ const fn between(before: TokenKind, after: TokenKind) -> Neighbors {
 /// Lints and lexes `source`, which must pass both, and then lints its tokens. Returns nothing when
 /// the tokens lint passes them, or its problem. A layout that passes must hold the very tokens it
 /// was given.
-fn checked(source: &str) -> Expected {
+fn checked(source: &str) -> Expectation {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
     TOKEN_BUFFER.with_borrow_mut(|token_buffer| {
         let lexed = lex(text, token_buffer);
@@ -152,7 +152,7 @@ fn has_tokens(source: &str) -> bool {
 /// Checks that every example passes the text lint and the lexer, as the oracle assumes, and
 /// agrees with the oracle. Then checks every one against the tokens lint. So every example checks
 /// the oracle before the tokens lint sees any, even while the tokens lint can't run.
-fn check(examples: Examples<Expected>) {
+fn check(examples: Examples<Expectation>) {
     let examples = examples.take();
     for Example { source, expected, at } in &examples {
         let excerpt = excerpt(source);
@@ -252,7 +252,7 @@ fn kind_of(text: &str) -> TokenKind {
 
 /// Returns what the tokens lint should make of `source`, which passed the text lint and the
 /// lexer, worked out the way the layout page words it: nothing, or its first problem.
-fn oracle(source: &str) -> Expected {
+fn oracle(source: &str) -> Expectation {
     let lines = lines_of(source);
     oracle_lines(&lines)?;
     oracle_braces(&lines)?;

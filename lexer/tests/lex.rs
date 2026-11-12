@@ -31,7 +31,7 @@ use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 use stella_test_support::{Rng, slice};
 
 /// An expected token: its kind, its line and column, and its text.
-type Expected<'source> = (TokenKind, u32, u32, &'source str);
+type ExpectedToken<'source> = (TokenKind, u32, u32, &'source str);
 
 /// An expected refusal: the problem's kind, and its line and column.
 type Refusal = (Kind, u32, u32);
@@ -122,7 +122,7 @@ enum Role {
 
 /// Lints `source`, which must pass, and lexes it into the test's buffer, which must pass too.
 /// Returns its tokens.
-fn tokens(source: &str) -> Vec<Expected<'_>> {
+fn tokens(source: &str) -> Vec<ExpectedToken<'_>> {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
     TOKEN_BUFFER.with_borrow_mut(|token_buffer| {
         let lexed = lex(text, token_buffer);
@@ -136,8 +136,8 @@ fn tokens(source: &str) -> Vec<Expected<'_>> {
 fn expected_of<'source>(
     source: &'source str,
     tokens: &Tokens<'source, '_>,
-) -> Vec<Expected<'source>> {
-    let found: Vec<Expected<'source>> = tokens
+) -> Vec<ExpectedToken<'source>> {
+    let found: Vec<ExpectedToken<'source>> = tokens
         .as_slice()
         .iter()
         .map(|token| {
@@ -156,7 +156,7 @@ fn expected_of<'source>(
 /// Checks that each of `found` is a slice of `source` itself, at the line and column it gives,
 /// and that they come in order without overlapping. Everything between them, and after the last,
 /// is spaces and line ends, so nothing else was passed over. It walks the source once.
-fn assert_in_place(source: &str, found: &[Expected<'_>]) {
+fn assert_in_place(source: &str, found: &[ExpectedToken<'_>]) {
     let mut cursor = Cursor { line: 1, column: 1 };
     let mut index: usize = 0;
     for &(_, token_line, token_column, text) in found {
@@ -183,7 +183,7 @@ fn assert_passed_over(passed: &str) {
 
 /// Checks that `source` lexes to exactly `expected`. The oracle must agree first, so every
 /// example checks it too.
-fn lexes(source: &str, expected: &[Expected<'_>]) {
+fn lexes(source: &str, expected: &[ExpectedToken<'_>]) {
     assert!(lint(source.as_bytes()).is_ok(), "{source:?} should pass the text lint");
     assert_eq!(oracle(source).as_deref(), Ok(expected), "the oracle, for {source:?}");
     assert_eq!(tokens(source), expected, "for {source:?}");
@@ -208,7 +208,7 @@ fn refuses(source: &str, refusal: Refusal) {
 
 /// Returns the tokens of the smallest program's first line, `function main() returns Void {`,
 /// when it's line `line`.
-const fn first_line(line: u32) -> [Expected<'static>; 7] {
+const fn first_line(line: u32) -> [ExpectedToken<'static>; 7] {
     [
         (Function, line, 1, "function"),
         (Name, line, 10, "main"),
@@ -239,7 +239,7 @@ fn role(character: char) -> Role {
 
 /// Returns what the lexer should make of `source`, which passed the text lint, worked out the way
 /// the tokens and names pages word it: its tokens, or its first problem.
-fn oracle(source: &str) -> Result<Vec<Expected<'_>>, Refusal> {
+fn oracle(source: &str) -> Result<Vec<ExpectedToken<'_>>, Refusal> {
     let mut found = Vec::new();
     for (content, line) in source.split_terminator('\n').zip(1_u32..) {
         let code = content.trim_start_matches(' ');
@@ -530,7 +530,7 @@ fn every_short_word() {
         }
     }
     assert_eq!(sources.len(), 2 * (1 + 4 + 16 + 64 + 256));
-    let checks: Vec<(&str, Result<Vec<Expected<'_>>, Refusal>)> =
+    let checks: Vec<(&str, Result<Vec<ExpectedToken<'_>>, Refusal>)> =
         sources.iter().map(|source| (source.as_str(), oracle(source))).collect();
     for (_, expected) in &checks {
         let outcome = expected.as_ref().map(|found| found[0].0).map_err(|&(kind, ..)| kind);

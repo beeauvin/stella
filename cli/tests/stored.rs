@@ -17,7 +17,7 @@ use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use stella_cli::{Unreached, Unstored, stored};
+use stella_cli::{AccessFailure, SearchFailure, stored};
 use stella_linter_path::lint_path;
 use stella_test_support::{ModeGuard, Scratch, write};
 
@@ -26,12 +26,12 @@ const GOOD: &[u8] = b"function main() returns Void {\n}\n";
 
 /// A disk image mounted at a directory until it's dropped.
 #[cfg(target_os = "macos")]
-struct Mounted {
+struct Mount {
     mount_point: PathBuf,
 }
 
 #[cfg(target_os = "macos")]
-impl Mounted {
+impl Mount {
     /// Makes a small disk image in `directory` and mounts it at `volume` there. The volume tells
     /// names apart by case, as the filesystem around it needn't.
     fn in_directory(directory: &Path) -> Self {
@@ -63,7 +63,7 @@ impl Mounted {
 }
 
 #[cfg(target_os = "macos")]
-impl Drop for Mounted {
+impl Drop for Mount {
     fn drop(&mut self) {
         // A test may have failed already, so this mustn't panic too. An image left mounted is
         // unmounted by the next run, before it starts.
@@ -77,7 +77,7 @@ fn fresh_directory(name: &str) -> PathBuf {
 }
 
 /// Returns `typed`, which must pass the path lint, as it's stored under `root`.
-fn stored_of(root: &Path, typed: &str) -> Result<Vec<u8>, Unstored> {
+fn stored_of(root: &Path, typed: &str) -> Result<Vec<u8>, SearchFailure> {
     stored(root, lint_path(typed).expect("the typed path should pass the path lint"))
 }
 
@@ -86,7 +86,7 @@ fn stored_of(root: &Path, typed: &str) -> Result<Vec<u8>, Unstored> {
 // above, and a check with the two swapped asks the filesystem another question, so it fails.
 fn stores(root: &Path, typed: &str, expected: &str) {
     let found = stored_of(root, typed).map(|found| String::from_utf8_lossy(&found).into_owned());
-    let found = found.map_err(|unstored| unstored.to_string());
+    let found = found.map_err(|failure| failure.to_string());
     assert_eq!(found, Ok(String::from(expected)), "for {typed}");
 }
 
@@ -215,11 +215,11 @@ fn a_symlink_anywhere_in_a_path_is_refused() {
         "gone.stella",
         "loop.stella",
     ] {
-        let unstored = stored_of(&directory, typed).expect_err("a symlink is refused");
-        assert!(matches!(unstored, Unstored::Symlink), "for {typed}: {unstored:?}");
+        let failure = stored_of(&directory, typed).expect_err("a symlink is refused");
+        assert!(matches!(failure, SearchFailure::Symlink), "for {typed}: {failure:?}");
         let sentence =
             "the build path can't be established from a path that goes through a symlink.";
-        assert_eq!(unstored.to_string(), sentence, "for {typed}");
+        assert_eq!(failure.to_string(), sentence, "for {typed}");
     }
 }
 
@@ -228,17 +228,17 @@ fn what_cant_be_found_says_why() {
     // Each path that can't be followed, with what's said of it and the sentence that prints: a
     // name that's nowhere, a file where a directory should be, and directories that can't be
     // searched or listed.
-    let directory = fresh_directory("unstored");
+    let directory = fresh_directory("not-found");
     write(&directory, "file", b"");
     write(&directory, "locked/hello.stella", GOOD);
     write(&directory, "listless/hello.stella", GOOD);
     let _locked = ModeGuard::new(directory.join("locked"), 0o000);
     let _listless = ModeGuard::new(directory.join("listless"), 0o100);
-    let unstored = |typed: &str| stored_of(&directory, typed).expect_err("it can't be found");
+    let failure_of = |typed: &str| stored_of(&directory, typed).expect_err("it can't be found");
     for typed in ["missing.stella", "missing/hello.stella"] {
-        let missing = unstored(typed);
+        let missing = failure_of(typed);
         assert!(
-            matches!(missing, Unstored::Unreached(Unreached::Missing)),
+            matches!(missing, SearchFailure::Access(AccessFailure::Missing)),
             "for {typed}: {missing:?}"
         );
         assert_eq!(missing.to_string(), "this file doesn't exist.", "for {typed}");
@@ -255,8 +255,8 @@ fn what_cant_be_found_says_why() {
             "this file can't be read: Permission denied (os error 13).",
         ),
     ] {
-        let unreadable = unstored(typed);
-        let Unstored::Unreached(Unreached::Unreadable(error)) = &unreadable else {
+        let unreadable = failure_of(typed);
+        let SearchFailure::Access(AccessFailure::Unreadable(error)) = &unreadable else {
             unreachable!("{typed} can't be looked at, but: {unreadable:?}");
         };
         assert_eq!(error.kind(), kind, "for {typed}");
@@ -264,8 +264,8 @@ fn what_cant_be_found_says_why() {
     }
     // A directory that can be searched but not listed lets the file be looked at, but not found
     // among its entries.
-    let listless = unstored("listless/hello.stella");
-    assert!(matches!(listless, Unstored::DirectoryUnreadable(_)), "{listless:?}");
+    let listless = failure_of("listless/hello.stella");
+    assert!(matches!(listless, SearchFailure::DirectoryUnreadable(_)), "{listless:?}");
     let sentence =
         "a directory on the way to this file can't be read: Permission denied (os error 13).";
     assert_eq!(listless.to_string(), sentence);
@@ -284,7 +284,7 @@ fn a_path_through_a_mount_point_is_found() {
     // unmounted. Nothing is mounted there otherwise, so this is allowed to find nothing.
     _ = unmount(&parent.join("mount-point/volume"));
     let directory = fresh_directory("mount-point");
-    let mounted = Mounted::in_directory(&directory);
+    let mounted = Mount::in_directory(&directory);
     write(&mounted.mount_point, "hello.stella", GOOD);
     write(&mounted.mount_point, "programs/hello.stella", GOOD);
     write(&mounted.mount_point, "Shout.stella", GOOD);
@@ -305,5 +305,5 @@ fn a_path_through_a_mount_point_is_found() {
     stores(&directory, "volume/programs/hello.stella", "volume/programs/hello.stella");
     // The volume tells names apart by case, so a name in another case reaches nothing there.
     let missing = stored_of(&directory, "volume/shout.stella").expect_err("nothing is there");
-    assert!(matches!(missing, Unstored::Unreached(Unreached::Missing)), "{missing:?}");
+    assert!(matches!(missing, SearchFailure::Access(AccessFailure::Missing)), "{missing:?}");
 }

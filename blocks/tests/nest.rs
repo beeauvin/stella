@@ -35,7 +35,7 @@ use stella_test_support::{
 /// One line of an outline: the line's number in the source, how many tokens it holds, the number
 /// of the line whose block it's in, or 0 for none, and the number of the line whose `}` closes
 /// the block it opens, or 0 for none.
-type Outlined = (u32, u32, u32, u32);
+type OutlineLine = (u32, u32, u32, u32);
 
 /// This is the smallest program, laid out the one way.
 const SMALLEST: &str = "function main() returns Void {\n}\n";
@@ -82,21 +82,21 @@ struct PlainBlock {
 /// What nesting makes of a source, as the tests compare it: its nodes, the nodes `top` yields,
 /// and for each node, the nodes `children` yields when it opens a block.
 #[derive(Debug, PartialEq, Eq)]
-struct Nested {
+struct Nesting {
     nodes: Vec<PlainNode>,
     top: Vec<u32>,
     children: Vec<Option<Vec<u32>>>,
 }
 
 /// What the oracle makes of a source: what nesting should make of it, and its outline.
-struct Expected {
-    nested: Nested,
-    outline: Vec<Outlined>,
+struct Expectation {
+    nested: Nesting,
+    outline: Vec<OutlineLine>,
 }
 
 /// The shapes the fuzzing must reach often, as counts of the sources that reach each.
 #[derive(Debug, Default)]
-struct Reached {
+struct ShapeCounts {
     deep: u32,
     many_at_top: u32,
     empty_blocks: u32,
@@ -104,7 +104,7 @@ struct Reached {
     blank_lines: u32,
 }
 
-impl Reached {
+impl ShapeCounts {
     /// Counts the shapes `source`, which nests as `nodes`, reaches.
     fn count(&mut self, source: &str, nodes: &[PlainNode]) {
         let mut depths: Vec<u32> = Vec::new();
@@ -166,7 +166,7 @@ fn plain(node: &Node) -> PlainNode {
 /// Nests `source`, which must be laid out the one way, and returns what `nest` made of it. On the
 /// way, it checks that each node's tokens are its own, and that every token is in exactly one
 /// node, or is exactly one block's `}`.
-fn checked(source: &str) -> Nested {
+fn checked(source: &str) -> Nesting {
     with_blocks(source, |blocks| {
         let (tokens, nodes) = (blocks.tokens().as_slice(), blocks.nodes());
         let mut seen = vec![0_u32; tokens.len()];
@@ -188,7 +188,7 @@ fn checked(source: &str) -> Nested {
             })
             .collect();
         let top = yielded(blocks.top(), nodes.len());
-        Nested { nodes: nodes.iter().map(plain).collect(), top, children }
+        Nesting { nodes: nodes.iter().map(plain).collect(), top, children }
     })
 }
 
@@ -205,14 +205,14 @@ fn yielded(mut children: Children<'_>, nodes: usize) -> Vec<u32> {
 
 /// Adds `source` to `examples`. It must be laid out the one way, and nest as `outline` says.
 #[track_caller]
-fn nests(examples: &mut Examples<Vec<Outlined>>, source: &str, outline: &[Outlined]) {
+fn nests(examples: &mut Examples<Vec<OutlineLine>>, source: &str, outline: &[OutlineLine]) {
     examples.add(source, outline.to_vec());
 }
 
 /// Checks that every example is laid out the one way, as `nest` needs, and that the oracle agrees
 /// with its outline. Then checks every one against `nest`. So every example checks the oracle
 /// before `nest` sees any, even while `nest` can't run.
-fn check(examples: Examples<Vec<Outlined>>) {
+fn check(examples: Examples<Vec<OutlineLine>>) {
     let examples = examples.take();
     let mut expected = Vec::new();
     for Example { source, expected: outline, at } in &examples {
@@ -229,18 +229,18 @@ fn check(examples: Examples<Vec<Outlined>>) {
 
 /// Returns the outline of `nested_blocks(depth)`: each line that opens a block is in the one
 /// before it, and is closed by the `}` as far from the end as it is from the start.
-fn nested_outline(depth: u32) -> Vec<Outlined> {
+fn nested_outline(depth: u32) -> Vec<OutlineLine> {
     (1..=depth).map(|line| (line, 2, line - 1, 2 * depth + 1 - line)).collect()
 }
 
 /// Returns the outline of `count` comments, one on each line from line 1, in no block.
-fn comments_outline(count: u32) -> Vec<Outlined> {
+fn comments_outline(count: u32) -> Vec<OutlineLine> {
     (1..=count).map(|line| (line, 1, 0, 0)).collect()
 }
 
 /// Returns the outline of `count` empty blocks, one after another from line 1, each opened by a
 /// line of two tokens and closed on the next line.
-fn blocks_outline(count: u32) -> Vec<Outlined> {
+fn blocks_outline(count: u32) -> Vec<OutlineLine> {
     (0..count).map(|block| (2 * block + 1, 2, 0, 2 * block + 2)).collect()
 }
 
@@ -265,8 +265,8 @@ fn tokens_in(code: &str) -> u32 {
 /// level for each block it's in, and it's in the block opened by the latest line that ends with
 /// `{` one level out. A `}` isn't a node: it's at the depth of the line whose block it closes,
 /// and that block ends with the nodes before it.
-fn oracle(source: &str) -> Expected {
-    let (mut nodes, mut outline) = (Vec::<PlainNode>::new(), Vec::<Outlined>::new());
+fn oracle(source: &str) -> Expectation {
+    let (mut nodes, mut outline) = (Vec::<PlainNode>::new(), Vec::<OutlineLine>::new());
     // The nodes that open the blocks still open, outermost first, so one for each level.
     let mut open: Vec<usize> = Vec::new();
     let mut token: u32 = 0;
@@ -308,7 +308,7 @@ fn oracle(source: &str) -> Expected {
             opens.then(|| children_by_parent(&nodes, Some(u32_from_usize(index))))
         })
         .collect();
-    Expected { nested: Nested { nodes, top, children }, outline }
+    Expectation { nested: Nesting { nodes, top, children }, outline }
 }
 
 /// Returns the indices of the nodes in `nodes` whose parent is `parent`, in order.
@@ -574,7 +574,8 @@ fn the_largest_sources() {
     let mut deepest = nested_blocks(63);
     deepest.insert(63, format!("{}//", indent(63)));
     assert!(source_of(&deepest).len() <= size);
-    let mut outline: Vec<Outlined> = (1..=63).map(|line| (line, 2, line - 1, 128 - line)).collect();
+    let mut outline: Vec<OutlineLine> =
+        (1..=63).map(|line| (line, 2, line - 1, 128 - line)).collect();
     outline.push((64, 1, 63, 0));
     nests(&mut examples, &source_of(&deepest), &outline);
     // The most nodes: a comment on every line. The buffer has room for a node in every two
@@ -654,7 +655,7 @@ fn fuzz_against_the_oracle() {
     // oracle says of it. The shapes that matter are counted, so the test fails if the programs
     // stop reaching one.
     let mut rng = Rng::new(0x424C_4F43_4B53_0001);
-    let mut reached = Reached::default();
+    let mut reached = ShapeCounts::default();
     let mut checks = Vec::new();
     for _ in 0_u32..20_000 {
         let source = source_of(&random_program(&mut rng));
@@ -666,7 +667,7 @@ fn fuzz_against_the_oracle() {
     // The fuzzing only means something if the sources reach the shapes that matter, often. This
     // is checked before anything is nested, so it holds whatever `nest` does. Each floor is about
     // half of what the seed reaches.
-    let Reached { deep, many_at_top, empty_blocks, comments_in_blocks, blank_lines } = reached;
+    let ShapeCounts { deep, many_at_top, empty_blocks, comments_in_blocks, blank_lines } = reached;
     for (shape, count, floor) in [
         ("nesting six deep", deep, 3_000),
         ("three blocks at the top", many_at_top, 2_500),

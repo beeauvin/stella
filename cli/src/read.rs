@@ -14,7 +14,7 @@ use std::path::Path;
 
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
 
-use crate::filesystem::{Unreached, look_through, open};
+use crate::filesystem::{AccessFailure, look_through, open};
 
 /// This is how many bytes a source buffer holds: one more than the largest source.
 const BUFFER_BYTES: usize = usize_from_u32(SOURCE_BYTES_MAX) + 1;
@@ -51,20 +51,20 @@ impl Default for SourceBuffer {
     }
 }
 
-/// Unread says why a file couldn't be read.
+/// A read failure is why a file couldn't be read.
 #[derive(Debug)]
-pub enum Unread {
+pub enum ReadFailure {
     /// The file couldn't be reached: nothing is there, or it can't be looked at, opened or read.
-    Unreached(Unreached),
+    Access(AccessFailure),
     /// What's at the path isn't a regular file: it's a directory, say, or a FIFO.
     NotAFile,
 }
 
 /// It displays as the sentence that says what's wrong.
-impl fmt::Display for Unread {
+impl fmt::Display for ReadFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unreached(unreached) => unreached.fmt(f),
+            Self::Access(failure) => failure.fmt(f),
             Self::NotAFile => f.write_str("this isn't a file."),
         }
     }
@@ -86,7 +86,7 @@ impl fmt::Display for Unread {
 pub fn read<'buffer>(
     path: &Path,
     buffer: &'buffer mut SourceBuffer,
-) -> Result<&'buffer [u8], Unread> {
+) -> Result<&'buffer [u8], ReadFailure> {
     // TS-CLOSE-USE: the file is checked before it's opened, and not after, since opening
     // something that isn't a file, like a FIFO, can wait forever. Something swapped in between
     // the two could still do that, or be a symlink by the time it's opened. Opening without
@@ -94,13 +94,13 @@ pub fn read<'buffer>(
     // the next, and even then a directory on the way could be swapped. Only someone who can
     // already write where the program is could do either, so the gap is left open rather than
     // closed halfway.
-    let metadata = look_through(path).map_err(Unread::Unreached)?;
+    let metadata = look_through(path).map_err(ReadFailure::Access)?;
     if !metadata.is_file() {
-        return Err(Unread::NotAFile);
+        return Err(ReadFailure::NotAFile);
     }
-    let mut file = open(path).map_err(Unread::Unreached)?;
+    let mut file = open(path).map_err(ReadFailure::Access)?;
     let length = fill(&mut file, &mut buffer.bytes)
-        .map_err(|error| Unread::Unreached(Unreached::from_reading(error)))?;
+        .map_err(|error| ReadFailure::Access(AccessFailure::from_reading(error)))?;
     assert!(length <= BUFFER_BYTES, "a fill writes no more than the buffer holds");
     // Only what this read wrote is returned, never what an earlier file left further on.
     Ok(&buffer.bytes[..length])

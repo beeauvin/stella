@@ -32,7 +32,7 @@ use std::path::Path;
 
 use stella_linter_path::SourcePath;
 
-use crate::filesystem::{Reason, Unreached, list, look_at};
+use crate::filesystem::{AccessFailure, Reason, list, look_at};
 use crate::walk::WALK_ENTRIES_MAX;
 
 /// This is the most entries the search looks at, across every directory on the way to one
@@ -44,14 +44,14 @@ const _: () = assert!(
     "`TooManyEntries`'s sentence names the bound, so a new bound needs a new sentence"
 );
 
-/// Unstored says why a path couldn't be found as it's stored.
+/// A search failure is why a path couldn't be found as it's stored.
 #[derive(Debug)]
-pub enum Unstored {
+pub enum SearchFailure {
     /// A part of the path is a symlink.
     Symlink,
     /// A part of the path couldn't be reached: it names nothing, or did when it was looked at
     /// and has gone since, or it can't be looked at.
-    Unreached(Unreached),
+    Access(AccessFailure),
     /// A directory on the way couldn't be listed.
     DirectoryUnreadable(Reason),
     /// The directories on the way hold more than `STORED_ENTRIES_MAX` entries between them.
@@ -59,13 +59,13 @@ pub enum Unstored {
 }
 
 /// It displays as the sentence that says what's wrong.
-impl fmt::Display for Unstored {
+impl fmt::Display for SearchFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Symlink => f.write_str(
                 "the build path can't be established from a path that goes through a symlink.",
             ),
-            Self::Unreached(unreached) => unreached.fmt(f),
+            Self::Access(failure) => failure.fmt(f),
             Self::DirectoryUnreadable(reason) => {
                 write!(f, "a directory on the way to this file can't be read: {reason}.")
             }
@@ -88,7 +88,7 @@ impl fmt::Display for Unstored {
 ///
 /// Never, whatever the path or the filesystem holds. The assertions check this function's own
 /// work.
-pub fn stored(root: &Path, typed: SourcePath<'_>) -> Result<Vec<u8>, Unstored> {
+pub fn stored(root: &Path, typed: SourcePath<'_>) -> Result<Vec<u8>, SearchFailure> {
     let mut stored: Vec<u8> = Vec::new();
     // This counts the entries looked at across every directory on the way, to keep it bounded.
     let mut entries_count: u32 = 0;
@@ -96,9 +96,9 @@ pub fn stored(root: &Path, typed: SourcePath<'_>) -> Result<Vec<u8>, Unstored> {
         assert!(!typed.is_empty(), "the path lint refuses an empty part");
         let directory = root.join(OsStr::from_bytes(&stored));
         let part = Part { directory: &directory, typed };
-        let metadata = look_at(&directory.join(typed)).map_err(Unstored::Unreached)?;
+        let metadata = look_at(&directory.join(typed)).map_err(SearchFailure::Access)?;
         if metadata.file_type().is_symlink() {
-            return Err(Unstored::Symlink);
+            return Err(SearchFailure::Symlink);
         }
         let name = stored_name(part, FileId::of(&metadata), &mut entries_count)?;
         assert!(!name.is_empty(), "an entry has a name");
@@ -160,14 +160,14 @@ fn stored_name(
     part: Part<'_>,
     reached: FileId,
     entries_count: &mut u32,
-) -> Result<Vec<u8>, Unstored> {
+) -> Result<Vec<u8>, SearchFailure> {
     assert!(*entries_count <= STORED_ENTRIES_MAX, "the search stops at the bound");
     let mut found: Option<(Vec<u8>, Closeness)> = None;
-    for entry in list(part.directory).map_err(Unstored::DirectoryUnreadable)? {
-        let entry = entry.map_err(Unstored::DirectoryUnreadable)?;
+    for entry in list(part.directory).map_err(SearchFailure::DirectoryUnreadable)? {
+        let entry = entry.map_err(SearchFailure::DirectoryUnreadable)?;
         *entries_count += 1;
         if *entries_count > STORED_ENTRIES_MAX {
-            return Err(Unstored::TooManyEntries);
+            return Err(SearchFailure::TooManyEntries);
         }
         let name = entry.name();
         let Some(closeness) = closeness(part, name.as_bytes(), reached) else {
@@ -178,7 +178,7 @@ fn stored_name(
         }
     }
     assert!(*entries_count <= STORED_ENTRIES_MAX, "the search stopped at the bound");
-    let (name, _) = found.ok_or(Unstored::Unreached(Unreached::Missing))?;
+    let (name, _) = found.ok_or(SearchFailure::Access(AccessFailure::Missing))?;
     Ok(name)
 }
 

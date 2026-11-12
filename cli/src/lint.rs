@@ -22,7 +22,7 @@ use stella_source::Position;
 use crate::message::{Place, message};
 use crate::read::{SourceBuffer, read};
 use crate::status::Status;
-use crate::stored::{Unstored, stored};
+use crate::stored::{SearchFailure, stored};
 use crate::walk::{Find, walk};
 
 /// An outcome is what linting one program came to.
@@ -92,14 +92,14 @@ impl<'root> Linter<'root> {
         // found as it's stored before it's checked again.
         match stored(self.root, typed_path) {
             Ok(as_stored) => self.lint_stored(ProgramPaths { typed, stored: &as_stored }),
-            Err(unstored @ Unstored::Symlink) => {
-                Outcome::Refused(message(typed, Place::File, unstored))
+            Err(failure @ SearchFailure::Symlink) => {
+                Outcome::Refused(message(typed, Place::File, failure))
             }
             Err(
-                unstored @ (Unstored::Unreached(_)
-                | Unstored::DirectoryUnreadable(_)
-                | Unstored::TooManyEntries),
-            ) => Outcome::Failed(message(typed, Place::File, unstored)),
+                failure @ (SearchFailure::Access(_)
+                | SearchFailure::DirectoryUnreadable(_)
+                | SearchFailure::TooManyEntries),
+            ) => Outcome::Failed(message(typed, Place::File, failure)),
         }
     }
 
@@ -166,7 +166,7 @@ impl<'root> Linter<'root> {
         let file = self.root.join(stored_path.normalized());
         let source = match read(&file, &mut self.source) {
             Ok(source) => source,
-            Err(unread) => return Outcome::Failed(message(typed, Place::File, unread)),
+            Err(failure) => return Outcome::Failed(message(typed, Place::File, failure)),
         };
         match check(source, &mut self.tokens, &mut self.nodes) {
             Ok(()) => Outcome::Passed,

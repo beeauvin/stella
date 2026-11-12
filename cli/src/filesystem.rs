@@ -8,7 +8,7 @@
 //! search for a path as it's stored and the reading of a file each ask through it, so each of
 //! the filesystem's failures becomes one of the command's own errors in one place, and is worded
 //! there. Reading the bytes of a file that's open is `read`'s work, and a failure there comes
-//! back here to be made an `Unreached` like any other.
+//! back here to be made an `AccessFailure` like any other.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -40,16 +40,16 @@ impl fmt::Display for Reason {
     }
 }
 
-/// Unreached says why the filesystem couldn't give what's at a path.
+/// An access failure is why the filesystem couldn't give what's at a path.
 #[derive(Debug)]
-pub enum Unreached {
+pub enum AccessFailure {
     /// Nothing is at the path.
     Missing,
     /// What's at the path couldn't be looked at, opened or read.
     Unreadable(Reason),
 }
 
-impl Unreached {
+impl AccessFailure {
     /// Returns why, from the `error` a file that was open gave when it was read. The file was
     /// there to open, so whatever went wrong, it isn't missing.
     pub(crate) const fn from_reading(error: io::Error) -> Self {
@@ -66,7 +66,7 @@ impl Unreached {
 }
 
 /// It displays as the sentence that says what's wrong.
-impl fmt::Display for Unreached {
+impl fmt::Display for AccessFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Missing => f.write_str("this file doesn't exist."),
@@ -112,18 +112,18 @@ pub(crate) fn list(path: &Path) -> Result<Listing, Reason> {
 }
 
 /// Looks at what's at `path` itself. If it's a symlink, the symlink is what's looked at.
-pub(crate) fn look_at(path: &Path) -> Result<Metadata, Unreached> {
-    fs::symlink_metadata(path).map_err(Unreached::from_reaching)
+pub(crate) fn look_at(path: &Path) -> Result<Metadata, AccessFailure> {
+    fs::symlink_metadata(path).map_err(AccessFailure::from_reaching)
 }
 
 /// Looks at what `path` leads to, following a symlink there.
-pub(crate) fn look_through(path: &Path) -> Result<Metadata, Unreached> {
-    fs::metadata(path).map_err(Unreached::from_reaching)
+pub(crate) fn look_through(path: &Path) -> Result<Metadata, AccessFailure> {
+    fs::metadata(path).map_err(AccessFailure::from_reaching)
 }
 
 /// Opens the file at `path` to read it.
-pub(crate) fn open(path: &Path) -> Result<File, Unreached> {
-    File::open(path).map_err(Unreached::from_reaching)
+pub(crate) fn open(path: &Path) -> Result<File, AccessFailure> {
+    File::open(path).map_err(AccessFailure::from_reaching)
 }
 
 #[cfg(test)]
@@ -134,17 +134,17 @@ mod tests {
 
     use stella_test_support::{ModeGuard, Scratch, write};
 
-    use super::{Unreached, list, look_at, look_through, open};
+    use super::{AccessFailure, list, look_at, look_through, open};
 
     /// Returns a new, empty directory for the test named `name` to work in.
     fn fresh(name: &str) -> PathBuf {
         Scratch::of("filesystem").fresh(name)
     }
 
-    /// Returns the kind of error that left `unreached` unreadable.
-    fn kind_of(unreached: &Unreached) -> ErrorKind {
-        let Unreached::Unreadable(reason) = unreached else {
-            unreachable!("{unreached:?} should be unreadable, not missing");
+    /// Returns the kind of error that left `failure` unreadable.
+    fn kind_of(failure: &AccessFailure) -> ErrorKind {
+        let AccessFailure::Unreadable(reason) = failure else {
+            unreachable!("{failure:?} should be unreadable, not missing");
         };
         reason.kind()
     }
@@ -158,9 +158,9 @@ mod tests {
         let looked_at = look_at(&absent).expect_err("nothing is there");
         let looked_through = look_through(&absent).expect_err("nothing is there");
         let opened = open(&absent).expect_err("nothing is there");
-        for unreached in [looked_at, looked_through, opened] {
-            assert!(matches!(unreached, Unreached::Missing), "{unreached:?}");
-            assert_eq!(unreached.to_string(), "this file doesn't exist.");
+        for failure in [looked_at, looked_through, opened] {
+            assert!(matches!(failure, AccessFailure::Missing), "{failure:?}");
+            assert_eq!(failure.to_string(), "this file doesn't exist.");
         }
     }
 
@@ -171,13 +171,13 @@ mod tests {
         let directory = fresh("unreadable");
         write(&directory, "file.stella", b"x");
         let through = directory.join("file.stella/under.stella");
-        for unreached in [
+        for failure in [
             look_at(&through).expect_err("a file holds no files"),
             look_through(&through).expect_err("a file holds no files"),
             open(&through).expect_err("a file holds no files"),
         ] {
-            assert_eq!(kind_of(&unreached), ErrorKind::NotADirectory);
-            let sentence = unreached.to_string();
+            assert_eq!(kind_of(&failure), ErrorKind::NotADirectory);
+            let sentence = failure.to_string();
             assert!(sentence.starts_with("this file can't be read: Not a directory"), "{sentence}");
             assert!(sentence.ends_with(")."), "{sentence} should end the system's words");
         }
@@ -185,8 +185,8 @@ mod tests {
         let guard = ModeGuard::new(locked.clone(), 0o000);
         // Looking at a file needs nothing of the file itself, and opening it does.
         assert!(look_at(&locked).is_ok(), "a file with no permissions can still be looked at");
-        let unreached = open(&locked).expect_err("nobody may read it");
-        assert_eq!(kind_of(&unreached), ErrorKind::PermissionDenied);
+        let failure = open(&locked).expect_err("nobody may read it");
+        assert_eq!(kind_of(&failure), ErrorKind::PermissionDenied);
         drop(guard);
         // With its permissions back, the file opens, and what's read is what it holds.
         let mut file = open(&locked).expect("its permissions are back");
@@ -199,9 +199,9 @@ mod tests {
     fn a_failed_read_of_an_open_file_is_never_missing() {
         // An error of the kind that means missing when a path is opened, given by a file that
         // was already open. The file was there, so it's unreadable, and keeps the kind.
-        let unreached = Unreached::from_reading(ErrorKind::NotFound.into());
-        assert_eq!(kind_of(&unreached), ErrorKind::NotFound);
-        assert!(unreached.to_string().starts_with("this file can't be read: "), "{unreached}");
+        let failure = AccessFailure::from_reading(ErrorKind::NotFound.into());
+        assert_eq!(kind_of(&failure), ErrorKind::NotFound);
+        assert!(failure.to_string().starts_with("this file can't be read: "), "{failure}");
     }
 
     #[test]
@@ -219,7 +219,7 @@ mod tests {
         let at = look_at(&directory.join("dangling.stella")).expect("the symlink is there");
         assert!(at.file_type().is_symlink(), "a symlink to nothing is still a symlink");
         let through = look_through(&directory.join("dangling.stella"));
-        assert!(matches!(through, Err(Unreached::Missing)), "{through:?}");
+        assert!(matches!(through, Err(AccessFailure::Missing)), "{through:?}");
     }
 
     #[test]

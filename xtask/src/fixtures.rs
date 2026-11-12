@@ -60,9 +60,9 @@ pub(crate) enum Kind {
     Clean,
 }
 
-/// What the proof expects of a fixture.
+/// An expectation is what the proof expects of a fixture.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Expected {
+pub(crate) enum Expectation {
     /// A diagnostic with this code.
     Reported(String),
     /// No diagnostic at all.
@@ -99,12 +99,14 @@ impl Fixture {
     }
 
     /// Returns what the proof expects of the fixture.
-    pub(crate) fn expected(&self) -> Expected {
+    pub(crate) fn expected(&self) -> Expectation {
         match &self.kind {
-            Kind::Lint(origin) => Expected::Reported(origin.code(self.lint())),
-            Kind::Group(_) | Kind::Setting => Expected::Reported(Origin::Clippy.code(self.lint())),
-            Kind::Warning => Expected::Reported(Origin::Rust.code(self.lint())),
-            Kind::Allowed | Kind::Clean => Expected::Silent,
+            Kind::Lint(origin) => Expectation::Reported(origin.code(self.lint())),
+            Kind::Group(_) | Kind::Setting => {
+                Expectation::Reported(Origin::Clippy.code(self.lint()))
+            }
+            Kind::Warning => Expectation::Reported(Origin::Rust.code(self.lint())),
+            Kind::Allowed | Kind::Clean => Expectation::Silent,
         }
     }
 }
@@ -242,7 +244,7 @@ mod tests {
 
     use stella_test_support::{Scratch, write};
 
-    use super::{Expected, Fixture, Kind, fixtures, uncovered};
+    use super::{Expectation, Fixture, Kind, fixtures, uncovered};
     use crate::table::{Claim, Level, Origin};
 
     /// Returns a fixture of `kind` named `name`.
@@ -308,7 +310,7 @@ mod tests {
         ] {
             let fixture = fixture(kind, name);
             let expected =
-                expected.map_or(Expected::Silent, |code| Expected::Reported(code.into()));
+                expected.map_or(Expectation::Silent, |code| Expectation::Reported(code.into()));
             assert_eq!(fixture.expected(), expected, "for {name}");
             assert_eq!(fixture.crate_directory(), directory, "for {name}");
         }
