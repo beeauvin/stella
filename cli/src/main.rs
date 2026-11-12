@@ -29,7 +29,7 @@ use stella_cli::{Status, run};
 const STDERR_BUFFER_BYTES: usize = 8 * 1024;
 
 fn main() -> ExitCode {
-    // TS-BOUNDED: the operating system bounds a process's arguments, and std has copied every
+    // KS-BOUNDED: the operating system bounds a process's arguments, and std has copied every
     // one by the time `args_os` returns, so no limit here would save any memory.
     let arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let Ok(stderr) = io::stderr().as_fd().try_clone_to_owned() else {

@@ -87,7 +87,7 @@ pub fn read<'buffer>(
     path: &Path,
     buffer: &'buffer mut SourceBuffer,
 ) -> Result<&'buffer [u8], ReadFailure> {
-    // TS-CLOSE-USE: the file is checked before it's opened, and not after, since opening
+    // KS-CLOSE-USE: the file is checked before it's opened, and not after, since opening
     // something that isn't a file, like a FIFO, can wait forever. Something swapped in between
     // the two could still do that, or be a symlink by the time it's opened. Opening without
     // waiting or following takes flags std doesn't name, whose numbers differ from one system to

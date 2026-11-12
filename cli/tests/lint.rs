@@ -734,7 +734,7 @@ fn a_closed_stderr() {
     let directory = fresh_directory("closed-stderr");
     write(&directory, "hello.stella", GOOD);
     for (path, expected) in [("hello.stella", 0_i32), ("Hello.stella", 1_i32)] {
-        // TS-MACROS: only a shell can start a program with its stderr closed, which std can't do
+        // KS-MACROS: only a shell can start a program with its stderr closed, which std can't do
         // without `unsafe`. The script is fixed, and the binary and the path are handed to it as
         // arguments, never written into it.
         let status = Command::new("/bin/sh")

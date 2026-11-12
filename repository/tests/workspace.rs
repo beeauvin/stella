@@ -216,7 +216,7 @@ fn the_scanners_find_what_theyre_for() {
     }
     for fine in [
         "#![forbid(unsafe_code)]",
-        "#[expect(clippy::as_conversions, reason = \"TS-SIZED-TYPES: one item\")]",
+        "#[expect(clippy::as_conversions, reason = \"KS-SIZED-TYPES: one item\")]",
         "// A comment that mentions #![allow(clippy::pedantic)].",
         "#![cfg_attr(docsrs, feature(doc_cfg))]",
     ] {

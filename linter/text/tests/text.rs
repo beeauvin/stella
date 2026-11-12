@@ -34,7 +34,7 @@ fn refuses(bytes: &[u8], problem: Problem) {
 }
 
 /// Returns a problem of `kind` at `line` and `column`.
-// TS-DISTINCT-ARGS: a line then a column is the order every message prints them in, and an
+// KS-DISTINCT-ARGS: a line then a column is the order every message prints them in, and an
 // expectation with the two swapped fails its test.
 const fn at(kind: Kind, line: u32, column: u32) -> Problem {
     Problem::At { kind, position: Position::on_line(line).at_column(column) }

@@ -58,7 +58,7 @@ fn test_links(text: &str) -> Result<Vec<(&str, &str)>, &str> {
         // A link to a line, or with a title, doesn't end in `.rs`, so it's no test link.
         #[expect(
             clippy::case_sensitive_file_extension_comparisons,
-            reason = "TS-STRICT-LINTS: a link's target names a file exactly, as the forge follows \
+            reason = "KS-STRICT-LINTS: a link's target names a file exactly, as the forge follows \
                       it, so `text.RS` isn't a link to `text.rs`"
         )]
         let names_a_rust_file = target.ends_with(".rs");
@@ -96,7 +96,7 @@ fn page_links(text: &str) -> Vec<&str> {
         };
         #[expect(
             clippy::case_sensitive_file_extension_comparisons,
-            reason = "TS-STRICT-LINTS: a link's target names a file exactly, as the forge follows \
+            reason = "KS-STRICT-LINTS: a link's target names a file exactly, as the forge follows \
                       it, so `page.MD` isn't a link to `page.md`"
         )]
         let names_a_page = target.ends_with(".md");

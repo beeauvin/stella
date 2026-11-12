@@ -23,7 +23,7 @@ const NAME_CHARACTERS: &str = "abcdefghijklmnopqrstuvwxyz0123456789-";
 
 /// Lints `path`, which must pass, and checks what it normalizes to and the program's name. The
 /// oracle must agree first.
-// TS-DISTINCT-ARGS: a path, then what it normalizes to, then the name in it, each shorter than
+// KS-DISTINCT-ARGS: a path, then what it normalizes to, then the name in it, each shorter than
 // the last, and an expectation with two of them swapped fails its test.
 fn accepts(path: &str, normalized: &str, name: &str) {
     assert_eq!(oracle(path), Ok((normalized, name)), "the oracle, for {path:?}");

@@ -31,7 +31,7 @@ mod table;
 const USAGE: &str = "usage: cargo xtask <ci|lints>";
 
 fn main() -> ExitCode {
-    // TS-BOUNDED: the operating system bounds a process's arguments, and std has copied every
+    // KS-BOUNDED: the operating system bounds a process's arguments, and std has copied every
     // one by the time `args_os` returns, so no limit here would save any memory.
     let arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let outcome = match root() {

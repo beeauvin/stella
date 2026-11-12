@@ -17,7 +17,7 @@ const _: () =
 /// Returns `count` as a `usize`, to index or size memory with.
 #[expect(
     clippy::as_conversions,
-    reason = "TS-SIZED-TYPES: `try_from` can't be called in a `const fn`, and the assertion above \
+    reason = "KS-SIZED-TYPES: `try_from` can't be called in a `const fn`, and the assertion above \
               proves a `usize` holds every `u32`"
 )]
 #[must_use]

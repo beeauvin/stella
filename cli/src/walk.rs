@@ -135,7 +135,7 @@ pub fn walk(root: &Path) -> Result<Vec<Find>, TooManyEntries> {
             }
             #[expect(
                 clippy::filetype_is_file,
-                reason = "TS-STRICT-LINTS: only a regular file is a source. A symlink, a FIFO or \
+                reason = "KS-STRICT-LINTS: only a regular file is a source. A symlink, a FIFO or \
                           a socket is neither a directory nor a file here, so it's never followed"
             )]
             let is_source = file_type.is_file() && name.ends_with(b".stella");

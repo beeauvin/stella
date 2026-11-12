@@ -137,11 +137,11 @@ mod tests {
         // A manifest written here, with each way the real table writes a line: a single lint
         // refused, one forbidden, a group, one left off, a comment, and tables that aren't lints.
         let manifest = "[workspace]\nmembers = [\"a\"]\n\n[workspace.lints.rust]\n\
-                        unsafe_code = \"deny\"                      # TS-NO-UNSAFE\n\
+                        unsafe_code = \"deny\"                      # KS-NO-UNSAFE\n\
                         unsafe_op_in_unsafe_fn = \"forbid\"\n\n[workspace.lints.rustdoc]\n\
                         broken_intra_doc_links = \"deny\"\n\n[workspace.lints.clippy]\n\
                         # A comment.\n\
-                        pedantic = { level = \"deny\", priority = -1 } # TS-STRICT-LINTS\n\
+                        pedantic = { level = \"deny\", priority = -1 } # KS-STRICT-LINTS\n\
                         option_if_let_else = \"allow\"              # off\n\
                         as_conversions = \"deny\"\n\n[profile.dev]\npanic = \"abort\"\n";
         let claim = |origin, name: &str, level| Claim { origin, name: String::from(name), level };

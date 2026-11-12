@@ -115,7 +115,7 @@ struct Line<'source> {
 }
 
 /// Returns the two kinds as neighbors, `before` first.
-// TS-DISTINCT-ARGS: the two kinds are in the order the source has them, and an expectation with
+// KS-DISTINCT-ARGS: the two kinds are in the order the source has them, and an expectation with
 // them swapped fails its test.
 const fn between(before: TokenKind, after: TokenKind) -> Neighbors {
     Neighbors { before, after }

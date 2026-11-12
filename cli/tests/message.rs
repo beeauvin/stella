@@ -21,7 +21,7 @@ use stella_linter_text::Problem::FileTooBig;
 use stella_source::Position;
 
 /// Returns the place at `line` and `column` in `source`.
-// TS-DISTINCT-ARGS: a line then a column is the order every message prints them in, and an
+// KS-DISTINCT-ARGS: a line then a column is the order every message prints them in, and an
 // expectation with the two swapped fails its test.
 const fn at(source: &[u8], line: u32, column: u32) -> Place<'_> {
     Place::At { source, position: Position::on_line(line).at_column(column) }

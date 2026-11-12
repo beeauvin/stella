@@ -19,7 +19,7 @@ use stella_repository::{Filter, files_under, root, text_of};
 const RULES_PAGE: &str = "docs/rules.md";
 
 /// This is how every rule's code starts.
-const PREFIX: &str = "TS-";
+const PREFIX: &str = "KS-";
 
 /// Returns every rule's code in `text`, in the order they come, with repeats. A code is the
 /// prefix and then capitals joined by single hyphens, so a hyphen that only trails isn't part of
@@ -112,18 +112,21 @@ fn every_rule_stated_is_cited() {
 fn the_scanners_find_what_theyre_for() {
     // The tests above lean on these scanners, so each is tried on text written here: codes it
     // must find, and things near to a code that it must not.
-    let text = "unsafe_code = \"deny\"  # TS-NO-UNSAFE (each crate root forbids)\n\
-                reason = \"TS-SIZED-TYPES: why\"\n// TS-BOUNDED: the limit.\nTS-A, TS-, TS-- and \
-                ts-lower, then TS-ASSERT-ARGS.\n";
-    let found = ["TS-NO-UNSAFE", "TS-SIZED-TYPES", "TS-BOUNDED", "TS-A", "TS-ASSERT-ARGS"];
+    let text = "unsafe_code = \"deny\"  # KS-NO-UNSAFE (each crate root forbids)\n\
+                reason = \"KS-SIZED-TYPES: why\"\n// KS-BOUNDED: the limit.\nKS-A, KS-, KS-- and \
+                ks-lower, then KS-ASSERT-ARGS.\n";
+    let found = ["KS-NO-UNSAFE", "KS-SIZED-TYPES", "KS-BOUNDED", "KS-A", "KS-ASSERT-ARGS"];
     assert_eq!(codes_in(text), found);
-    assert_eq!(codes_in("no codes here, and TS alone isn't one"), [""; 0]);
+    assert_eq!(codes_in("no codes here, and KS alone isn't one"), [""; 0]);
     // A code at the very end of the text is found whole.
-    assert_eq!(codes_in("see TS-MACROS"), ["TS-MACROS"]);
+    assert_eq!(codes_in("see KS-MACROS"), ["KS-MACROS"]);
     // A word in a code that ends with the prefix's letters doesn't start a second code.
-    assert_eq!(codes_in("TS-UNITS-LAST and TS-STRICT-LINTS"), ["TS-UNITS-LAST", "TS-STRICT-LINTS"]);
+    assert_eq!(
+        codes_in("KS-CALLBACKS-LAST and KS-STRICT-LINTS"),
+        ["KS-CALLBACKS-LAST", "KS-STRICT-LINTS"]
+    );
 
-    let page = "# The rules\n\n## Safety\n\n### TS-BOUNDED\n\nEverything has a limit.\n\n\
-                ### TS-MACROS\n\n#### Not a rule\n";
-    assert_eq!(stated_in(page), ["TS-BOUNDED", "TS-MACROS"]);
+    let page = "# The rules\n\n## Safety\n\n### KS-BOUNDED\n\nEverything has a limit.\n\n\
+                ### KS-MACROS\n\n#### Not a rule\n";
+    assert_eq!(stated_in(page), ["KS-BOUNDED", "KS-MACROS"]);
 }

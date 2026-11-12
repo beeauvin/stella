@@ -82,7 +82,7 @@ fn stored_of(root: &Path, typed: &str) -> Result<Vec<u8>, SearchFailure> {
 }
 
 /// Checks that `typed` is stored under `root` as `expected`.
-// TS-DISTINCT-ARGS: the path typed comes before the path it's stored by, as in the sentence
+// KS-DISTINCT-ARGS: the path typed comes before the path it's stored by, as in the sentence
 // above, and a check with the two swapped asks the filesystem another question, so it fails.
 fn stores(root: &Path, typed: &str, expected: &str) {
     let found = stored_of(root, typed).map(|found| String::from_utf8_lossy(&found).into_owned());
