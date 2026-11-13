@@ -16,11 +16,14 @@ name = "stella"
 path = "src/main.rs"
 
 [dependencies]
+stella-ast = { path = "../ast" }
 stella-blocks = { path = "../blocks" }
+stella-grammar = { path = "../grammar" }
 stella-lexer = { path = "../lexer" }
 stella-linter-path = { path = "../linter/path" }
 stella-linter-text = { path = "../linter/text" }
 stella-linter-tokens = { path = "../linter/tokens" }
+stella-meaning = { path = "../meaning" }
 stella-source = { path = "../source" }
 
 [dev-dependencies]

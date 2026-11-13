@@ -4,22 +4,19 @@
 
 //! `stella lint` checks programs without building them.
 //!
-//! A program goes through the checks in a fixed order: its path, the path as it's stored, its
-//! text, its tokens, their layout, and then its blocks. Each check takes what only the one before
-//! it makes, so they can't run in another order, and an earlier check's problem always comes
-//! first. Each check owns what it makes, and all of it is dropped before the next program is
-//! read, so checking every program in a tree takes the same room as checking one.
+//! A program's path is checked first, as it was typed and then as it's stored, before the file is
+//! read. What's read then goes through every check a build runs, in `check`. Each check owns what
+//! it makes, and all of it is dropped before the next program is read, so checking every program
+//! in a tree takes the same room as checking one.
 
 use std::io::{self, Write};
 use std::path::Path;
 use std::str;
 
-use stella_blocks::{Blocks, nest};
-use stella_lexer::lex;
 use stella_linter_path::{Problem, SourcePath, lint_path};
-use stella_linter_tokens::lint_tokens;
-use stella_source::{Position, usize_from_u32};
+use stella_source::usize_from_u32;
 
+use crate::check::check;
 use crate::message::{Place, message};
 use crate::read::read;
 use crate::status::Status;
@@ -148,9 +145,9 @@ impl<'root> Linter<'root> {
         Ok(status)
     }
 
-    /// Lints `program`: its path as it's stored, then its text, its tokens, their layout and its
-    /// blocks. A problem with the path is shown at the path as it's stored, and any other at the
-    /// path as it was typed.
+    /// Lints `program`: its path as it's stored, and then what's read from it, with every check
+    /// a build runs. A problem with the path is shown at the path as it's stored, and any other
+    /// at the path as it was typed.
     fn lint_stored(self, program: ProgramPaths<'_>) -> Outcome {
         let ProgramPaths { typed, stored } = program;
         let stored_path = match lint_path_bytes(stored) {
@@ -168,15 +165,11 @@ impl<'root> Linter<'root> {
             Ok(source) => source,
             Err(failure) => return Outcome::Failed(message(typed, Place::File, failure)),
         };
-        match lint_stored_source(&source) {
-            Ok(()) => Outcome::Passed,
-            Err(Refusal { position, sentence }) => {
-                let place = match position {
-                    Some(position) => Place::At { source: &source, position },
-                    None => Place::File,
-                };
-                Outcome::Refused(message(typed, place, sentence))
-            }
+        match check(&source) {
+            // A program that passes every check is one a build would build, which is all a lint
+            // is asked.
+            Ok(_) => Outcome::Passed,
+            Err(refusal) => Outcome::Refused(refusal.message(typed)),
         }
     }
 }
@@ -202,36 +195,4 @@ struct ProgramPaths<'path> {
     typed: &'path [u8],
     /// The program's path as it's stored, which the file is read by.
     stored: &'path [u8],
-}
-
-/// A refusal is what a check found wrong with a source: where, when it's at a position, and the
-/// sentence that says what.
-struct Refusal {
-    position: Option<Position>,
-    sentence: String,
-}
-
-impl Refusal {
-    /// Returns a refusal at `position`, which `sentence` says.
-    const fn at(position: Position, sentence: String) -> Self {
-        Self { position: Some(position), sentence }
-    }
-}
-
-/// Checks `source`'s text, then its tokens, then their layout, and nests them. Stops at the first
-/// check that fails, and returns its refusal.
-fn lint_stored_source(source: &[u8]) -> Result<(), Refusal> {
-    let text = stella_linter_text::lint(source).map_err(|problem| Refusal {
-        position: problem.position(),
-        sentence: problem.to_string(),
-    })?;
-    let tokens =
-        lex(text).map_err(|problem| Refusal::at(problem.position, problem.kind.to_string()))?;
-    let layout = lint_tokens(tokens)
-        .map_err(|problem| Refusal::at(problem.position, problem.kind.to_string()))?;
-    // Nothing reads the blocks yet, since the grammar isn't built. They're still nested, so every
-    // program that's linted goes through nesting's assertions, and a layout that nesting can't
-    // hold stops here, where it's found, rather than when the grammar first meets it.
-    let _: Blocks<'_> = nest(layout);
-    Ok(())
 }

@@ -9,7 +9,8 @@
 //! rest are its parts:
 //!
 //! - `command` works out what the arguments ask for, or the `Misuse` they are.
-//! - `Linter` lints one program, or every program `walk` finds, and says how each came out.
+//! - `Linter` lints one program, or every program `walk` finds, and says how each came out. A
+//!   program that's read goes through every check there is, in the one order they run.
 //! - `search_for_stored` finds a path as its filesystem stores it, and `read` reads a file, as
 //!   much of it as a source can be. They and `walk` ask the filesystem through one module, which
 //!   turns each of its failures into an `AccessFailure` or a `Reason`.
@@ -30,6 +31,7 @@ pub use stored::{SEARCH_ENTRIES_MAX, SearchFailure, search_for_stored};
 pub use walk::{Find, TooManyEntries, WALK_ENTRIES_MAX, walk};
 
 mod arguments;
+mod check;
 mod filesystem;
 mod lint;
 mod message;

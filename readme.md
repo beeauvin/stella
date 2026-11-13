@@ -13,7 +13,8 @@ builds, it tells you exactly what it needs. Period.
 
 Stella is at its very start. The compiler can't build a program yet. What it
 can do is lint one: `stella lint` checks a source file's path, its text, its
-tokens and its layout, and says exactly where the first thing wrong is.
+tokens, its layout, its grammar and what its code means, and says exactly
+where the first thing wrong is.
 
 ```console
 $ stella lint app/bad-indent.stella

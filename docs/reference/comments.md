@@ -13,6 +13,9 @@ function main() returns Void {
 }
 ```
 
+A comment can go outside every block and in any block, such as a function's
+body. Tested by [`comments`](../../grammar/tests/parse.rs).
+
 That's the only way to write a comment. The compiler refuses each of these
 lines, and [`comments`](../../linter/text/tests/text.rs) tests each one:
 

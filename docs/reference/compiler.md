@@ -57,9 +57,8 @@ choose. Not built yet.
 
 ## Linting
 
-`stella lint` checks programs without building them. It runs a build's checks,
-in the same order, through the [layout](layout.md). It doesn't check the code
-itself yet. It prints nothing for a program that passes.
+`stella lint` checks programs without building them. It runs every check a
+build runs, in the same order. It prints nothing for a program that passes.
 
 ```
 $ stella lint programs/hello.stella
@@ -142,6 +141,8 @@ them gets. The statuses are tested by
 [`the_worst_status_wins`](../../cli/tests/lint.rs),
 [`code_that_cant_be_lexed`](../../cli/tests/lint.rs),
 [`code_in_another_layout`](../../cli/tests/lint.rs),
+[`code_that_breaks_the_grammar`](../../cli/tests/lint.rs),
+[`code_that_isnt_a_program`](../../cli/tests/lint.rs),
 [`no_programs`](../../cli/tests/lint.rs),
 [`the_walk_is_bounded`](../../cli/tests/lint.rs),
 [`a_named_path_is_bounded`](../../cli/tests/lint.rs),
@@ -173,20 +174,31 @@ one less to worry about:
    space, and every name has its one [shape](names.md).
 8. The [layout](layout.md): where lines end and braces sit, whether the braces
    pair up, and then each line's indentation and spaces.
-9. The code itself.
+9. The grammar: each line's tokens come in the order the block it's in
+   allows, as [functions](functions.md) and [programs](programs.md) say.
+10. The [types](types.md): every type a function returns exists.
+11. The [program](programs.md): there's exactly one function, and it's named
+    `main`.
 
 The order of the path's checks is tested by
 [`refused_paths`](../../linter/path/tests/path.rs), and the order of steps 2 to 6
 by [`the_steps_run_in_order`](../../linter/text/tests/text.rs). That the tokens
 come after them is tested by
 [`code_that_cant_be_lexed`](../../cli/tests/lint.rs), and that the layout comes
-after the tokens by [`code_in_another_layout`](../../cli/tests/lint.rs). The
-code's own checks aren't built yet.
+after the tokens by [`code_in_another_layout`](../../cli/tests/lint.rs). That
+the grammar comes after the layout is tested by
+[`code_that_breaks_the_grammar`](../../cli/tests/lint.rs), and that the types
+come after the grammar, and the program after the types, by
+[`code_that_isnt_a_program`](../../cli/tests/lint.rs).
 
 For now, when the compiler refuses a program, it stops at the first check that
 fails. Within that check, it reports the earliest problem in the file. The
 layout is checked in [three steps](layout.md) of its own, so there it reports
-the earliest problem in the first step that fails. That's tested by
+the earliest problem in the first step that fails. The grammar reports the
+earliest line at fault, at its first token out of place, and the types and
+the program report the earliest function at fault. A file with no function is
+refused as a whole, since there's no function in it to point at. That's tested
+by
 [`characters`](../../linter/text/tests/text.rs),
 [`invalid_utf8`](../../linter/text/tests/text.rs),
 [`lines`](../../linter/text/tests/text.rs),
@@ -194,8 +206,11 @@ the earliest problem in the first step that fails. That's tested by
 [`ascii`](../../linter/text/tests/text.rs), the lexer's
 [`the_first_problem_wins`](../../lexer/tests/lex.rs), and the tokens lint's
 [`the_first_problem_wins`](../../linter/tokens/tests/layout.rs) and
-[`the_steps_run_in_order`](../../linter/tokens/tests/layout.rs). It writes one
-message to stderr.
+[`the_steps_run_in_order`](../../linter/tokens/tests/layout.rs), the
+grammar's [`the_first_problem_wins`](../../grammar/tests/parse.rs), the types'
+[`the_first_problem_wins`](../../meaning/tests/resolve.rs) and the program's
+[`the_first_problem_wins`](../../meaning/tests/program.rs) and
+[`no_main`](../../meaning/tests/program.rs). It writes one message to stderr.
 For example:
 
 ```
@@ -208,7 +223,7 @@ The message starts with the file, line and column, so editors and terminals can
 jump to it. Then one sentence says what's wrong. Last comes the line itself,
 with a caret under the column. Lines and columns count from 1, and a column
 counts code points, not bytes. A problem with the file as a whole, such as its
-name or its size, is one line: the file, then the sentence.
+name, its size or a missing `main`, is one line: the file, then the sentence.
 
 ```
 Hello.stella: a source file's name, before `.stella`, must be lowercase letters and digits joined by single hyphens, like `hello-world`.
@@ -225,8 +240,10 @@ and [`the_caret_lands_after_every_code_point`](../../cli/tests/message.rs).
 Every sentence is tested by the path lint's
 [`sentences`](../../linter/path/tests/problem.rs), the text lint's
 [`sentences`](../../linter/text/tests/problem.rs), the lexer's
-[`sentences`](../../lexer/tests/problem.rs) and the tokens lint's
-[`sentences`](../../linter/tokens/tests/problem.rs), and every line and column
+[`sentences`](../../lexer/tests/problem.rs), the tokens lint's
+[`sentences`](../../linter/tokens/tests/problem.rs), the grammar's
+[`sentences`](../../grammar/tests/problem.rs) and the meaning checks'
+[`sentences`](../../meaning/tests/problem.rs), and every line and column
 by the tests above. The message as a whole is tested by
 [`whole_file_messages`](../../cli/tests/message.rs) and
 [`messages`](../../cli/tests/message.rs).
