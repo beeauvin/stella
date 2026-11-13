@@ -7,21 +7,21 @@
 //! A program goes through the checks in a fixed order: its path, the path as it's stored, its
 //! text, its tokens, their layout, and then its blocks. Each check takes what only the one before
 //! it makes, so they can't run in another order, and an earlier check's problem always comes
-//! first. A linter holds the buffers the checks work in. They're made once, and lent to each
-//! program in turn, so checking every program in a tree takes the same room as checking one.
+//! first. Each check owns what it makes, and all of it is dropped before the next program is
+//! read, so checking every program in a tree takes the same room as checking one.
 
 use std::io::{self, Write};
 use std::path::Path;
 use std::str;
 
-use stella_blocks::{Blocks, NodeBuffer, nest};
-use stella_lexer::{TokenBuffer, lex};
+use stella_blocks::{Blocks, nest};
+use stella_lexer::lex;
 use stella_linter_path::{Problem, SourcePath, lint_path};
 use stella_linter_tokens::lint_tokens;
 use stella_source::{Position, usize_from_u32};
 
 use crate::message::{Place, message};
-use crate::read::{SourceBuffer, read};
+use crate::read::read;
 use crate::status::Status;
 use crate::stored::{SearchFailure, search_for_stored};
 use crate::walk::{Find, walk};
@@ -58,31 +58,25 @@ impl Outcome {
     }
 }
 
-/// A linter lints the programs under one directory, in buffers it makes once.
-#[derive(Debug)]
+/// A linter lints the programs under one directory.
+#[derive(Clone, Copy, Debug)]
 pub struct Linter<'root> {
     /// The directory the command runs in, which every path is relative to.
     root: &'root Path,
-    /// Each source is read into this.
-    source: SourceBuffer,
-    /// Each source's tokens go in this.
-    tokens: TokenBuffer,
-    /// Each source's nodes go in this.
-    nodes: NodeBuffer,
 }
 
 impl<'root> Linter<'root> {
     /// Returns a linter for the programs under `root`, the directory the command runs in.
     #[must_use]
-    pub fn new(root: &'root Path) -> Self {
-        let (source, tokens, nodes) = (SourceBuffer::new(), TokenBuffer::new(), NodeBuffer::new());
-        Self { root, source, tokens, nodes }
+    pub const fn new(root: &'root Path) -> Self {
+        Self { root }
     }
 
     /// Lints the program at `typed`, a path as it was typed. The path is checked before the file
     /// is read. Its message shows the path as it was typed, except where the path as it's stored
     /// is what's refused.
-    pub fn lint_one(&mut self, typed: &[u8]) -> Outcome {
+    #[must_use]
+    pub fn lint_one(self, typed: &[u8]) -> Outcome {
         let typed_path = match lint_path_bytes(typed) {
             Ok(typed_path) => typed_path,
             Err(problem) => return Outcome::Refused(message(typed, Place::File, problem)),
@@ -114,7 +108,7 @@ impl<'root> Linter<'root> {
     /// # Panics
     ///
     /// Never, whatever is under the directory. The assertion checks this function's own work.
-    pub fn lint_every(&mut self, stderr: &mut impl Write) -> io::Result<Status> {
+    pub fn lint_every(self, stderr: &mut impl Write) -> io::Result<Status> {
         let finds = match walk(self.root) {
             Ok(finds) => finds,
             Err(too_many) => {
@@ -157,7 +151,7 @@ impl<'root> Linter<'root> {
     /// Lints `program`: its path as it's stored, then its text, its tokens, their layout and its
     /// blocks. A problem with the path is shown at the path as it's stored, and any other at the
     /// path as it was typed.
-    fn lint_stored(&mut self, program: ProgramPaths<'_>) -> Outcome {
+    fn lint_stored(self, program: ProgramPaths<'_>) -> Outcome {
         let ProgramPaths { typed, stored } = program;
         let stored_path = match lint_path_bytes(stored) {
             Ok(stored_path) => stored_path,
@@ -170,15 +164,15 @@ impl<'root> Linter<'root> {
         let climbs = normalized.split('/').any(|part| part == "..");
         assert!(!climbs, "a path that passed the lint never climbs with `..`");
         let file = self.root.join(normalized);
-        let source = match read(&file, &mut self.source) {
+        let source = match read(&file) {
             Ok(source) => source,
             Err(failure) => return Outcome::Failed(message(typed, Place::File, failure)),
         };
-        match lint_stored_source(source, &mut self.tokens, &mut self.nodes) {
+        match lint_stored_source(&source) {
             Ok(()) => Outcome::Passed,
             Err(Refusal { position, sentence }) => {
                 let place = match position {
-                    Some(position) => Place::At { source, position },
+                    Some(position) => Place::At { source: &source, position },
                     None => Place::File,
                 };
                 Outcome::Refused(message(typed, place, sentence))
@@ -224,24 +218,20 @@ impl Refusal {
     }
 }
 
-/// Checks `source`'s text, then its tokens, lexed into `tokens`, then their layout, and nests
-/// them into `nodes`. Stops at the first check that fails, and returns its refusal.
-fn lint_stored_source(
-    source: &[u8],
-    tokens: &mut TokenBuffer,
-    nodes: &mut NodeBuffer,
-) -> Result<(), Refusal> {
+/// Checks `source`'s text, then its tokens, then their layout, and nests them. Stops at the first
+/// check that fails, and returns its refusal.
+fn lint_stored_source(source: &[u8]) -> Result<(), Refusal> {
     let text = stella_linter_text::lint(source).map_err(|problem| Refusal {
         position: problem.position(),
         sentence: problem.to_string(),
     })?;
-    let tokens = lex(text, tokens)
-        .map_err(|problem| Refusal::at(problem.position, problem.kind.to_string()))?;
+    let tokens =
+        lex(text).map_err(|problem| Refusal::at(problem.position, problem.kind.to_string()))?;
     let layout = lint_tokens(tokens)
         .map_err(|problem| Refusal::at(problem.position, problem.kind.to_string()))?;
     // Nothing reads the blocks yet, since the grammar isn't built. They're still nested, so every
     // program that's linted goes through nesting's assertions, and a layout that nesting can't
     // hold stops here, where it's found, rather than when the grammar first meets it.
-    let _: Blocks<'_, '_> = nest(layout, nodes);
+    let _: Blocks<'_> = nest(layout);
     Ok(())
 }

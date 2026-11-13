@@ -14,6 +14,6 @@
 
 #![forbid(unsafe_code)]
 
-pub use nest::{Block, Blocks, Children, NODES_MAX, Node, NodeBuffer, nest};
+pub use nest::{Block, Blocks, Children, NODES_MAX, Node, nest};
 
 mod nest;

@@ -10,10 +10,9 @@
 //!
 //! - `command` works out what the arguments ask for, or the `Misuse` they are.
 //! - `Linter` lints one program, or every program `walk` finds, and says how each came out.
-//! - `search_for_stored` finds a path as its filesystem stores it, and `read` reads a file into
-//!   a buffer.
-//!   They and `walk` ask the filesystem through one module, which turns each of its failures
-//!   into an `AccessFailure` or a `Reason`.
+//! - `search_for_stored` finds a path as its filesystem stores it, and `read` reads a file, as
+//!   much of it as a source can be. They and `walk` ask the filesystem through one module, which
+//!   turns each of its failures into an `AccessFailure` or a `Reason`.
 //! - `message` turns a problem into what the compiler prints, and `shown` makes any bytes safe to
 //!   print.
 //! - `Status` is how a run ends.
@@ -24,7 +23,7 @@ pub use arguments::{Command, Misuse, USAGE, command};
 pub use filesystem::{AccessFailure, Reason};
 pub use lint::{Linter, Outcome};
 pub use message::{Place, message, shown};
-pub use read::{READ_INTERRUPTIONS_MAX, ReadFailure, SourceBuffer, fill, read};
+pub use read::{READ_INTERRUPTIONS_MAX, ReadFailure, fill, read};
 pub use run::run;
 pub use status::Status;
 pub use stored::{SEARCH_ENTRIES_MAX, SearchFailure, search_for_stored};

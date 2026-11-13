@@ -14,13 +14,13 @@
 //! - **A `}`** is alone on its line, and closes the innermost block still open. Its line isn't a
 //!   node: the block it closes records which token it is.
 //!
-//! A comment is a node that opens no block, and so, later, is any line of code that doesn't end
-//! with a brace, once the layout lets one. A blank line holds no tokens, so it isn't a node.
+//! A comment is a node that opens no block. The layout lets no line of code end without a
+//! brace, so every other node opens one. A blank line holds no tokens, so it isn't a node.
 //!
-//! The nodes are kept flat, in the order they're in the source, in a `NodeBuffer` made once.
-//! Each node knows the node whose block it's in, and a node that opens a block knows where its
-//! block ends. So a block's nodes run from the one after the node that opens it to its end, and
-//! stepping over a block is a jump. Nothing needs recursion, and nothing needs a stack.
+//! The nodes are kept flat, in the order they're in the source. Each node knows the node whose
+//! block it's in, and a node that opens a block knows where its block ends. So a block's nodes
+//! run from the one after the node that opens it to its end, and stepping over a block is a jump.
+//! Nothing needs recursion, and nothing needs a stack.
 
 use std::iter::FusedIterator;
 use std::ops::Range;
@@ -32,7 +32,7 @@ use stella_lexer::TokenKind::{
 use stella_lexer::{TOKENS_MAX, Token, Tokens};
 use stella_linter_text::LEVEL_SPACES;
 use stella_linter_tokens::Layout;
-use stella_source::{SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
+use stella_source::{SOURCE_BYTES_MAX, is_own, u32_from_usize, usize_from_u32};
 
 /// This is a bound on how many nodes a source can hold.
 ///
@@ -44,9 +44,9 @@ pub const NODES_MAX: u32 = SOURCE_BYTES_MAX / 2;
 /// A node is one line of the source that holds tokens, other than a `}`'s, and where it sits
 /// among the blocks.
 ///
-/// It holds where its tokens are rather than the tokens, so a buffer of nodes can serve one
-/// source after another. `Blocks::tokens_of` gives the tokens back. Only `nest` makes one, so a
-/// node always names tokens that are in some source.
+/// It holds where its tokens are rather than the tokens, so it's plain data that borrows
+/// nothing. `Blocks::tokens_of` gives the tokens back. Only `nest` makes one, so a node always
+/// names tokens that are in some source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Node {
     /// The index of the node's first token, in the layout's tokens.
@@ -63,7 +63,7 @@ pub struct Node {
 
 const _: () = assert!(
     size_of::<Node>() == 28,
-    "a buffer is budgeted at `NODES_MAX` nodes of 28 bytes each, about 224 KiB"
+    "a source's nodes are budgeted at 28 bytes each, about 224 KiB for `NODES_MAX` of them"
 );
 
 impl Node {
@@ -121,74 +121,41 @@ impl Block {
     }
 }
 
-/// A node buffer is where `nest` puts the nodes it finds. It's made once, with room for
-/// `NODES_MAX` nodes, and it never grows.
-#[derive(Debug)]
-pub struct NodeBuffer {
-    nodes: Vec<Node>,
-}
-
-impl NodeBuffer {
-    /// Returns a buffer with room for `NODES_MAX` nodes.
-    ///
-    /// # Panics
-    ///
-    /// Panics if there isn't the memory for it, as any allocation does.
-    #[must_use]
-    pub fn new() -> Self {
-        let nodes = Vec::with_capacity(usize_from_u32(NODES_MAX));
-        assert!(
-            nodes.capacity() >= usize_from_u32(NODES_MAX),
-            "`with_capacity` gives at least the room it's asked for"
-        );
-        Self { nodes }
-    }
-}
-
-impl Default for NodeBuffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// The nodes of a source laid out the one way, each in the block it's in, and the source's
-/// tokens.
+/// The nodes of a source laid out the one way, each in the block it's in, and the layout they
+/// were nested from.
 ///
 /// Only `nest` makes them, so holding `Blocks` proves the source passed the text lint, the lexer
 /// and the tokens lint.
-#[derive(Clone, Copy, Debug)]
-pub struct Blocks<'source, 'buffer> {
-    tokens: Tokens<'source, 'buffer>,
-    nodes: &'buffer [Node],
+#[derive(Debug)]
+pub struct Blocks<'source> {
+    layout: Layout<'source>,
+    nodes: Vec<Node>,
 }
 
-impl<'source, 'buffer> Blocks<'source, 'buffer> {
+impl<'source> Blocks<'source> {
     /// Returns the tokens, just as the lexer made them.
     #[must_use]
-    pub const fn tokens(&self) -> Tokens<'source, 'buffer> {
-        self.tokens
+    pub const fn tokens(&self) -> &Tokens<'source> {
+        self.layout.tokens()
     }
 
     /// Returns the nodes, in the order they're in the source.
     #[must_use]
-    pub const fn nodes(&self) -> &'buffer [Node] {
-        self.nodes
+    pub const fn nodes(&self) -> &[Node] {
+        self.nodes.as_slice()
     }
 
     /// Returns `node`'s tokens, in order.
     ///
     /// # Panics
     ///
-    /// Panics if `node` isn't one of these nodes. A node only means something in the source it
-    /// was nested from, and one from another source is a bug, even when it would fit.
+    /// Panics if `node` isn't one of these nodes: the very node `nodes` holds. A node only
+    /// means something in the source it was nested from. So one from another source is a bug,
+    /// even when it equals one of these, and so is a copy of one of these.
     #[must_use]
-    pub fn tokens_of(&self, node: &Node) -> &'buffer [Token] {
-        // The nodes are in the order they're in the source, so this one is found by its start.
-        let found =
-            self.nodes.binary_search_by_key(&node.first_token_index, |own| own.first_token_index);
-        let is_own = found.is_ok_and(|index| self.nodes[index] == *node);
-        assert!(is_own, "a node is one of its source's nodes");
-        let tokens = self.tokens.as_slice();
+    pub fn tokens_of(&self, node: &Node) -> &[Token] {
+        assert!(is_own(&self.nodes, node), "a node is one of its source's nodes");
+        let tokens = self.tokens().as_slice();
         let span = node.token_span();
         assert!(span.end <= tokens.len(), "a node's tokens are among its source's");
         &tokens[span]
@@ -197,9 +164,9 @@ impl<'source, 'buffer> Blocks<'source, 'buffer> {
     /// Returns the indices of the nodes in no block, in order. A node that opens a block comes
     /// without the nodes in it.
     #[must_use]
-    pub fn top(&self) -> Children<'buffer> {
+    pub fn top(&self) -> Children<'_> {
         let end_node_index = u32_from_usize(self.nodes.len());
-        Children { nodes: self.nodes, next_node_index: 0, end_node_index }
+        Children { nodes: &self.nodes, next_node_index: 0, end_node_index }
     }
 
     /// Returns the indices of the nodes directly in the block the node at `index` opens, in
@@ -209,8 +176,8 @@ impl<'source, 'buffer> Blocks<'source, 'buffer> {
     ///
     /// Panics if there's no node at `index`, or if the node there opens no block.
     #[must_use]
-    pub fn children(&self, index: u32) -> Children<'buffer> {
-        let nodes = self.nodes;
+    pub fn children(&self, index: u32) -> Children<'_> {
+        let nodes = self.nodes.as_slice();
         assert!(usize_from_u32(index) < nodes.len(), "node {index} is one of the nodes");
         let block = nodes[usize_from_u32(index)].block;
         assert!(block.is_some(), "node {index} opens no block, so it has no children");
@@ -229,9 +196,9 @@ impl<'source, 'buffer> Blocks<'source, 'buffer> {
 /// A node that opens a block comes without the nodes in it, which are its own children. Once the
 /// children are done, they stay done.
 #[derive(Clone, Debug)]
-pub struct Children<'buffer> {
+pub struct Children<'blocks> {
     /// All the nodes, so the children can step over a block.
-    nodes: &'buffer [Node],
+    nodes: &'blocks [Node],
     /// The index of the next child, when it's less than the end.
     next_node_index: u32,
     /// The index just past the last node the children can come from.
@@ -265,31 +232,27 @@ impl Iterator for Children<'_> {
 
 impl FusedIterator for Children<'_> {}
 
-/// Nests `layout`'s nodes in their blocks, in `buffer`, and returns them. Whatever the buffer held
-/// before is replaced. Nothing can be refused, since the tokens lint has proved everything this
-/// relies on.
+/// Nests `layout`'s nodes in their blocks, and returns them. Nothing can be refused, since the
+/// tokens lint has proved everything this relies on.
 ///
 /// # Panics
 ///
 /// Never, whatever the layout. The assertions check what the tokens lint proved and the nesting's
 /// own work, so one that fails is a bug in the compiler.
+///
+/// If there isn't the memory for its nodes, Rust ends the process, which isn't a panic.
 #[must_use]
-pub fn nest<'source, 'buffer>(
-    layout: Layout<'source, 'buffer>,
-    buffer: &'buffer mut NodeBuffer,
-) -> Blocks<'source, 'buffer> {
-    let lexed = layout.tokens();
-    let tokens = lexed.as_slice();
+pub fn nest(layout: Layout<'_>) -> Blocks<'_> {
+    let tokens = layout.tokens().as_slice();
     assert!(
         tokens.len() <= usize_from_u32(TOKENS_MAX),
         "the lexer makes no more tokens than a source can hold"
     );
-    assert!(
-        buffer.nodes.capacity() >= usize_from_u32(NODES_MAX),
-        "a buffer is made with room for every node"
-    );
-    let capacity_before = buffer.nodes.capacity();
-    buffer.nodes.clear();
+    // A node holds at least one token, and no source holds more than `NODES_MAX` nodes. So this
+    // is room for every node the source can hold, made once, before any is found.
+    let nodes_count_max = tokens.len().min(usize_from_u32(NODES_MAX));
+    let mut nodes: Vec<Node> = Vec::with_capacity(nodes_count_max);
+    let capacity_before = nodes.capacity();
     // The innermost node whose block is still open, if any, and how many blocks are open.
     let mut open_index: Option<u32> = None;
     let mut depth: u32 = 0;
@@ -307,22 +270,22 @@ pub fn nest<'source, 'buffer>(
             let opener_index =
                 open_index.expect("a block is open, since the depth was more than none");
             let block = Block {
-                end_node_index: u32_from_usize(buffer.nodes.len()),
+                end_node_index: u32_from_usize(nodes.len()),
                 close_token_index: u32_from_usize(line_token_index),
             };
-            open_index = nest_close_block(&mut buffer.nodes, opener_index, block);
+            open_index = nest_close_block(&mut nodes, opener_index, block);
         } else {
             assert_line(line, depth);
-            let room = buffer.nodes.len() < usize_from_u32(NODES_MAX);
-            assert!(room, "every node is at least two bytes, so there's room for each");
-            buffer.nodes.push(Node {
+            let room = nodes.len() < nodes_count_max;
+            assert!(room, "every node holds a token and is at least two bytes, so each has room");
+            nodes.push(Node {
                 first_token_index: u32_from_usize(line_token_index),
                 end_token_index: u32_from_usize(line_token_index + line.len()),
                 parent_index: open_index,
                 block: None,
             });
             if line[line.len() - 1].kind() == BraceOpen {
-                open_index = Some(u32_from_usize(buffer.nodes.len() - 1));
+                open_index = Some(u32_from_usize(nodes.len() - 1));
                 depth += 1;
             }
         }
@@ -333,9 +296,9 @@ pub fn nest<'source, 'buffer>(
     assert_eq!(line_token_index, tokens.len(), "every token was nested");
     assert!(open_index.is_none(), "the braces pair up, so no block is left open");
     assert_eq!(depth, 0, "the braces pair up, so no block is left open");
-    assert_eq!(buffer.nodes.capacity(), capacity_before, "the buffer never grows");
-    assert_nested(&buffer.nodes, tokens);
-    Blocks { tokens: lexed, nodes: &buffer.nodes }
+    assert_eq!(nodes.capacity(), capacity_before, "the room made for the nodes never grows");
+    assert_nested(&nodes, tokens);
+    Blocks { layout, nodes }
 }
 
 /// Returns how many of `tokens` are on the first one's line, which is at least that one. The
@@ -401,7 +364,7 @@ fn nest_close_block(nodes: &mut [Node], opener_index: u32, block: Block) -> Opti
 /// when its last token is `{`. A block ends after the node that opens it and within the nodes,
 /// and closes on a `}`.
 fn assert_nested(nodes: &[Node], tokens: &[Token]) {
-    assert!(nodes.len() <= usize_from_u32(NODES_MAX), "the buffer has room for every node");
+    assert!(nodes.len() <= usize_from_u32(NODES_MAX), "no source holds more than `NODES_MAX`");
     // The index of the token just past the node before, so the nodes come in order.
     let mut end_token_index_before: usize = 0;
     for (index, node) in nodes.iter().enumerate() {

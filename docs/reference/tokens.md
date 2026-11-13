@@ -24,11 +24,12 @@ ASCII. The smallest program is eight tokens: `function`, `main`, `(`, `)`,
   [`spaces_and_lines`](../../lexer/tests/lex.rs).
 
 A token can be as long as a line, and the largest source can hold a token in
-every byte but its last newline: 16,383 tokens. The compiler makes room for
-that many once, before it reads any program, and every program it checks
-reuses that room. The most tokens are tested by
-[`the_most_tokens`](../../lexer/tests/lex.rs), and that one room serves source
-after source by [`one_buffer_for_every_source`](../../lexer/tests/lex.rs).
+every byte but its last newline: 16,383 tokens. The lexer makes room for every
+token the source can hold before it reads the source's first character, that
+room never grows, and each source's tokens are its own. The most tokens are
+tested by
+[`the_most_tokens`](../../lexer/tests/lex.rs), and that each source keeps its
+own by [`every_source_owns_its_tokens`](../../lexer/tests/lex.rs).
 
 Anything else in code is refused: every character in code is in a token or is
 a space, and the first one that isn't is the problem. A name can hold a digit
