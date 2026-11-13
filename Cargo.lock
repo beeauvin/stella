@@ -104,6 +104,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-macho"
+version = "0.0.0"
+dependencies = [
+ "stella-arm64",
+ "stella-ast",
+ "stella-blocks",
+ "stella-grammar",
+ "stella-lexer",
+ "stella-linter-text",
+ "stella-linter-tokens",
+ "stella-meaning",
+ "stella-source",
+ "stella-test-support",
+]
+
+[[package]]
 name = "stella-meaning"
 version = "0.0.0"
 dependencies = [

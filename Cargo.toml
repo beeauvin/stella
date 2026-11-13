@@ -9,6 +9,7 @@ members = [
     "linter/path",
     "linter/text",
     "linter/tokens",
+    "macho",
     "meaning",
     "repository",
     "source",

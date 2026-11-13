@@ -86,6 +86,7 @@ only it can make, so nothing downstream can be given text that wasn't checked.
 | `ast`           | The tree of a program's functions.                            |
 | `meaning`       | The checks of what code means: its types, and its program.    |
 | `arm64`         | The generator of a program's machine code.                    |
+| `macho`         | The writer of the signed executable macOS runs.               |
 | `cli`           | The `stella` command, which reads files and runs the checks.  |
 | `repository`    | Tests of the repository itself, like the reference's links.   |
 | `test-support`  | What the tests share.                                         |

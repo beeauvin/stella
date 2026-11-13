@@ -36,6 +36,8 @@
 !/lexer/**
 !/linter/
 !/linter/**
+!/macho/
+!/macho/**
 !/meaning/
 !/meaning/**
 !/repository/
