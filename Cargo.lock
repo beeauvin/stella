@@ -3,6 +3,19 @@
 version = 4
 
 [[package]]
+name = "stella-ast"
+version = "0.0.0"
+dependencies = [
+ "stella-blocks",
+ "stella-grammar",
+ "stella-lexer",
+ "stella-linter-text",
+ "stella-linter-tokens",
+ "stella-source",
+ "stella-test-support",
+]
+
+[[package]]
 name = "stella-blocks"
 version = "0.0.0"
 dependencies = [

@@ -22,6 +22,8 @@
 !/.github/**
 
 # The crates.
+!/ast/
+!/ast/**
 !/blocks/
 !/blocks/**
 !/cli/
