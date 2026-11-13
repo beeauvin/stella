@@ -31,23 +31,27 @@ fn a_position_holds_its_line_and_column() {
 #[test]
 #[should_panic(expected = "lines count from 1")]
 fn line_zero_is_a_bug() {
+    // Lines count from 1, so there's no line before the first.
     _ = Position::on_line(0).at_column(1);
 }
 
 #[test]
 #[should_panic(expected = "columns count from 1")]
 fn column_zero_is_a_bug() {
+    // Columns count from 1, so there's no column before the first.
     _ = Position::on_line(1).at_column(0);
 }
 
 #[test]
 #[should_panic(expected = "every line but the last ends with a byte of its own")]
 fn a_line_past_the_largest_source_is_a_bug() {
+    // One line more than the largest source can hold, if every byte of it ended a line.
     _ = Position::on_line(SOURCE_BYTES_MAX + 1).at_column(1);
 }
 
 #[test]
 #[should_panic(expected = "a column is in a line")]
 fn a_column_past_the_longest_line_is_a_bug() {
+    // One column past the end of the longest line the largest source can hold.
     _ = Position::on_line(1).at_column(SOURCE_BYTES_MAX + 2);
 }

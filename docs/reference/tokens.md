@@ -8,12 +8,15 @@ ASCII. The smallest program is eight tokens: `function`, `main`, `(`, `)`,
 
 - An ASCII letter, then any ASCII letters, digits and `_`, is one token. The
   longest run is one token, so `main2` is one, and `main(` is `main` and then
-  `(`. Tested by [`words`](../../lexer/tests/lex.rs).
+  `(`. Tested by [`words`](../../lexer/tests/lex.rs),
+  [`names`](../../lexer/tests/lex.rs) and
+  [`every_printable_character`](../../lexer/tests/lex.rs).
 - Spelled exactly as a [keyword](keywords.md), such a token is that keyword.
   Tested by [`keywords`](../../lexer/tests/lex.rs).
 - Otherwise it's a name. A name that starts with a lowercase letter, like
   `main`, is a function's, a variable's or an instance's. One that starts with
   a capital, like `Void`, is a type's. Each has its one [shape](names.md).
+  Tested by [`names`](../../lexer/tests/lex.rs).
 - `(`, `)`, `{` and `}` are each a token of their own, with or without spaces
   around them. Tested by [`spaces_and_lines`](../../lexer/tests/lex.rs).
 - A [comment](comments.md) is one token, from its `//` to the end of its line.

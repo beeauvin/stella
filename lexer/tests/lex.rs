@@ -423,8 +423,8 @@ fn comments() {
 
 #[test]
 fn words() {
-    // A word is a letter, then any letters, digits and `_`. The longest run is one word, and it
-    // ends where something that can't go on with it begins.
+    // A run of letters is one word: the longest run there is, which ends where something that
+    // can't go on with it begins. Digits and `_` in a word are for `names` to try.
     lexes(
         "a(b)c\n",
         &[

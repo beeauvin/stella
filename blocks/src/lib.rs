@@ -7,10 +7,10 @@
 //! The blocks are the step after the tokens lint. `nest` takes the `Layout` the tokens lint made,
 //! so it can trust that every line of code ends with `{` or `}`, that a `{` never starts a line
 //! and a `}` is alone on its line, that the braces pair up, and that each line is indented one
-//! level for each block it's in. That leaves nothing for it to refuse. It returns the lines
-//! that hold code or a comment as the nodes of `Blocks`, each in the block it's in, and anything
-//! that goes wrong on the way is a bug in the compiler, caught by an assertion. Only `nest` can
-//! make `Blocks`, so the grammar can take them and trust them in turn.
+//! level for each block it's in. That leaves nothing for it to refuse. It returns each line that
+//! holds a comment, or code other than a `}` alone, as a node of `Blocks`, in the block it's in.
+//! Anything that goes wrong on the way is a bug in the compiler, caught by an assertion. Only
+//! `nest` can make `Blocks`, so the grammar can take them and trust them in turn.
 
 #![forbid(unsafe_code)]
 

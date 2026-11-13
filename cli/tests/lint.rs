@@ -3,7 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! End-to-end tests for `stella lint`. Each one runs the real binary in a directory of its own and
-//! pins exactly what it does: its exit status, its stdout and its stderr.
+//! pins exactly what it does: its exit status, its stdout and its stderr. The two tests of a
+//! stderr that can't be written or is closed pin the status alone.
 
 #![forbid(unsafe_code)]
 
@@ -11,8 +12,10 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read as _;
+use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::symlink;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -265,7 +268,8 @@ fn unreadable_paths() {
 #[test]
 fn names_are_checked_as_stored() {
     // macOS ignores case, so a path typed in lowercase reaches a file stored with capitals. The
-    // path is checked again as it's stored, so a named file is held to the same names the walk is.
+    // path is checked again as it's stored, so a named file is held to the names the walk holds
+    // every source to, and a file the walk would pass over for its suffix is refused.
     let directory = fresh_directory("as-stored");
     write(&directory, "Hello.stella", GOOD);
     assert!(
@@ -793,7 +797,8 @@ fn the_walk_is_bounded() {
 #[test]
 fn stderr_that_cant_be_written() {
     // Each of these characters is shown as a 7-byte escape, so the message is about 115 KB, far
-    // more than a pipe holds. Once the reader has gone, the rest can't be written.
+    // more than a pipe holds. Once the reader has gone, the rest can't be written. Neither can a
+    // stderr that's open only for reading, or one that's full and doesn't wait for its reader.
     let directory = fresh_directory("unwritable-stderr");
     let source = format!("// {}\t", "\u{7FF}".repeat(8_189));
     write(&directory, "wide.stella", source.as_bytes());
@@ -825,6 +830,21 @@ fn stderr_that_cant_be_written() {
         .status()
         .expect("run stella");
     assert_eq!(status.code(), Some(2_i32));
+    // A stderr that doesn't wait for its reader can't be written once it's full. Std makes a
+    // socket that doesn't wait, where it can't make such a pipe, and a write to either fails
+    // the same way. Nothing reads this one, so it fills long before the message is written.
+    let (unread, full) = UnixStream::pair().expect("make a pair of sockets");
+    full.set_nonblocking(true).expect("a socket can be told not to wait");
+    let status = Command::new(stella_binary())
+        .args(["lint", "wide.stella"])
+        .current_dir(&directory)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(OwnedFd::from(full))
+        .status()
+        .expect("run stella");
+    assert_eq!(status.code(), Some(2_i32), "for a stderr that doesn't wait");
+    drop(unread);
 }
 
 #[test]
@@ -835,8 +855,8 @@ fn a_closed_stderr() {
     let directory = fresh_directory("closed-stderr");
     write(&directory, "hello.stella", GOOD);
     for (path, expected) in [("hello.stella", 0_i32), ("Hello.stella", 1_i32)] {
-        // KS-MACROS: only a shell can start a program with its stderr closed, which std can't do
-        // without `unsafe`. The script is fixed, and the binary and the path are handed to it as
+        // Only a shell can start a program with its stderr closed, which std can't do without
+        // `unsafe`. The script is fixed, and the binary and the path are handed to it as
         // arguments, never written into it.
         let status = Command::new("/bin/sh")
             .args(["-c", "exec \"$0\" lint \"$1\" 2>&-"])

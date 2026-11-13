@@ -63,8 +63,10 @@ and [`a_symlink_anywhere_in_a_path_is_refused`](../../cli/tests/stored.rs).
 To find each name as it's stored, the compiler looks for it by name among the
 entries of its directory, through no more than 10,000 entries in all. So a path
 may cross onto another volume, and a file with more than one name, through hard
-links, is checked by the name it was given. A path swapped for a symlink while
-the compiler is checking it can still be followed. Tested by
+links, is checked by the name it was given. The one exception is a name that
+isn't ASCII: if the file has another such name, the message may show either,
+and the file is refused both ways. A path swapped for a symlink while the
+compiler is checking it can still be followed. Tested by
 [`a_named_path_is_bounded`](../../cli/tests/lint.rs),
 [`a_path_through_a_mount_point_is_found`](../../cli/tests/stored.rs) and
 [`a_file_with_two_names_comes_back_by_the_one_typed`](../../cli/tests/stored.rs).
@@ -184,8 +186,9 @@ $ stella lint
 ```
 
 Given a path, it checks that one program. A path through a symlink is refused,
-as above. A path that isn't UTF-8 is refused, since a name that isn't UTF-8
-can't be lowercase kebab. Tested by [`one_path`](../../cli/tests/lint.rs),
+as above. A path that isn't UTF-8 is always refused, by whichever check meets
+the bad bytes first, since no name that isn't UTF-8 is lowercase kebab. Tested
+by [`one_path`](../../cli/tests/lint.rs),
 [`one_path_sizes`](../../cli/tests/lint.rs),
 [`named_symlinks_are_refused`](../../cli/tests/lint.rs) and
 [`a_path_that_isnt_utf8`](../../cli/tests/lint.rs).
@@ -201,8 +204,9 @@ of its own, and every other file is still checked. Tested by
 
 It skips anything whose name starts with `.`, such as `.git` and `.build`. It
 also skips directories named `target`: the compiler is written in Rust, which
-builds into `target`, and no Stella source goes there. It never goes into what
-it skips, and it doesn't follow symlinks. It looks at no more than 10,000 files
+builds into `target`, and no Stella source goes there. A source named by its
+path under `target` is still checked. It never goes into what it skips, and it
+doesn't follow symlinks. It looks at no more than 10,000 files
 and directories. Tested by
 [`every_program_in_a_tree`](../../cli/tests/lint.rs),
 [`symlinks_are_skipped`](../../cli/tests/lint.rs) and
@@ -253,7 +257,7 @@ The compiler exits with:
   - The report couldn't be written to stdout. The binary is built by then, and
     stderr says why.
   - Stderr couldn't be written, as when a pipe closes early, stderr is open
-    only for reading, or a pipe that doesn't wait for its reader fills up.
+    only for reading, or a stderr that doesn't wait for its reader fills up.
 
 A closed stderr isn't one of those, and neither is a closed stdout. Rust opens
 `/dev/null` in the place of each before the compiler starts, so what's written
@@ -264,7 +268,10 @@ them gets. The statuses are tested by
 [`each_status_has_its_exit_code`](../../cli/tests/status.rs) and
 [`the_worse_of_two_statuses_is_the_greater`](../../cli/tests/status.rs). For
 `stella lint`, this is tested by
-[`one_path`](../../cli/tests/lint.rs), [`not_a_file`](../../cli/tests/lint.rs),
+[`one_path`](../../cli/tests/lint.rs),
+[`one_path_sizes`](../../cli/tests/lint.rs),
+[`named_symlinks_are_refused`](../../cli/tests/lint.rs),
+[`not_a_file`](../../cli/tests/lint.rs),
 [`an_unreadable_file`](../../cli/tests/lint.rs),
 [`unreadable_paths`](../../cli/tests/lint.rs),
 [`unreadable_directories`](../../cli/tests/lint.rs),
@@ -278,8 +285,8 @@ them gets. The statuses are tested by
 [`a_named_path_is_bounded`](../../cli/tests/lint.rs),
 [`stderr_that_cant_be_written`](../../cli/tests/lint.rs),
 [`a_message_that_cant_be_written_is_an_error`](../../cli/tests/run.rs),
-[`a_closed_stderr`](../../cli/tests/lint.rs),
-[`misuse`](../../cli/tests/lint.rs) and
+[`a_closed_stderr`](../../cli/tests/lint.rs) and
+[`misuse`](../../cli/tests/lint.rs). Which arguments are a misuse is tested by
 [`misuses`](../../cli/tests/arguments.rs).
 
 For `stella build`, it's tested by
@@ -325,11 +332,14 @@ one less to worry about:
 11. The [program](programs.md): there's exactly one function, and it's named
     `main`.
 
-The order of the path's checks is tested by
-[`refused_paths`](../../linter/path/tests/path.rs), and the order of steps 2 to 6
-by [`the_steps_run_in_order`](../../linter/text/tests/text.rs). That the tokens
-come after them is tested by
-[`code_that_cant_be_lexed`](../../cli/tests/lint.rs), and that the layout comes
+The order of the checks on the path as it's given is tested by
+[`refused_paths`](../../linter/path/tests/path.rs), and that a symlink is
+refused before a stored name by
+[`named_symlinks_are_refused`](../../cli/tests/lint.rs). The order of steps 2
+to 6 is tested by [`the_steps_run_in_order`](../../linter/text/tests/text.rs).
+That the tokens come after the text is tested by
+[`code_that_cant_be_lexed`](../../cli/tests/lint.rs), with a problem from step
+4, and that the layout comes
 after the tokens by [`code_in_another_layout`](../../cli/tests/lint.rs). That
 the grammar comes after the layout is tested by
 [`code_that_breaks_the_grammar`](../../cli/tests/lint.rs), and that the types

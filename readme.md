@@ -94,7 +94,7 @@ small fixture for each lint the workspace claims to enforce, and fails unless
 that lint is what's reported.
 
 The lints are strict on purpose, and they're declared once, in the root
-`Cargo.toml` and `clippy.toml`. Every crate inherits them. Each enforces a rule
+`Cargo.toml` and `clippy.toml`. Every crate inherits them. Most enforce a rule
 with a short code, like `KS-BOUNDED`, and
 [the rules the code is held to](docs/rules.md) says what each one means.
 
@@ -107,7 +107,7 @@ that wasn't checked.
 
 | Directory       | What it holds                                                 |
 | --------------- | ------------------------------------------------------------- |
-| `source`        | What every check shares: the size limit and positions.        |
+| `source`        | What the checks share: the size limit, counts and positions.  |
 | `linter/path`   | The check of a source file's path.                            |
 | `linter/text`   | The check of a source file's text.                            |
 | `lexer`         | The lexer, which turns checked text into tokens.              |

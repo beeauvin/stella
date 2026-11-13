@@ -84,15 +84,16 @@ fn assert_plain_name(name: &str) {
     let is_plain = matches!(components.next(), Some(Component::Normal(_)));
     assert!(is_plain, "{name:?} should be a plain name");
     assert!(components.next().is_none(), "{name:?} should be one name, with no `/` in it");
-    assert!(!name.ends_with('/'), "{name:?} should be one name, with no `/` in it");
+    assert!(!name.contains('/'), "{name:?} should be one name, with no `/` in it");
 }
 
 /// Writes `contents` to `path` under `directory`, making any directories it needs.
 ///
 /// # Panics
 ///
-/// Panics if `path` could reach outside `directory`, because it's absolute or has a `..` in it,
-/// or if a directory can't be made or the file can't be written.
+/// Panics if `path` isn't names joined by `/`: if it's empty, absolute, starts with `./`, or has
+/// a `..` in it. So it can't reach outside `directory`. Panics too if a directory can't be made
+/// or the file can't be written.
 pub fn write(directory: &Path, path: &str, contents: &[u8]) {
     let mut names_count: u32 = 0;
     for component in Path::new(path).components() {

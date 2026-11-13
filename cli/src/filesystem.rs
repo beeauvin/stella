@@ -280,7 +280,8 @@ mod tests {
     #[test]
     fn what_cant_be_reached_keeps_the_systems_reason() {
         // A path through a file, and a file with no permissions. Neither is missing: each is
-        // unreadable, with the operating system's kind of error and its words in the sentence.
+        // unreadable, with the operating system's kind of error. For the path through a file,
+        // the system's words are in the sentence too.
         let directory = fresh("unreadable");
         write(&directory, "file.stella", b"x");
         let through = directory.join("file.stella/under.stella");
