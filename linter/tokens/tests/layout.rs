@@ -16,14 +16,13 @@
 
 #![forbid(unsafe_code)]
 
-use std::cell::RefCell;
 use std::cmp::Ordering;
 
 use stella_lexer::TokenKind::{
     self, BraceClose, BraceOpen, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
     TypeName,
 };
-use stella_lexer::{TokenBuffer, lex};
+use stella_lexer::lex;
 use stella_linter_text::{LEVEL_SPACES, lint};
 use stella_linter_tokens::Kind::{
     BraceCloseNotAlone, BraceClosesNothing, BraceNeverClosed, BraceOpenNotLast,
@@ -45,11 +44,6 @@ type Expectation = Result<(), Refusal>;
 
 /// This is the smallest program, laid out the one way.
 const SMALLEST: &str = "function main() returns Void {\n}\n";
-
-thread_local! {
-    /// Each test lexes every source it tries into this one buffer, as the command does.
-    static TOKEN_BUFFER: RefCell<TokenBuffer> = RefCell::new(TokenBuffer::new());
-}
 
 /// The tokens that can come first of two on a line, once the braces are where they go, each
 /// written as code writes it.
@@ -126,19 +120,21 @@ const fn between(before: TokenKind, after: TokenKind) -> Neighbors {
 /// was given.
 fn checked(source: &str) -> Expectation {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
-    TOKEN_BUFFER.with_borrow_mut(|token_buffer| {
-        let lexed = lex(text, token_buffer);
-        assert!(lexed.is_ok(), "{source:?} should lex: {:?}", lexed.as_ref().err());
-        let tokens = lexed.expect("it lexed, as just asserted");
-        match lint_tokens(tokens) {
-            Ok(layout) => {
-                let (given, back) = (tokens.as_slice(), layout.tokens().as_slice());
-                assert!(std::ptr::eq(given, back), "the layout holds the tokens it was given");
-                Ok(())
-            }
-            Err(Problem { kind, position }) => Err((kind, position.line(), position.column())),
+    let lexed = lex(text);
+    assert!(lexed.is_ok(), "{source:?} should lex: {:?}", lexed.as_ref().err());
+    let tokens = lexed.expect("it lexed, as just asserted");
+    // The layout takes the tokens whole, so the ones it gives back are in the room they were made
+    // in, as many as there were.
+    let (given, given_count) = (tokens.as_slice().as_ptr(), tokens.as_slice().len());
+    match lint_tokens(tokens) {
+        Ok(layout) => {
+            let back = layout.tokens().as_slice();
+            assert!(std::ptr::eq(given, back.as_ptr()), "the layout holds the tokens it was given");
+            assert_eq!(back.len(), given_count, "the layout holds every token it was given");
+            Ok(())
         }
-    })
+        Err(Problem { kind, position }) => Err((kind, position.line(), position.column())),
+    }
 }
 
 /// Says whether `source` passes the text lint and the lexer, so it has tokens to lint.
@@ -146,7 +142,7 @@ fn has_tokens(source: &str) -> bool {
     let Ok(text) = lint(source.as_bytes()) else {
         return false;
     };
-    TOKEN_BUFFER.with_borrow_mut(|token_buffer| lex(text, token_buffer).is_ok())
+    lex(text).is_ok()
 }
 
 /// Checks that every example passes the text lint and the lexer, as the oracle assumes, and

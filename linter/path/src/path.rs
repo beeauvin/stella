@@ -19,6 +19,7 @@ use crate::problem::Problem;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourcePath<'path> {
     normalized: &'path str,
+    directory: &'path str,
     name: &'path str,
 }
 
@@ -27,6 +28,13 @@ impl<'path> SourcePath<'path> {
     #[must_use]
     pub const fn normalized(&self) -> &'path str {
         self.normalized
+    }
+
+    /// Returns the path of the directory the file is in, such as `programs`. It's empty when
+    /// the file is in the directory the path starts from.
+    #[must_use]
+    pub const fn directory(&self) -> &'path str {
+        self.directory
     }
 
     /// Returns the file's name without `.stella`, such as `hello`.
@@ -62,9 +70,8 @@ pub fn lint_path(path: &str) -> Result<SourcePath<'_>, Problem> {
         return Err(Problem::DotPart);
     }
     // The last part is the file, and every part before it is a directory.
-    let mut parts = normalized.rsplit('/');
-    let file = parts.next().expect("a split has at least one part");
-    if !parts.all(is_kebab) {
+    let (directory, file) = normalized.rsplit_once('/').unwrap_or(("", normalized));
+    if !directory.is_empty() && !directory.split('/').all(is_kebab) {
         return Err(Problem::DirectoryNotKebab);
     }
     let Some(name) = file.strip_suffix(".stella") else {
@@ -79,7 +86,7 @@ pub fn lint_path(path: &str) -> Result<SourcePath<'_>, Problem> {
     // Every part passed, so the path is kebab names joined by `/`.
     assert!(!normalized.starts_with('/'), "an absolute path was refused first");
     assert!(normalized.is_ascii(), "kebab names, `/` and `.stella` are all ASCII");
-    Ok(SourcePath { normalized, name })
+    Ok(SourcePath { normalized, directory, name })
 }
 
 /// Says whether `name` is lowercase letters and digits joined by single hyphens, like

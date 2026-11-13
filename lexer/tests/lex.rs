@@ -17,7 +17,6 @@
 
 #![forbid(unsafe_code)]
 
-use std::cell::RefCell;
 use std::fmt::Debug;
 
 use stella_lexer::Kind::{NameNotSnakeCase, TypeNameNotPascalCase, Unexpected};
@@ -25,7 +24,7 @@ use stella_lexer::TokenKind::{
     BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
     TypeName,
 };
-use stella_lexer::{Kind, Problem, TOKENS_MAX, TokenBuffer, TokenKind, Tokens, lex};
+use stella_lexer::{Kind, Problem, TOKENS_MAX, TokenKind, Tokens, lex};
 use stella_linter_text::lint;
 use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 use stella_test_support::{Rng, slice};
@@ -35,13 +34,6 @@ type ExpectedToken<'source> = (TokenKind, u32, u32, &'source str);
 
 /// An expected refusal: the problem's kind, and its line and column.
 type Refusal = (Kind, u32, u32);
-
-thread_local! {
-    /// Each test lexes every source it tries into this one buffer, as the command does for every
-    /// program in a tree. So a source's tokens are only ever its own if each source replaces what
-    /// the last one left.
-    static TOKEN_BUFFER: RefCell<TokenBuffer> = RefCell::new(TokenBuffer::new());
-}
 
 /// These are most of the pieces random code is made of: keywords, names and type names, a
 /// capital that runs into the next piece, and the symbols.
@@ -120,22 +112,19 @@ enum Role {
     Refused,
 }
 
-/// Lints `source`, which must pass, and lexes it into the test's buffer, which must pass too.
-/// Returns its tokens.
+/// Lints `source`, which must pass, and lexes it, which must pass too. Returns its tokens.
 fn tokens(source: &str) -> Vec<ExpectedToken<'_>> {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
-    TOKEN_BUFFER.with_borrow_mut(|token_buffer| {
-        let lexed = lex(text, token_buffer);
-        assert!(lexed.is_ok(), "{source:?} should lex: {:?}", lexed.as_ref().err());
-        expected_of(source, &lexed.expect("it lexed, as just asserted"))
-    })
+    let lexed = lex(text);
+    assert!(lexed.is_ok(), "{source:?} should lex: {:?}", lexed.as_ref().err());
+    expected_of(source, &lexed.expect("it lexed, as just asserted"))
 }
 
 /// Returns `tokens`, which `source` lexed to, as expected tokens. Each token's span must be
 /// where its text is in the source, and the text must be in place.
 fn expected_of<'source>(
     source: &'source str,
-    tokens: &Tokens<'source, '_>,
+    tokens: &Tokens<'source>,
 ) -> Vec<ExpectedToken<'source>> {
     let found: Vec<ExpectedToken<'source>> = tokens
         .as_slice()
@@ -195,9 +184,7 @@ fn refuses(source: &str, refusal: Refusal) {
     let (kind, line, column) = refusal;
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
     assert_eq!(oracle(source), Err(refusal), "the oracle, for {source:?}");
-    let lexed = TOKEN_BUFFER.with_borrow_mut(|token_buffer| {
-        lex(text, token_buffer).map(|tokens| tokens.as_slice().len())
-    });
+    let lexed = lex(text).map(|tokens| tokens.as_slice().len());
     let found = lexed.expect_err("source should be refused");
     assert_eq!(
         found,
@@ -436,8 +423,8 @@ fn comments() {
 
 #[test]
 fn words() {
-    // A word is a letter, then any letters, digits and `_`. The longest run is one word, and it
-    // ends where something that can't go on with it begins.
+    // A run of letters is one word: the longest run there is, which ends where something that
+    // can't go on with it begins. Digits and `_` in a word are for `names` to try.
     lexes(
         "a(b)c\n",
         &[
@@ -759,7 +746,7 @@ fn the_most_tokens() {
     // and bytes in one token.
     let size = usize_from_u32(SOURCE_BYTES_MAX);
     // Every token is at least one character, so the largest source holds a token in every byte
-    // but its last `\n`. That's the most a buffer has room for.
+    // but its last `\n`. That's the most tokens any source holds.
     assert_eq!(TOKENS_MAX, SOURCE_BYTES_MAX - 1);
     let one_line = format!("{}\n", "(".repeat(size - 1));
     let found = tokens(&one_line);
@@ -780,38 +767,60 @@ fn the_most_tokens() {
 }
 
 #[test]
-fn one_buffer_for_every_source() {
-    // One buffer serves source after source, as it does when every program in a tree is linted.
-    // Each source's tokens are its own, whatever the buffer held before: the most it can hold, a
-    // refused source's, or a few. And they're always in the same room, since the buffer is made
-    // once and never grows.
-    let mut buffer = TokenBuffer::new();
+fn every_source_owns_its_tokens() {
+    // Sources lexed one after another, the most tokens a source can hold among them and a
+    // refused one between, with every one's tokens kept while the next is lexed. Each source's
+    // tokens are still its own at the end, whatever was lexed after it. Each source owns what
+    // was made for it, so this only fails if the lexer starts keeping something between calls.
     let largest = format!("{}\n", "(".repeat(usize_from_u32(TOKENS_MAX)));
     let smallest = "function main() returns Void {\n}\n";
     let refused = "function main() returns Void { ;\n}\n";
     let mut smallest_tokens = first_line(1).to_vec();
     smallest_tokens.push((BraceClose, 2, 1, "}"));
     let refusal = Problem { kind: Unexpected(';'), position: Position::on_line(1).at_column(32) };
-    let mut room = None;
-    for source in [smallest, &largest, refused, smallest, &largest, refused, &largest, smallest] {
+    let sources = [smallest, &largest, refused, smallest, &largest, refused, &largest, smallest];
+    let mut kept = Vec::new();
+    for source in sources {
         let text = lint(source.as_bytes()).expect("source should pass the text lint");
-        let lexed = lex(text, &mut buffer);
-        if let Ok(tokens) = &lexed {
-            let here = tokens.as_slice().as_ptr();
-            assert_eq!(*room.get_or_insert(here), here, "the tokens are in the same room");
-        }
-        match lexed {
-            Ok(tokens) if source == smallest => {
-                assert_eq!(expected_of(source, &tokens), smallest_tokens);
-            }
-            Ok(tokens) => {
-                let found = expected_of(source, &tokens);
-                assert_eq!(found.len(), usize_from_u32(TOKENS_MAX));
-                assert!(found.iter().all(|&(kind, line, ..)| (kind, line) == (ParenthesisOpen, 1)));
-            }
+        match lex(text) {
+            Ok(tokens) => kept.push((source, tokens)),
             Err(problem) => assert_eq!((source, problem), (refused, refusal)),
         }
     }
+    assert_eq!(kept.len(), 6, "every source but the two refused ones lexed");
+    for (source, tokens) in &kept {
+        let found = expected_of(source, tokens);
+        if *source == smallest {
+            assert_eq!(found, smallest_tokens);
+        } else {
+            assert_eq!(found.len(), usize_from_u32(TOKENS_MAX));
+            assert!(found.iter().all(|&(kind, line, ..)| (kind, line) == (ParenthesisOpen, 1)));
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "a token is one of its source's tokens")]
+fn text_of_a_token_equal_to_one_of_its_own_is_a_bug() {
+    // Two sources whose first tokens are equal, part for part: a name of two bytes at the
+    // start. Their text differs, so the first's token still isn't one of the second's: asked
+    // for its text, the second would give `cd` for a token that reads `ab`.
+    let first = lint(b"ab {\n}\n").expect("source should pass");
+    let second = lint(b"cd {\n}\n").expect("source should pass");
+    let first = lex(first).expect("source should lex");
+    let second = lex(second).expect("source should lex");
+    assert_eq!(first.as_slice()[0], second.as_slice()[0], "the two tokens are equal");
+    assert_eq!(first.text(&first.as_slice()[0]), "ab", "a source gives its own token's text");
+    let _: &str = second.text(&first.as_slice()[0]);
+}
+
+#[test]
+#[should_panic(expected = "a token is one of its source's tokens")]
+fn text_of_a_copy_of_a_token_is_a_bug() {
+    // A copy of a token is equal to it and is somewhere else, so it's no token of the source's.
+    let tokens = lex(lint(b"ab {\n}\n").expect("source should pass")).expect("source should lex");
+    let copy = tokens.as_slice()[0];
+    let _: &str = tokens.text(&copy);
 }
 
 #[test]
@@ -819,11 +828,10 @@ fn one_buffer_for_every_source() {
 fn text_of_a_token_that_would_fit_another_source_is_a_bug() {
     // The name in the first source would fit in the second, where the bytes it spans are the
     // second's name and the space after it. It still isn't one of the second's tokens.
-    let (mut first_buffer, mut second_buffer) = (TokenBuffer::new(), TokenBuffer::new());
     let first = lint(b"ab {\n}\n").expect("source should pass");
     let second = lint(b"a {\n}\n").expect("source should pass");
-    let first = lex(first, &mut first_buffer).expect("source should lex");
-    let second = lex(second, &mut second_buffer).expect("source should lex");
+    let first = lex(first).expect("source should lex");
+    let second = lex(second).expect("source should lex");
     let name = first.as_slice().first().expect("the source has tokens");
     let _: &str = second.text(name);
 }
@@ -833,11 +841,10 @@ fn text_of_a_token_that_would_fit_another_source_is_a_bug() {
 fn text_of_a_token_from_a_longer_source_is_a_bug() {
     // A token only means something in the source it was lexed from. Here the last token of a
     // longer source is asked of a shorter one, which it reaches past the end of.
-    let (mut longer_buffer, mut shorter_buffer) = (TokenBuffer::new(), TokenBuffer::new());
     let longer = lint(b"function main() returns Void {\n}\n").expect("source should pass");
     let shorter = lint(b"// x\n").expect("source should pass");
-    let longer = lex(longer, &mut longer_buffer).expect("source should lex");
-    let shorter = lex(shorter, &mut shorter_buffer).expect("source should lex");
+    let longer = lex(longer).expect("source should lex");
+    let shorter = lex(shorter).expect("source should lex");
     let last = longer.as_slice().last().expect("the smallest program has tokens");
     let _: &str = shorter.text(last);
 }

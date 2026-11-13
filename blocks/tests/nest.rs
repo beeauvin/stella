@@ -17,14 +17,13 @@
 
 #![forbid(unsafe_code)]
 
-use std::cell::RefCell;
 use std::ptr;
 
-use stella_blocks::{Blocks, Children, NODES_MAX, Node, NodeBuffer, nest};
+use stella_blocks::{Blocks, Children, NODES_MAX, Node, nest};
 use stella_lexer::TokenKind::{
     BraceClose, BraceOpen, Function, Name, ParenthesisClose, ParenthesisOpen, Returns, TypeName,
 };
-use stella_lexer::{Token, TokenBuffer, lex};
+use stella_lexer::{Token, lex};
 use stella_linter_text::{LEVEL_SPACES, lint};
 use stella_linter_tokens::lint_tokens;
 use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
@@ -44,12 +43,6 @@ const SMALLEST: &str = "function main() returns Void {\n}\n";
 /// them, then out to the top, with comments in blocks.
 const CLOSES_BACK_OUT: &str = "a {\n    b {\n        c {\n            d {\n            }\n        \
                                }\n    }\n    e {\n    }\n    // f\n}\ng {\n    // h\n}\n";
-
-thread_local! {
-    /// Each test lexes and nests every source it tries into these buffers, as the command does.
-    static BUFFERS: RefCell<(TokenBuffer, NodeBuffer)> =
-        RefCell::new((TokenBuffer::new(), NodeBuffer::new()));
-}
 
 /// These are what a random line that opens a block is made of, before its `{`.
 const PIECES: &[&str] = &["function", "returns", "main", "Void", "x", "MyType", "(", ")"];
@@ -130,23 +123,26 @@ fn lays_out(source: &str) -> bool {
     let Ok(text) = lint(source.as_bytes()) else {
         return false;
     };
-    BUFFERS.with_borrow_mut(|(tokens, _)| {
-        lex(text, tokens).is_ok_and(|tokens| lint_tokens(tokens).is_ok())
-    })
+    lex(text).is_ok_and(|tokens| lint_tokens(tokens).is_ok())
 }
 
-/// Nests `source`, which must be laid out the one way, and hands its blocks to `then`. The blocks
-/// must hold the very tokens the lexer made.
-fn with_blocks<T>(source: &str, then: impl FnOnce(Blocks<'_, '_>) -> T) -> T {
+/// Returns the blocks of `source`, which must be laid out the one way. The blocks must hold the
+/// very tokens the lexer made: the same room, and as many.
+fn blocks_of(source: &str) -> Blocks<'_> {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
-    BUFFERS.with_borrow_mut(|(token_buffer, node_buffer)| {
-        let tokens = lex(text, token_buffer).expect("source should lex");
-        let layout = lint_tokens(tokens).expect("source should be laid out the one way");
-        let blocks = nest(layout, node_buffer);
-        let (given, back) = (tokens.as_slice(), blocks.tokens().as_slice());
-        assert!(ptr::eq(given, back), "the blocks hold the tokens the lexer made");
-        then(blocks)
-    })
+    let tokens = lex(text).expect("source should lex");
+    let (given, given_count) = (tokens.as_slice().as_ptr(), tokens.as_slice().len());
+    let layout = lint_tokens(tokens).expect("source should be laid out the one way");
+    let blocks = nest(layout);
+    let back = blocks.tokens().as_slice();
+    assert!(ptr::eq(given, back.as_ptr()), "the blocks hold the tokens the lexer made");
+    assert_eq!(back.len(), given_count, "the blocks hold every token the lexer made");
+    blocks
+}
+
+/// Nests `source`, which must be laid out the one way, and hands its blocks to `then`.
+fn with_blocks<T>(source: &str, then: impl FnOnce(&Blocks<'_>) -> T) -> T {
+    then(&blocks_of(source))
 }
 
 /// Returns `node` with its parts in the open.
@@ -483,8 +479,8 @@ fn heads() {
     check(examples);
     // A node's tokens end with its `{`, and its block's close is the `}` that closes it.
     with_blocks(every_kind, |blocks| {
-        let node = blocks.nodes()[0];
-        let kinds: Vec<_> = blocks.tokens_of(&node).iter().map(Token::kind).collect();
+        let node = &blocks.nodes()[0];
+        let kinds: Vec<_> = blocks.tokens_of(node).iter().map(Token::kind).collect();
         let every = [
             Name,
             TypeName,
@@ -539,14 +535,33 @@ fn children() {
 
 #[test]
 #[should_panic(expected = "a node is one of its source's nodes")]
+fn tokens_of_a_node_equal_to_one_of_its_own_is_a_bug() {
+    // Two sources whose first nodes are equal, part for part, and hold different names. The
+    // first's node still isn't one of the second's: asked for its tokens, the second would
+    // give its own, which aren't that node's.
+    let other = blocks_of("a {\n}\n");
+    with_blocks("b {\n}\n", |blocks| {
+        assert_eq!(other.nodes()[0], blocks.nodes()[0], "the two nodes are equal");
+        let _: &[Token] = blocks.tokens_of(&other.nodes()[0]);
+    });
+}
+
+#[test]
+#[should_panic(expected = "a node is one of its source's nodes")]
+fn tokens_of_a_copy_of_a_node_is_a_bug() {
+    // A copy of a node is equal to it and is somewhere else, so it's no node of the source's.
+    with_blocks("a {\n}\n", |blocks| {
+        let copy = blocks.nodes()[0];
+        let _: &[Token] = blocks.tokens_of(&copy);
+    });
+}
+
+#[test]
+#[should_panic(expected = "a node is one of its source's nodes")]
 fn tokens_of_a_node_from_another_source_is_a_bug() {
-    // The first source's node holds two tokens. They'd fit among the second's three, but the
-    // second's node holds all three, so the first's isn't one of its nodes.
-    let (mut token_buffer, mut node_buffer) = (TokenBuffer::new(), NodeBuffer::new());
-    let text = lint(b"a {\n}\n").expect("source should pass the text lint");
-    let tokens = lex(text, &mut token_buffer).expect("source should lex");
-    let layout = lint_tokens(tokens).expect("source should be laid out the one way");
-    let other = nest(layout, &mut node_buffer).nodes()[0];
+    // The first source's node holds two tokens, which would fit among the second's three. It's
+    // still the first's node, held somewhere else, so it isn't one of the second's.
+    let other = blocks_of("a {\n}\n").nodes()[0];
     with_blocks("a b {\n}\n", |blocks| {
         let _: &[Token] = blocks.tokens_of(&other);
     });
@@ -578,8 +593,8 @@ fn the_largest_sources() {
         (1..=63).map(|line| (line, 2, line - 1, 128 - line)).collect();
     outline.push((64, 1, 63, 0));
     nests(&mut examples, &source_of(&deepest), &outline);
-    // The most nodes: a comment on every line. The buffer has room for a node in every two
-    // bytes, so lines of code that open no block, once there are any, will fit too.
+    // The most nodes: a comment on every line. A source has room for a node in every two bytes,
+    // so lines of code that open no block, once there are any, will fit too.
     assert!("//\n".repeat(5_461).len() <= size);
     assert!("//\n".repeat(5_462).len() > size);
     const { assert!(NODES_MAX == SOURCE_BYTES_MAX / 2, "room for a node in every two bytes") };
@@ -624,28 +639,17 @@ fn the_largest_sources() {
 }
 
 #[test]
-fn one_buffer_serves_every_source() {
-    // The same buffers serve every source in turn, as they do in the command, so each source's
-    // nodes replace the last one's, however many more or fewer there were.
-    let mut examples = Examples::new();
+fn every_source_owns_its_nodes() {
+    // Sources nested one after another, the most nodes and the most blocks a source can hold
+    // among them, with every one's blocks kept while the next is nested. Each source's nodes are
+    // still what the oracle says of it at the end, whatever was nested after it.
     let most_lines = "//\n".repeat(5_461);
-    nests(&mut examples, &most_lines, &comments_outline(5_461));
-    nests(&mut examples, SMALLEST, &[(1, 7, 0, 2)]);
-    nests(&mut examples, &"({\n}\n".repeat(3_276), &blocks_outline(3_276));
-    nests(&mut examples, "// x\n", &[(1, 1, 0, 0)]);
-    nests(&mut examples, &most_lines, &comments_outline(5_461));
-    check(examples);
-    // And they're always in the same room, since a buffer is made once and never grows. These
-    // buffers are new, so nothing has had a chance to grow them before the smallest source.
-    let (mut token_buffer, mut node_buffer) = (TokenBuffer::new(), NodeBuffer::new());
     let most_blocks = "({\n}\n".repeat(3_276);
-    let mut room = None;
-    for source in [SMALLEST, &most_lines, "// x\n", &most_blocks, SMALLEST, &most_lines] {
-        let text = lint(source.as_bytes()).expect("source should pass the text lint");
-        let tokens = lex(text, &mut token_buffer).expect("source should lex");
-        let layout = lint_tokens(tokens).expect("source should lay out");
-        let here = nest(layout, &mut node_buffer).nodes().as_ptr().addr();
-        assert_eq!(*room.get_or_insert(here), here, "the nodes are in the same room");
+    let sources = [SMALLEST, &most_lines, "// x\n", &most_blocks, SMALLEST, &most_lines];
+    let kept: Vec<Blocks<'_>> = sources.iter().map(|source| blocks_of(source)).collect();
+    for (source, blocks) in sources.iter().zip(&kept) {
+        let nodes: Vec<PlainNode> = blocks.nodes().iter().map(plain).collect();
+        assert_eq!(nodes, oracle(source).nested.nodes, "for {}", excerpt(source));
     }
 }
 

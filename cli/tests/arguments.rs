@@ -20,10 +20,15 @@ fn given(arguments: &[&[u8]]) -> Vec<OsString> {
 
 #[test]
 fn commands() {
-    // `lint` alone lints every program, and `lint` with one path lints that one. The path is
-    // taken as it is, whatever it holds, since checking it is the path lint's to do.
+    // `lint` alone lints every program, `lint` with one path lints that one, and `build` with
+    // one path builds that one. The path is taken as it is, whatever it holds, since checking
+    // it is the path lint's to do.
     for (arguments, expected) in [
-        (&[&b"lint"[..]][..], Command::LintEvery),
+        (&[&b"build"[..], b"hello.stella"][..], Command::Build(b"hello.stella")),
+        (&[b"build", b"./programs/hello.stella"], Command::Build(b"./programs/hello.stella")),
+        (&[b"build", b"build"], Command::Build(b"build")),
+        (&[b"build", b"a\xFF.stella"], Command::Build(b"a\xFF.stella")),
+        (&[b"lint"], Command::LintEvery),
         (&[b"lint", b"hello.stella"], Command::LintOne(b"hello.stella")),
         (&[b"lint", b"./programs/hello.stella"], Command::LintOne(b"./programs/hello.stella")),
         (&[b"lint", b"/"], Command::LintOne(b"/")),
@@ -64,17 +69,29 @@ fn misuses() {
         ),
         // Source can't be piped in, so `-` is an option like any other.
         (&[b"lint", b"-"], Misuse::NotAnOption(b"-"), "`-` isn't an option; there are none."),
+        (&[b"build", b"-"], Misuse::NotAnOption(b"-"), "`-` isn't an option; there are none."),
         (
             &[b"lint", b"a.stella", b"b.stella"],
-            Misuse::TooManyPaths,
+            Misuse::LintTooManyPaths,
             "`lint` takes one path, or none to lint every file.",
         ),
         (
             &[b"lint", b"a.stella", b"b.stella", b"c.stella"],
-            Misuse::TooManyPaths,
+            Misuse::LintTooManyPaths,
             "`lint` takes one path, or none to lint every file.",
         ),
+        // `build` builds one program, so it takes exactly one path.
+        (&[b"build"], Misuse::BuildNeedsOnePath, "`build` takes one path."),
+        (
+            &[b"build", b"a.stella", b"b.stella"],
+            Misuse::BuildNeedsOnePath,
+            "`build` takes one path.",
+        ),
         (&[b"lint", b""], Misuse::EmptyPath, "the path is empty."),
+        (&[b"build", b""], Misuse::EmptyPath, "the path is empty."),
+        // A command is spelled exactly, and takes its paths after it.
+        (&[b"Build", b"a.stella"], Misuse::NotACommand(b"Build"), "`Build` isn't a command."),
+        (&[b"a.stella", b"build"], Misuse::NotACommand(b"a.stella"), "`a.stella` isn't a command."),
     ] {
         assert_eq!(command(&given(arguments)), Err(misuse), "for {arguments:?}");
         assert_eq!(misuse.to_string(), sentence, "for {misuse:?}");
@@ -82,7 +99,8 @@ fn misuses() {
 }
 
 #[test]
-fn the_usage_line() {
-    // The line every misuse ends with names the one command there is, and ends its line.
-    assert_eq!(USAGE, "usage: stella lint [path]\n");
+fn the_usage_lines() {
+    // The lines every misuse ends with name each command there is, one to a line, with what it
+    // takes, and the last ends its line.
+    assert_eq!(USAGE, "usage: stella build <path>\n       stella lint [path]\n");
 }

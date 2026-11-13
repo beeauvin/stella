@@ -8,7 +8,8 @@
 //!
 //! Every code point is shown, against an oracle that words the rule as the compiler page does,
 //! and every code point is put before a problem to check the caret still lands under it. The rest
-//! is one table of whole messages.
+//! is every byte that isn't UTF-8, two tables of whole messages, and the two positions that are
+//! a bug.
 
 #![forbid(unsafe_code)]
 

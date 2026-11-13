@@ -3,7 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! End-to-end tests for `stella lint`. Each one runs the real binary in a directory of its own and
-//! pins exactly what it does: its exit status, its stdout and its stderr.
+//! pins exactly what it does: its exit status, its stdout and its stderr. The two tests of a
+//! stderr that can't be written or is closed pin the status alone.
 
 #![forbid(unsafe_code)]
 
@@ -11,14 +12,16 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read as _;
+use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::symlink;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use stella_cli::{SEARCH_ENTRIES_MAX, WALK_ENTRIES_MAX};
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
-use stella_test_support::{ModeGuard, Scratch, fifo, write};
+use stella_test_support::{ModeGuard, Run, Scratch, fifo, write};
 
 /// This is the smallest program, which passes.
 const GOOD: &[u8] = b"function main() returns Void {\n}\n";
@@ -46,8 +49,14 @@ const EMPTY_BODY: &[u8] = b"function main() returns Void {}\n";
 const EMPTY_BODY_MESSAGE: &str = ":1:30: `{` must end its line.\n    \
      function main() returns Void {}\n                                 ^\n";
 
-/// This is the line every misuse ends with.
-const USAGE: &str = "usage: stella lint [path]\n";
+/// This is the sentence for a type that doesn't exist.
+const NO_SUCH_TYPE: &str = "this type doesn't exist; for now, the only type is `Void`.";
+
+/// This is the sentence for a source with no `main`.
+const NO_MAIN: &str = "a program needs a function named `main`.";
+
+/// These are the lines every misuse ends with.
+const USAGE: &str = "usage: stella build <path>\n       stella lint [path]\n";
 
 /// This is the sentence for a directory's name that isn't kebab.
 const DIRECTORY_NOT_KEBAB: &str = "a directory's name must be lowercase letters and digits \
@@ -60,19 +69,6 @@ const NAME_NOT_KEBAB: &str = "a source file's name, before `.stella`, must be lo
 /// This is the sentence for a path that goes through a symlink.
 const PATH_SYMLINK: &str =
     "the build path can't be established from a path that goes through a symlink.";
-
-/// A run is what one run of `stella` did.
-#[derive(Debug, PartialEq, Eq)]
-struct Run {
-    status: i32,
-    stdout: String,
-    stderr: String,
-}
-
-/// Returns a run that exited with `status`, wrote nothing to stdout, and wrote `stderr`.
-fn exits(status: i32, stderr: &str) -> Run {
-    Run { status, stdout: String::new(), stderr: String::from(stderr) }
-}
 
 /// Runs `stella` in `directory` with `arguments`, and nothing on stdin.
 fn stella(directory: &Path, arguments: &[&str]) -> Run {
@@ -87,17 +83,7 @@ fn stella_binary() -> OsString {
 
 /// Runs `stella` in `directory` with `arguments`, which needn't be UTF-8.
 fn stella_with(directory: &Path, arguments: &[&OsStr]) -> Run {
-    let output = Command::new(stella_binary())
-        .args(arguments)
-        .current_dir(directory)
-        .stdin(Stdio::null())
-        .output()
-        .expect("run stella");
-    Run {
-        status: output.status.code().expect("stella exits rather than being killed"),
-        stdout: String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        stderr: String::from_utf8(output.stderr).expect("stderr is UTF-8"),
-    }
+    Run::of(Command::new(stella_binary()).args(arguments).current_dir(directory))
 }
 
 /// Returns a new, empty directory for one test, or one row of a table, to work in.
@@ -115,42 +101,57 @@ fn directory_with(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
     directory
 }
 
+/// Returns what `stella lint hello.stella` does in a new directory for `name`, where
+/// `hello.stella` holds `source`.
+fn lints_hello(name: &str, source: &[u8]) -> Run {
+    stella(&directory_with(name, &[("hello.stella", source)]), &["lint", "hello.stella"])
+}
+
+/// Returns the message for a problem at `column` of line 1 of `hello.stella`, which `sentence`
+/// says, with `line` echoed under it and a caret under the column. Code is ASCII, so the caret
+/// goes as many spaces in as the column, past the echo's four.
+fn message_on_first_line(column: usize, sentence: &str, line: &str) -> String {
+    assert!(column >= 1, "columns count from 1");
+    let caret = " ".repeat(4 + column - 1);
+    format!("hello.stella:1:{column}: {sentence}\n    {line}\n{caret}^\n")
+}
+
 #[test]
 fn one_path() {
     // Given one path, the command lints that program: it passes in silence, is refused with a
     // message at the path as it was given, or isn't there.
     for (name, files, path, expected) in [
-        ("passes", &[("hello.stella", GOOD)][..], "hello.stella", exits(0, "")),
+        ("passes", &[("hello.stella", GOOD)][..], "hello.stella", Run::exits(0, "")),
         (
             "refused",
             &[("hello.stella", COMMENT_SHARES_LINE)],
             "hello.stella",
-            exits(1, &format!("hello.stella{COMMENT_SHARES_LINE_MESSAGE}")),
+            Run::exits(1, &format!("hello.stella{COMMENT_SHARES_LINE_MESSAGE}")),
         ),
         // The path is shown as it was given.
         (
             "as-given",
             &[("programs/hello.stella", COMMENT_SHARES_LINE)],
             "./programs/hello.stella",
-            exits(1, &format!("./programs/hello.stella{COMMENT_SHARES_LINE_MESSAGE}")),
+            Run::exits(1, &format!("./programs/hello.stella{COMMENT_SHARES_LINE_MESSAGE}")),
         ),
         // The path is checked before the file is read, so a refused one needn't exist.
         (
             "refused-name",
             &[],
             "Hello.stella",
-            exits(
+            Run::exits(
                 1,
                 "Hello.stella: a source file's name, before `.stella`, must be lowercase letters \
                  and digits joined by single hyphens, like `hello-world`.\n",
             ),
         ),
-        ("missing", &[], "hello.stella", exits(2, "hello.stella: this file doesn't exist.\n")),
+        ("missing", &[], "hello.stella", Run::exits(2, "hello.stella: this file doesn't exist.\n")),
         (
             "missing-as-given",
             &[],
             "./hello.stella",
-            exits(2, "./hello.stella: this file doesn't exist.\n"),
+            Run::exits(2, "./hello.stella: this file doesn't exist.\n"),
         ),
     ] {
         assert_eq!(stella(&directory_with(name, files), &["lint", path]), expected, "for {name}");
@@ -162,17 +163,21 @@ fn one_path_sizes() {
     // The largest source passes, and an empty file and one a byte too big are refused whole.
     let too_big_message =
         "big.stella: this file is over 16,384 bytes, the most a source file can hold.\n";
-    let largest = format!("// {}\n", "x".repeat(usize_from_u32(SOURCE_BYTES_MAX) - "// \n".len()));
+    // The largest is a program: `main`, then the longest comment that fits after it.
+    let comment_bytes = usize_from_u32(SOURCE_BYTES_MAX) - GOOD.len() - "// \n".len();
+    let largest =
+        format!("function main() returns Void {{\n}}\n// {}\n", "x".repeat(comment_bytes));
+    assert_eq!(largest.len(), usize_from_u32(SOURCE_BYTES_MAX), "the largest source is the limit");
     let too_big = vec![b'x'; usize_from_u32(SOURCE_BYTES_MAX) + 1];
     for (name, files, path, expected) in [
-        ("largest", &[("hello.stella", largest.as_bytes())][..], "hello.stella", exits(0, "")),
+        ("largest", &[("hello.stella", largest.as_bytes())][..], "hello.stella", Run::exits(0, "")),
         (
             "empty",
             &[("hello.stella", b"")],
             "hello.stella",
-            exits(1, "hello.stella: this file is empty.\n"),
+            Run::exits(1, "hello.stella: this file is empty.\n"),
         ),
-        ("too-big", &[("big.stella", &too_big)], "big.stella", exits(1, too_big_message)),
+        ("too-big", &[("big.stella", &too_big)], "big.stella", Run::exits(1, too_big_message)),
     ] {
         assert_eq!(stella(&directory_with(name, files), &["lint", path]), expected, "for {name}");
     }
@@ -203,7 +208,7 @@ fn a_path_that_isnt_utf8() {
         (b"/\xFF.stella", "/\\xFF.stella", absolute),
         (b"\xFF/../a.stella", "\\xFF/../a.stella", parent),
     ] {
-        let expected = exits(1, &format!("{shown}: {sentence}\n"));
+        let expected = Run::exits(1, &format!("{shown}: {sentence}\n"));
         let arguments = [OsStr::new("lint"), OsStr::from_bytes(path)];
         assert_eq!(stella_with(&directory, &arguments), expected, "for {shown}");
     }
@@ -217,7 +222,7 @@ fn not_a_file() {
     // A FIFO isn't a file either, and the answer comes at once, with nothing writing to it.
     fifo(&directory.join("pipe.stella"));
     for path in ["folder.stella", "pipe.stella"] {
-        let expected = exits(2, &format!("{path}: this isn't a file.\n"));
+        let expected = Run::exits(2, &format!("{path}: this isn't a file.\n"));
         assert_eq!(stella(&directory, &["lint", path]), expected, "for {path}");
     }
 }
@@ -232,7 +237,7 @@ fn an_unreadable_file() {
     // The path is shown as it was given.
     for path in ["hello.stella", "./hello.stella"] {
         let sentence = "this file can't be read: Permission denied (os error 13).";
-        let expected = exits(2, &format!("{path}: {sentence}\n"));
+        let expected = Run::exits(2, &format!("{path}: {sentence}\n"));
         assert_eq!(stella(&directory, &["lint", path]), expected, "for {path}");
     }
 }
@@ -255,7 +260,7 @@ fn unreadable_paths() {
         ("file/hello.stella", "this file can't be read: Not a directory (os error 20)."),
         ("listless/hello.stella", listless),
     ] {
-        let expected = exits(2, &format!("{path}: {sentence}\n"));
+        let expected = Run::exits(2, &format!("{path}: {sentence}\n"));
         assert_eq!(stella(&directory, &["lint", path]), expected, "for {path}");
     }
 }
@@ -263,7 +268,8 @@ fn unreadable_paths() {
 #[test]
 fn names_are_checked_as_stored() {
     // macOS ignores case, so a path typed in lowercase reaches a file stored with capitals. The
-    // path is checked again as it's stored, so a named file is held to the same names the walk is.
+    // path is checked again as it's stored, so a named file is held to the names the walk holds
+    // every source to, and a file the walk would pass over for its suffix is refused.
     let directory = fresh_directory("as-stored");
     write(&directory, "Hello.stella", GOOD);
     assert!(
@@ -275,19 +281,19 @@ fn names_are_checked_as_stored() {
             "file",
             &[("Hello.stella", GOOD)][..],
             "hello.stella",
-            exits(1, &format!("Hello.stella: {NAME_NOT_KEBAB}\n")),
+            Run::exits(1, &format!("Hello.stella: {NAME_NOT_KEBAB}\n")),
         ),
         (
             "directory",
             &[("Programs/hello.stella", GOOD)],
             "programs/hello.stella",
-            exits(1, &format!("Programs/hello.stella: {DIRECTORY_NOT_KEBAB}\n")),
+            Run::exits(1, &format!("Programs/hello.stella: {DIRECTORY_NOT_KEBAB}\n")),
         ),
         (
             "suffix",
             &[("HELLO.STELLA", GOOD)],
             "hello.stella",
-            exits(1, "HELLO.STELLA: a source file's name must end in `.stella`.\n"),
+            Run::exits(1, "HELLO.STELLA: a source file's name must end in `.stella`.\n"),
         ),
         // Case goes past ASCII: the Kelvin sign is a capital `k`. The others are only beside it,
         // and are found by name or by inode as not being it.
@@ -301,7 +307,7 @@ fn names_are_checked_as_stored() {
                 ("z.stella", GOOD),
             ],
             "key.stella",
-            exits(1, &format!("\\u{{212A}}ey.stella: {NAME_NOT_KEBAB}\n")),
+            Run::exits(1, &format!("\\u{{212A}}ey.stella: {NAME_NOT_KEBAB}\n")),
         ),
     ] {
         let directory = directory_with(&format!("as-stored-{name}"), files);
@@ -319,12 +325,12 @@ fn names_are_checked_as_stored() {
         fs::hard_link(directory.join(name), directory.join(other)).expect("make a hard link");
     }
     for (path, expected) in [
-        ("hello-2.stella", exits(0, "")),
-        ("hello.stella", exits(1, &format!("Hello.stella: {NAME_NOT_KEBAB}\n"))),
-        ("shout-2.stella", exits(0, "")),
-        ("shout.stella", exits(1, &format!("Shout.stella: {NAME_NOT_KEBAB}\n"))),
-        ("a.stella", exits(0, "")),
-        ("key.stella", exits(1, &format!("\\u{{212A}}ey.stella: {NAME_NOT_KEBAB}\n"))),
+        ("hello-2.stella", Run::exits(0, "")),
+        ("hello.stella", Run::exits(1, &format!("Hello.stella: {NAME_NOT_KEBAB}\n"))),
+        ("shout-2.stella", Run::exits(0, "")),
+        ("shout.stella", Run::exits(1, &format!("Shout.stella: {NAME_NOT_KEBAB}\n"))),
+        ("a.stella", Run::exits(0, "")),
+        ("key.stella", Run::exits(1, &format!("\\u{{212A}}ey.stella: {NAME_NOT_KEBAB}\n"))),
     ] {
         assert_eq!(stella(&directory, &["lint", path]), expected, "for {path}");
     }
@@ -369,13 +375,13 @@ fn named_symlinks_are_refused() {
         // refused for `Upper`.
         "upper/link.stella",
     ] {
-        let expected = exits(1, &format!("{path}: {PATH_SYMLINK}\n"));
+        let expected = Run::exits(1, &format!("{path}: {PATH_SYMLINK}\n"));
         assert_eq!(stella(&inside, &["lint", path]), expected, "for {path}");
     }
     // The directory the command runs in may be reached through a symlink, since that's no part of
     // the path.
     symlink("inside", directory.join("via")).expect("make a symlink");
-    assert_eq!(stella(&directory.join("via"), &["lint", "hello.stella"]), exits(0, ""));
+    assert_eq!(stella(&directory.join("via"), &["lint", "hello.stella"]), Run::exits(0, ""));
 }
 
 #[test]
@@ -389,10 +395,10 @@ fn a_named_path_is_bounded() {
     for index in 0..entries_max - 2 {
         write(&directory, &format!("programs/{index}.txt"), b"");
     }
-    assert_eq!(stella(&directory, &["lint", "programs/hello.stella"]), exits(0, ""));
+    assert_eq!(stella(&directory, &["lint", "programs/hello.stella"]), Run::exits(0, ""));
     write(&directory, "programs/one-more.txt", b"");
     let sentence = "the directories on the way to this file hold more than 10,000 entries.";
-    let expected = exits(2, &format!("programs/hello.stella: {sentence}\n"));
+    let expected = Run::exits(2, &format!("programs/hello.stella: {sentence}\n"));
     assert_eq!(stella(&directory, &["lint", "programs/hello.stella"]), expected);
 }
 
@@ -427,7 +433,7 @@ fn every_program_in_a_tree() {
     symlink("programs", directory.join("linked")).expect("make a directory symlink");
     // Each refused file gets its first problem, with a blank line between messages. They come in
     // the order of their paths' bytes, so `programs-2/` comes before `programs/`.
-    let expected = exits(
+    let expected = Run::exits(
         1,
         &format!(
             "Other/x.stella: a directory's name must be lowercase letters and digits joined by \
@@ -467,7 +473,7 @@ fn the_worst_status_wins() {
         } else {
             format!("{failure}\n{refusal}")
         };
-        assert_eq!(stella(&directory, &["lint"]), exits(2, &stderr), "for {refused} refused");
+        assert_eq!(stella(&directory, &["lint"]), Run::exits(2, &stderr), "for {refused} refused");
     }
 }
 
@@ -481,7 +487,7 @@ fn code_that_cant_be_lexed() {
             &directory_with("lexed", &[("hello.stella", UNEXPECTED)]),
             &["lint", "hello.stella"]
         ),
-        exits(1, &message),
+        Run::exits(1, &message),
         "for lexed"
     );
     // The path is shown as it was given.
@@ -491,7 +497,7 @@ fn code_that_cant_be_lexed() {
             &directory_with("lexed-as-given", &[("hello.stella", UNEXPECTED)]),
             &["lint", "./hello.stella"]
         ),
-        exits(1, &message),
+        Run::exits(1, &message),
         "for lexed-as-given"
     );
     // A name that breaks its shape is refused at the character that breaks it.
@@ -504,7 +510,7 @@ fn code_that_cant_be_lexed() {
             &directory_with("camel-case", &[("hello.stella", camel)]),
             &["lint", "hello.stella"]
         ),
-        exits(1, message),
+        Run::exits(1, message),
         "for camel-case"
     );
     // The text lint runs first, so its problem wins, even when the lexer's is earlier in the file.
@@ -512,7 +518,7 @@ fn code_that_cant_be_lexed() {
     let text_first = "hello.stella:2:2: a line can't end in a space.\n    } \n     ^\n";
     assert_eq!(
         stella(&directory_with("text-first", &[("hello.stella", both)]), &["lint", "hello.stella"]),
-        exits(1, text_first),
+        Run::exits(1, text_first),
         "for text-first"
     );
     // Linting every file lexes each one, and the worst status still wins.
@@ -522,7 +528,7 @@ fn code_that_cant_be_lexed() {
     write(&directory, "c.stella", GOOD);
     write(&directory, "d.stella", GOOD);
     let _guard = ModeGuard::new(directory.join("d.stella"), 0o000);
-    let expected = exits(
+    let expected = Run::exits(
         2,
         &format!(
             "b.stella{UNEXPECTED_MESSAGE}\n\
@@ -541,7 +547,7 @@ fn code_in_another_layout() {
             &directory_with("laid-out", &[("hello.stella", EMPTY_BODY)]),
             &["lint", "hello.stella"]
         ),
-        exits(1, &message),
+        Run::exits(1, &message),
         "for laid-out"
     );
     // The path is shown as it was given.
@@ -551,7 +557,7 @@ fn code_in_another_layout() {
             &directory_with("laid-out-as-given", &[("hello.stella", EMPTY_BODY)]),
             &["lint", "./hello.stella"]
         ),
-        exits(1, &message),
+        Run::exits(1, &message),
         "for laid-out-as-given"
     );
     // A space where none goes is refused at the space.
@@ -560,7 +566,7 @@ fn code_in_another_layout() {
                    function main () returns Void {\n                 ^\n";
     assert_eq!(
         stella(&directory_with("spaced", &[("hello.stella", spaced)]), &["lint", "hello.stella"]),
-        exits(1, message),
+        Run::exits(1, message),
         "for spaced"
     );
     // A space that's missing is refused at the token that needs one before it, as the layout
@@ -573,7 +579,7 @@ fn code_in_another_layout() {
             &directory_with("unspaced", &[("hello.stella", unspaced)]),
             &["lint", "hello.stella"]
         ),
-        exits(1, message),
+        Run::exits(1, message),
         "for unspaced"
     );
     // The lexer runs first, so its problem wins, even when the layout's is earlier in the line.
@@ -585,7 +591,7 @@ fn code_in_another_layout() {
             &directory_with("lexed-first", &[("hello.stella", both)]),
             &["lint", "hello.stella"]
         ),
-        exits(1, lexed_first),
+        Run::exits(1, lexed_first),
         "for lexed-first"
     );
     // Linting every file checks each one's layout, and the worst status still wins.
@@ -595,7 +601,7 @@ fn code_in_another_layout() {
     write(&directory, "c.stella", UNEXPECTED);
     write(&directory, "d.stella", GOOD);
     let _guard = ModeGuard::new(directory.join("d.stella"), 0o000);
-    let expected = exits(
+    let expected = Run::exits(
         2,
         &format!(
             "b.stella{EMPTY_BODY_MESSAGE}\n\
@@ -607,12 +613,110 @@ fn code_in_another_layout() {
 }
 
 #[test]
+fn code_that_breaks_the_grammar() {
+    // Code that's laid out the one way is checked against the grammar, and refused at the first
+    // token at fault.
+    let no_return_type: &[u8] = b"function main() {\n}\n";
+    let sentence = "`returns` and the function's return type must come after `()`.";
+    let message = message_on_first_line(17, sentence, "function main() {");
+    assert_eq!(lints_hello("grammar", no_return_type), Run::exits(1, &message));
+    // The path is shown as it was given.
+    assert_eq!(
+        stella(
+            &directory_with("grammar-as-given", &[("hello.stella", no_return_type)]),
+            &["lint", "./hello.stella"]
+        ),
+        Run::exits(1, &format!("./{message}")),
+    );
+    // The layout runs first, so its problem wins, even when the grammar's is earlier in the line.
+    let both: &[u8] = b"function Main {}\n";
+    let message = message_on_first_line(15, "`{` must end its line.", "function Main {}");
+    assert_eq!(lints_hello("laid-out-first", both), Run::exits(1, &message));
+    // Linting every file checks each one's grammar, and the worst status still wins. Comments in
+    // and around `main` pass.
+    let directory = fresh_directory("grammar-tree");
+    write(&directory, "a.stella", GOOD);
+    write(&directory, "b.stella", b"function main() returns Void {\n    main {\n    }\n}\n");
+    write(&directory, "c.stella", EMPTY_BODY);
+    write(&directory, "d.stella", b"// before\nfunction main() returns Void {\n    // in it\n}\n");
+    write(&directory, "e.stella", GOOD);
+    let _guard = ModeGuard::new(directory.join("e.stella"), 0o000);
+    let expected = Run::exits(
+        2,
+        &format!(
+            "b.stella:2:5: a function's body can hold only comments, for now.\n        \
+             main {{\n        ^\n\n\
+             c.stella{EMPTY_BODY_MESSAGE}\n\
+             e.stella: this file can't be read: Permission denied (os error 13).\n"
+        ),
+    );
+    assert_eq!(stella(&directory, &["lint"]), expected);
+}
+
+#[test]
+fn code_that_isnt_a_program() {
+    // Code that passes the grammar is checked for what it means: first its types, then whether
+    // its functions make a program. Each is refused at the first fault, and a source with no
+    // function is refused as a whole, in one line.
+    let unknown: &[u8] = b"function main() returns Bar {\n}\n";
+    let no_such_type = message_on_first_line(25, NO_SUCH_TYPE, "function main() returns Bar {");
+    assert_eq!(lints_hello("no-such-type", unknown), Run::exits(1, &no_such_type));
+    let misnamed: &[u8] = b"function start() returns Void {\n}\n";
+    let sentence = "a program's one function must be named `main`, for now.";
+    let message = message_on_first_line(10, sentence, "function start() returns Void {");
+    assert_eq!(lints_hello("not-main", misnamed), Run::exits(1, &message));
+    let two: &[u8] = b"function main() returns Void {\n}\nfunction main() returns Void {\n}\n";
+    let another = "hello.stella:3:1: a program holds only one function, for now.\n    \
+                   function main() returns Void {\n    ^\n";
+    assert_eq!(lints_hello("another", two), Run::exits(1, another));
+    let comments: &[u8] = b"// only a comment\n";
+    let whole_file = format!("hello.stella: {NO_MAIN}\n");
+    assert_eq!(lints_hello("no-main", comments), Run::exits(1, &whole_file));
+    // The types are checked before the program, so a type that doesn't exist wins, even when
+    // the function's name is earlier in the line.
+    let both: &[u8] = b"function start() returns Bar {\n}\n";
+    let message = message_on_first_line(26, NO_SUCH_TYPE, "function start() returns Bar {");
+    assert_eq!(lints_hello("types-first", both), Run::exits(1, &message));
+    // And the grammar is checked before them both.
+    let unparsed: &[u8] = b"function start() {\n}\n";
+    let sentence = "`returns` and the function's return type must come after `()`.";
+    let message = message_on_first_line(18, sentence, "function start() {");
+    assert_eq!(lints_hello("grammar-first", unparsed), Run::exits(1, &message));
+    // Every line passes the grammar before any type is looked for. So a line that breaks the
+    // grammar wins over a type that doesn't exist, even one on a line before it.
+    let later: &[u8] = b"function main() returns Bar {\n}\nfunction other() {\n}\n";
+    let message = format!(
+        "hello.stella:3:18: {sentence}\n    function other() {{\n{}^\n",
+        " ".repeat(4 + 17)
+    );
+    assert_eq!(lints_hello("grammar-before-types", later), Run::exits(1, &message));
+    // Linting every file checks what each one means, and the worst status still wins.
+    let directory = fresh_directory("meaning-tree");
+    write(&directory, "a.stella", GOOD);
+    write(&directory, "b.stella", comments);
+    write(&directory, "c.stella", two);
+    write(&directory, "d.stella", unknown);
+    write(&directory, "e.stella", GOOD);
+    let _guard = ModeGuard::new(directory.join("e.stella"), 0o000);
+    let expected = Run::exits(
+        2,
+        &format!(
+            "b.stella: {NO_MAIN}\n\n{}\n{}\n\
+             e.stella: this file can't be read: Permission denied (os error 13).\n",
+            another.replace("hello.stella", "c.stella"),
+            no_such_type.replace("hello.stella", "d.stella"),
+        ),
+    );
+    assert_eq!(stella(&directory, &["lint"]), expected);
+}
+
+#[test]
 fn every_program_passes() {
     // When every program in a tree passes, the command says nothing and exits with 0.
     let directory = fresh_directory("all-pass");
     write(&directory, "hello.stella", GOOD);
     write(&directory, "programs/hello.stella", GOOD);
-    assert_eq!(stella(&directory, &["lint"]), exits(0, ""));
+    assert_eq!(stella(&directory, &["lint"]), Run::exits(0, ""));
 }
 
 #[test]
@@ -621,7 +725,7 @@ fn no_programs() {
     let directory = fresh_directory("none");
     write(&directory, "notes.txt", b"");
     write(&directory, "target/hello.stella", GOOD);
-    let expected = exits(2, "stella: there are no `.stella` files under this directory.\n");
+    let expected = Run::exits(2, "stella: there are no `.stella` files under this directory.\n");
     assert_eq!(stella(&directory, &["lint"]), expected);
 }
 
@@ -634,7 +738,7 @@ fn symlinks_are_skipped() {
     write(&directory, ".hidden/bad.stella", b"\t");
     symlink(".hidden/bad.stella", directory.join("link.stella")).expect("make a file symlink");
     symlink(".", directory.join("loop")).expect("make a directory symlink");
-    assert_eq!(stella(&directory, &["lint"]), exits(0, ""));
+    assert_eq!(stella(&directory, &["lint"]), Run::exits(0, ""));
 }
 
 #[test]
@@ -645,7 +749,7 @@ fn unreadable_directories() {
     write(&directory, "hello.stella", COMMENT_SHARES_LINE);
     write(&directory, "locked/hello.stella", GOOD);
     let guard = ModeGuard::new(directory.join("locked"), 0o000);
-    let expected = exits(
+    let expected = Run::exits(
         2,
         &format!(
             "hello.stella{COMMENT_SHARES_LINE_MESSAGE}\n\
@@ -656,7 +760,8 @@ fn unreadable_directories() {
     drop(guard);
     // When it's the directory the walk starts in, it's called `.`.
     let _guard = ModeGuard::new(directory.clone(), 0o100);
-    let expected = exits(2, ".: this directory can't be read: Permission denied (os error 13).\n");
+    let expected =
+        Run::exits(2, ".: this directory can't be read: Permission denied (os error 13).\n");
     assert_eq!(stella(&directory, &["lint"]), expected);
 }
 
@@ -680,9 +785,9 @@ fn the_walk_is_bounded() {
     for index in 0..entries_max / 2 {
         write(&directory, &format!("b/{index}.txt"), b"");
     }
-    assert_eq!(stella(&directory, &["lint"]), exits(0, ""));
+    assert_eq!(stella(&directory, &["lint"]), Run::exits(0, ""));
     write(&directory, "b/one-more.txt", b"");
-    let expected = exits(
+    let expected = Run::exits(
         2,
         "stella: there are more than 10,000 files and directories under this directory.\n",
     );
@@ -692,7 +797,8 @@ fn the_walk_is_bounded() {
 #[test]
 fn stderr_that_cant_be_written() {
     // Each of these characters is shown as a 7-byte escape, so the message is about 115 KB, far
-    // more than a pipe holds. Once the reader has gone, the rest can't be written.
+    // more than a pipe holds. Once the reader has gone, the rest can't be written. Neither can a
+    // stderr that's open only for reading, or one that's full and doesn't wait for its reader.
     let directory = fresh_directory("unwritable-stderr");
     let source = format!("// {}\t", "\u{7FF}".repeat(8_189));
     write(&directory, "wide.stella", source.as_bytes());
@@ -724,6 +830,21 @@ fn stderr_that_cant_be_written() {
         .status()
         .expect("run stella");
     assert_eq!(status.code(), Some(2_i32));
+    // A stderr that doesn't wait for its reader can't be written once it's full. Std makes a
+    // socket that doesn't wait, where it can't make such a pipe, and a write to either fails
+    // the same way. Nothing reads this one, so it fills long before the message is written.
+    let (unread, full) = UnixStream::pair().expect("make a pair of sockets");
+    full.set_nonblocking(true).expect("a socket can be told not to wait");
+    let status = Command::new(stella_binary())
+        .args(["lint", "wide.stella"])
+        .current_dir(&directory)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(OwnedFd::from(full))
+        .status()
+        .expect("run stella");
+    assert_eq!(status.code(), Some(2_i32), "for a stderr that doesn't wait");
+    drop(unread);
 }
 
 #[test]
@@ -734,8 +855,8 @@ fn a_closed_stderr() {
     let directory = fresh_directory("closed-stderr");
     write(&directory, "hello.stella", GOOD);
     for (path, expected) in [("hello.stella", 0_i32), ("Hello.stella", 1_i32)] {
-        // KS-MACROS: only a shell can start a program with its stderr closed, which std can't do
-        // without `unsafe`. The script is fixed, and the binary and the path are handed to it as
+        // Only a shell can start a program with its stderr closed, which std can't do without
+        // `unsafe`. The script is fixed, and the binary and the path are handed to it as
         // arguments, never written into it.
         let status = Command::new("/bin/sh")
             .args(["-c", "exec \"$0\" lint \"$1\" 2>&-"])
@@ -754,7 +875,7 @@ fn a_closed_stderr() {
 #[test]
 fn misuse() {
     // Each wrong way to call the command exits with 2, says what's wrong, and ends with the
-    // usage line.
+    // usage lines.
     let directory = fresh_directory("misuse");
     write(&directory, "hello.stella", GOOD);
     for (arguments, sentence) in [
@@ -774,7 +895,7 @@ fn misuse() {
         ),
         (&["lint", ""], "stella: the path is empty.\n"),
     ] {
-        let expected = exits(2, &format!("{sentence}{USAGE}"));
+        let expected = Run::exits(2, &format!("{sentence}{USAGE}"));
         assert_eq!(stella(&directory, arguments), expected, "for {arguments:?}");
     }
 }

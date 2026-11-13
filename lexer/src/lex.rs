@@ -25,14 +25,13 @@
 //!   isn't in a token or a space: one that can't start a token where one would start, like `;`,
 //!   or a digit or `_` with no word for it to go on.
 //!
-//! The tokens go in a `TokenBuffer`, made once with room for the most tokens a source can hold.
-//! Each source the buffer is lent to replaces the last one's tokens, so lexing every program in a
-//! tree uses the same memory as lexing one.
+//! The tokens of a source are its own: `lex` makes room for the most that source can hold before
+//! it reads a character, and that room never grows.
 
 use std::ops::Range;
 
 use stella_linter_text::Text;
-use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
+use stella_source::{Position, SOURCE_BYTES_MAX, is_own, u32_from_usize, usize_from_u32};
 
 use crate::problem::{Kind, Problem};
 
@@ -42,9 +41,9 @@ pub const TOKENS_MAX: u32 = SOURCE_BYTES_MAX - 1;
 
 /// A token is one piece of code, a name, a keyword, a symbol or a comment, and where it is.
 ///
-/// It holds where its text is rather than the text, so a buffer of tokens can serve one source
-/// after another. `Tokens::text` gives the text back. Only `lex` makes one, so a token always
-/// names text that's in some source.
+/// It holds where its text is rather than the text, so it's plain data that borrows nothing.
+/// `Tokens::text` gives the text back. Only `lex` makes one, so a token always names text that's
+/// in some source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token {
     /// The kind says what the token is.
@@ -87,7 +86,7 @@ impl Token {
 
 const _: () = assert!(
     size_of::<Token>() == 20,
-    "a buffer is budgeted at `TOKENS_MAX` tokens of 20 bytes each, about 320 KiB"
+    "a source's tokens are budgeted at 20 bytes each, about 320 KiB for `TOKENS_MAX` of them"
 );
 
 /// A token kind says what a token is.
@@ -113,67 +112,35 @@ pub enum TokenKind {
     Comment,
 }
 
-/// A token buffer is where `lex` puts the tokens it finds. It's made once, with room for
-/// `TOKENS_MAX` tokens, and it never grows.
-#[derive(Debug)]
-pub struct TokenBuffer {
-    tokens: Vec<Token>,
-}
-
-impl TokenBuffer {
-    /// Returns a buffer with room for `TOKENS_MAX` tokens.
-    ///
-    /// # Panics
-    ///
-    /// Panics if there isn't the memory for it, as any allocation does.
-    #[must_use]
-    pub fn new() -> Self {
-        let tokens = Vec::with_capacity(usize_from_u32(TOKENS_MAX));
-        assert!(
-            tokens.capacity() >= usize_from_u32(TOKENS_MAX),
-            "`with_capacity` gives at least the room it's asked for"
-        );
-        Self { tokens }
-    }
-}
-
-impl Default for TokenBuffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// The tokens of a source that lexed, in the order they're in the source, and the source itself.
 ///
 /// Only `lex` makes them, so holding `Tokens` proves the source passed the text lint and the
 /// lexer. Everything in the source outside its tokens is spaces and line ends, so the spaces
 /// between two tokens on a line can be counted from their columns.
-#[derive(Clone, Copy, Debug)]
-pub struct Tokens<'source, 'buffer> {
+#[derive(Debug)]
+pub struct Tokens<'source> {
     text: Text<'source>,
-    tokens: &'buffer [Token],
+    tokens: Vec<Token>,
 }
 
-impl<'source, 'buffer> Tokens<'source, 'buffer> {
+impl<'source> Tokens<'source> {
     /// Returns the tokens, in the order they're in the source.
     #[must_use]
-    pub const fn as_slice(&self) -> &'buffer [Token] {
-        self.tokens
+    pub const fn as_slice(&self) -> &[Token] {
+        self.tokens.as_slice()
     }
 
-    /// Returns `token`'s text, as it is in the source. The text outlives the buffer, since it's
+    /// Returns `token`'s text, as it is in the source. The text outlives the tokens, since it's
     /// the source's own.
     ///
     /// # Panics
     ///
-    /// Panics if `token` isn't one of this source's tokens. A token only means something in the
-    /// source it was lexed from, and one from another source is a bug, even when it would fit.
+    /// Panics if `token` isn't one of this source's tokens: the very token `as_slice` holds. A
+    /// token only means something in the source it was lexed from. So one from another source
+    /// is a bug, even when it equals one of these, and so is a copy of one of these.
     #[must_use]
     pub fn text(&self, token: &Token) -> &'source str {
-        // The tokens are in the order they're in the source, so this one is found by its start.
-        let found = self.tokens.binary_search_by_key(&token.start_index, |own| own.start_index);
-        let is_own = found.is_ok_and(|index| self.tokens[index] == *token);
-        assert!(is_own, "a token is one of its source's tokens");
+        assert!(is_own(&self.tokens, token), "a token is one of its source's tokens");
         let source = self.text.as_str();
         let span = token.span();
         assert!(span.end <= source.len(), "a token is in its source");
@@ -181,7 +148,7 @@ impl<'source, 'buffer> Tokens<'source, 'buffer> {
     }
 }
 
-/// Turns `text` into tokens in `buffer`. Whatever the buffer held before is replaced.
+/// Turns `text` into tokens.
 ///
 /// # Errors
 ///
@@ -190,12 +157,11 @@ impl<'source, 'buffer> Tokens<'source, 'buffer> {
 ///
 /// # Panics
 ///
-/// Never, whatever the text. The assertions check what the text lint guarantees and the lexer's
-/// own work, so one that fails is a bug in the compiler.
-pub fn lex<'source, 'buffer>(
-    text: Text<'source>,
-    buffer: &'buffer mut TokenBuffer,
-) -> Result<Tokens<'source, 'buffer>, Problem> {
+/// Never, whatever the text. The assertions check what the text lint guarantees and the lexer's own
+/// work, so one that fails is a bug in the compiler.
+///
+/// If there isn't the memory for its tokens, Rust ends the process, which isn't a panic.
+pub fn lex(text: Text<'_>) -> Result<Tokens<'_>, Problem> {
     let source = text.as_str();
     // The text lint guarantees these, and the bounds below lean on them.
     assert!(
@@ -203,20 +169,27 @@ pub fn lex<'source, 'buffer>(
         "the text lint refuses a larger source"
     );
     assert!(source.ends_with('\n'), "the text lint refuses a last line without its `\\n`");
-    let capacity_before = buffer.tokens.capacity();
-    buffer.tokens.clear();
+    // Every token is at least a byte, and the source's last byte, a `\n`, is in none. So this is
+    // room for every token the source can hold, made once, before any is found.
+    let tokens_count_max = source.len() - 1;
+    assert!(
+        tokens_count_max <= usize_from_u32(TOKENS_MAX),
+        "no source holds more than `TOKENS_MAX` tokens"
+    );
+    let mut tokens = Vec::with_capacity(tokens_count_max);
+    let capacity_before = tokens.capacity();
     let mut line_start: usize = 0;
     for (content, number) in source.split_terminator('\n').zip(1_u32..) {
-        lex_line(Line { content, number, start: line_start }, &mut buffer.tokens)?;
+        lex_line(Line { content, number, start: line_start }, &mut tokens)?;
         line_start += content.len() + 1;
     }
     assert_eq!(line_start, source.len(), "every line was lexed");
     assert!(
-        buffer.tokens.len() <= usize_from_u32(TOKENS_MAX),
+        tokens.len() <= tokens_count_max,
         "every token is at least a byte, and the last byte is in none"
     );
-    assert_eq!(buffer.tokens.capacity(), capacity_before, "the buffer never grows");
-    Ok(Tokens { text, tokens: &buffer.tokens })
+    assert_eq!(tokens.capacity(), capacity_before, "the room made for the tokens never grows");
+    Ok(Tokens { text, tokens })
 }
 
 /// A line is one line of the source, without its `\n`, and where it is.

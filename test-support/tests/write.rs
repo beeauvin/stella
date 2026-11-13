@@ -7,7 +7,9 @@
 
 #![forbid(unsafe_code)]
 
-use stella_test_support::{excerpt, indent, joined, nested_blocks, slice, source_of};
+use stella_test_support::{
+    SEQUENCES_MAX, excerpt, indent, joined, nested_blocks, programs_of, sequences, slice, source_of,
+};
 
 #[test]
 fn indent_is_four_spaces_a_level() {
@@ -41,6 +43,43 @@ fn joined_writes_a_line_the_one_way() {
     ] {
         assert_eq!(joined(texts), line, "for {texts:?}");
     }
+}
+
+#[test]
+fn sequences_count_through_every_choice() {
+    // Every sequence of two numbers below three, in counting order, stated by hand. A length of
+    // none is the one sequence that holds nothing, and no choices at all make no sequence.
+    let pairs = sequences(3, 2);
+    let expected: [[usize; 2]; 9] =
+        [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [2, 0], [2, 1], [2, 2]];
+    assert_eq!(pairs, expected);
+    assert_eq!(sequences(3, 0), [Vec::<usize>::new()]);
+    assert!(sequences(0, 2).is_empty(), "nothing to choose from makes no sequence");
+    assert_eq!(sequences(6, 7).len(), 279_936, "six to the seventh");
+    assert_eq!(SEQUENCES_MAX, 1_000_000);
+}
+
+#[test]
+#[should_panic(expected = "a test tries at most `SEQUENCES_MAX` sequences at once")]
+fn too_many_sequences_is_a_bug() {
+    // Ten to the seventh is more than the most, so it fails where it's asked for.
+    _ = sequences(10, 7);
+}
+
+#[test]
+fn programs_of_closes_each_function() {
+    // Every program of one or two items, from a comment and a function, stated by hand: the
+    // shorter programs first, and a `}` after each function's first line.
+    let programs = programs_of(&["// c", "function f() returns Void {"], 2);
+    let expected = [
+        "// c\n",
+        "function f() returns Void {\n}\n",
+        "// c\n// c\n",
+        "// c\nfunction f() returns Void {\n}\n",
+        "function f() returns Void {\n}\n// c\n",
+        "function f() returns Void {\n}\nfunction f() returns Void {\n}\n",
+    ];
+    assert_eq!(programs, expected);
 }
 
 #[test]

@@ -29,6 +29,7 @@ fn examples_come_back_in_order_with_where_they_were_added() {
 #[test]
 #[should_panic(expected = "a test tries at least one example")]
 fn taking_no_examples_is_a_bug() {
+    // A table with nothing in it checks nothing, so taking it is refused.
     let _: Vec<Example<()>> = Examples::<()>::new().take();
 }
 
@@ -44,8 +45,8 @@ fn dropping_examples_unchecked_fails_the_test() {
 #[test]
 #[should_panic(expected = "a test tries at most")]
 fn adding_past_the_most_examples_is_a_bug() {
-    // One more than the most a test can hold. The examples are forgotten once it's caught, so
-    // the only panic is the one from `add`.
+    // One more than the most a test can hold. The drop leaves a test that's already failing
+    // alone, so the only panic is the one from `add`.
     let mut examples = Examples::new();
     for _ in 0..=EXAMPLES_MAX {
         examples.add("", ());

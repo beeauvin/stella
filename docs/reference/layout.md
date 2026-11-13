@@ -10,7 +10,8 @@ Stella code has one layout, and the compiler refuses any other.
 - For now, a level is four spaces, and every line's indentation is a multiple
   of four. Tested by [`lines`](../../linter/text/tests/text.rs).
 - A tab is refused anywhere in a source file. Tested by
-  [`characters`](../../linter/text/tests/text.rs) and
+  [`characters`](../../linter/text/tests/text.rs),
+  [`every_code_point_in_code`](../../linter/text/tests/text.rs) and
   [`every_code_point_in_a_comment`](../../linter/text/tests/text.rs).
 - On a line, exactly one space goes between two tokens, except that none goes
   after `(`, and none goes before `(` or `)`. So `main`'s first line has single
@@ -30,10 +31,12 @@ Stella code has one layout, and the compiler refuses any other.
   ```
 
   Tested by [`lines`](../../linter/tokens/tests/layout.rs).
-- `{` can't start a line: some token comes before it on its line. Which tokens
-  can come before it is for the grammar, which isn't built yet, so for now any
-  token that can share its line can. Tested by
-  [`lines`](../../linter/tokens/tests/layout.rs).
+- `{` can't start a line: some token comes before it on its line. Tested by
+  [`lines`](../../linter/tokens/tests/layout.rs). Which tokens can come before
+  it is the grammar's to say, once the layout has passed. For now, a line of
+  code that ends with `{` is a [function](functions.md)'s first line, outside
+  every block, and a function's body holds no code. Tested by
+  [`every_line`](../../grammar/tests/parse.rs).
 - `{` ends the line it's on, and `}` sits on a line of its own. That holds even
   for an empty body, so this is refused:
 

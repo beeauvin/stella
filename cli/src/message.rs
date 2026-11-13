@@ -2,7 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! A message is what the compiler prints on stderr when it refuses a program.
+//! A message is what the compiler prints on stderr when it refuses a program, or can't read or
+//! write a file or a directory.
 //!
 //! A problem with the file as a whole is one line: the path, then the sentence. A problem at a
 //! position is three: the path, line and column, then the sentence; the line itself, indented

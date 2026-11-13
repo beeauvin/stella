@@ -1,11 +1,16 @@
 [workspace]
 members = [
+    "arm64",
+    "ast",
     "blocks",
     "cli",
+    "grammar",
     "lexer",
     "linter/path",
     "linter/text",
     "linter/tokens",
+    "macho",
+    "meaning",
     "repository",
     "source",
     "test-support",

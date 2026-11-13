@@ -22,14 +22,24 @@
 !/.github/**
 
 # The crates.
+!/arm64/
+!/arm64/**
+!/ast/
+!/ast/**
 !/blocks/
 !/blocks/**
 !/cli/
 !/cli/**
+!/grammar/
+!/grammar/**
 !/lexer/
 !/lexer/**
 !/linter/
 !/linter/**
+!/macho/
+!/macho/**
+!/meaning/
+!/meaning/**
 !/repository/
 !/repository/**
 !/source/

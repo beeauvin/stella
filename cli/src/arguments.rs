@@ -4,9 +4,9 @@
 
 //! The arguments say what the command is asked to do.
 //!
-//! For now there's one command, `lint`, which takes one path or none, and there are no options.
-//! Anything else is a misuse, which has a sentence that says what's wrong. An argument needn't be
-//! UTF-8, so each is read as bytes.
+//! There are two commands: `build`, which takes one path, and `lint`, which takes one path or
+//! none. There are no options. Anything else is a misuse, which has a sentence that says what's
+//! wrong. An argument needn't be UTF-8, so each is read as bytes.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -14,12 +14,14 @@ use std::os::unix::ffi::OsStrExt as _;
 
 use crate::message::shown;
 
-/// This is the line every misuse ends with.
-pub const USAGE: &str = "usage: stella lint [path]\n";
+/// These are the lines every misuse ends with.
+pub const USAGE: &str = "usage: stella build <path>\n       stella lint [path]\n";
 
 /// A command is what the arguments ask for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command<'arguments> {
+    /// Build the one program at this path, which isn't empty.
+    Build(&'arguments [u8]),
     /// Lint the one program at this path, which isn't empty.
     LintOne(&'arguments [u8]),
     /// Lint every program under the directory the command runs in.
@@ -35,9 +37,11 @@ pub enum Misuse<'arguments> {
     NoCommand,
     /// The first argument isn't a command.
     NotACommand(&'arguments [u8]),
+    /// `build` was given no path, or more than one.
+    BuildNeedsOnePath,
     /// `lint` was given more than one path.
-    TooManyPaths,
-    /// The path `lint` was given is empty.
+    LintTooManyPaths,
+    /// The path a command was given is empty.
     EmptyPath,
 }
 
@@ -51,7 +55,10 @@ impl fmt::Display for Misuse<'_> {
             }
             Self::NoCommand => f.write_str("a command is needed."),
             Self::NotACommand(command) => write!(f, "`{}` isn't a command.", shown(command)),
-            Self::TooManyPaths => f.write_str("`lint` takes one path, or none to lint every file."),
+            Self::BuildNeedsOnePath => f.write_str("`build` takes one path."),
+            Self::LintTooManyPaths => {
+                f.write_str("`lint` takes one path, or none to lint every file.")
+            }
             Self::EmptyPath => f.write_str("the path is empty."),
         }
     }
@@ -76,17 +83,20 @@ pub fn command(arguments: &[OsString]) -> Result<Command<'_>, Misuse<'_>> {
     else {
         return Err(Misuse::NoCommand);
     };
-    if command.as_bytes() != b"lint" {
-        return Err(Misuse::NotACommand(command.as_bytes()));
-    }
-    let path = match paths {
-        [] => return Ok(Command::LintEvery),
-        [path] => path.as_bytes(),
-        [_, _, ..] => return Err(Misuse::TooManyPaths),
+    let command = match (command.as_bytes(), paths) {
+        (b"build", [path]) => Command::Build(path.as_bytes()),
+        (b"build", [] | [_, _, ..]) => return Err(Misuse::BuildNeedsOnePath),
+        (b"lint", []) => return Ok(Command::LintEvery),
+        (b"lint", [path]) => Command::LintOne(path.as_bytes()),
+        (b"lint", [_, _, ..]) => return Err(Misuse::LintTooManyPaths),
+        (other, _) => return Err(Misuse::NotACommand(other)),
+    };
+    let (Command::Build(path) | Command::LintOne(path)) = command else {
+        unreachable!("linting every program was returned above, since it takes no path");
     };
     if path.is_empty() {
         return Err(Misuse::EmptyPath);
     }
     assert!(!path.starts_with(b"-"), "an argument that looks like an option was refused first");
-    Ok(Command::LintOne(path))
+    Ok(command)
 }

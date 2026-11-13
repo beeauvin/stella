@@ -62,17 +62,20 @@ fn pick_returns_one_of_the_choices() {
 #[test]
 #[should_panic(expected = "a seed of 0 would only ever give 0")]
 fn a_seed_of_zero_is_a_bug() {
+    // Xorshift never leaves a state of 0, so a seed of 0 would give 0 for ever.
     _ = Rng::new(0);
 }
 
 #[test]
 #[should_panic(expected = "there's no number below 0 to return")]
 fn below_zero_is_a_bug() {
+    // No number is below 0, so there's nothing to give back.
     _ = Rng::new(1).below(0);
 }
 
 #[test]
 #[should_panic(expected = "there's nothing to pick from")]
 fn picking_from_nothing_is_a_bug() {
+    // An empty slice has no element to pick.
     let _: &str = Rng::new(1).pick(&[]);
 }

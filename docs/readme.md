@@ -1,7 +1,7 @@
 # Stella's documentation
 
 - [The reference](reference/readme.md) describes the language and the compiler
-  as they stand today. Each rule links to the tests that check it.
+  as they stand today. Each rule links to the tests that check it, or says it isn't tested.
 - [The rules the code is held to](rules.md) says what each rule's code means,
   wherever the compiler's own source cites one.
 

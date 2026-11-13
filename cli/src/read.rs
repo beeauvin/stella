@@ -2,11 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! Reading a source file into a buffer made once.
+//! Reading a source file, as much of it as a source can be.
 //!
-//! A source is read into one `SourceBuffer`, lent to each file in turn, so checking every program
-//! in a tree takes the same room as checking one. The buffer has room for one byte more than the
-//! largest source, so a file that's too big is seen to be, without being read whole.
+//! A file is read into room for one byte more than the largest source, so a file that's too big
+//! is seen to be, without being read whole. What comes back is the file's own bytes and nothing
+//! else, and it belongs to whoever asked.
 
 use std::fmt;
 use std::io::{self, Read};
@@ -16,40 +16,14 @@ use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
 
 use crate::filesystem::{AccessFailure, look_through, open};
 
-/// This is how many bytes a source buffer holds: one more than the largest source.
-const BUFFER_BYTES: usize = usize_from_u32(SOURCE_BYTES_MAX) + 1;
+/// This is the most bytes of a file that are read: one more than the largest source.
+const READ_BYTES_MAX: usize = usize_from_u32(SOURCE_BYTES_MAX) + 1;
 
 /// This is how many times a read that a signal interrupted is tried again, over one file.
 ///
 /// Interruptions are rare and each is harmless, so a few are waited out. More than that is
 /// reported, so a reader that only ever says it was interrupted can't hold the command forever.
 pub const READ_INTERRUPTIONS_MAX: u32 = 8;
-
-/// A source buffer is where `read` puts a file's bytes. It's made once, and it never grows.
-#[derive(Debug)]
-pub struct SourceBuffer {
-    bytes: Box<[u8]>,
-}
-
-impl SourceBuffer {
-    /// Returns a buffer with room for one byte more than the largest source.
-    ///
-    /// # Panics
-    ///
-    /// Panics if there isn't the memory for it, as any allocation does.
-    #[must_use]
-    pub fn new() -> Self {
-        let bytes = vec![0; BUFFER_BYTES].into_boxed_slice();
-        assert_eq!(bytes.len(), BUFFER_BYTES, "the buffer holds one byte more than a source");
-        Self { bytes }
-    }
-}
-
-impl Default for SourceBuffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// A read failure is why a file couldn't be read.
 #[derive(Debug)]
@@ -70,10 +44,11 @@ impl fmt::Display for ReadFailure {
     }
 }
 
-/// Reads the file at `path` into `buffer`, as much of it as fits, and returns what was read.
+/// Reads the file at `path`, up to `SOURCE_BYTES_MAX` bytes and one more, and returns what was
+/// read.
 ///
-/// Whatever the buffer held before is replaced. What's returned is one byte longer than the
-/// largest source when the file is too big.
+/// What's returned is one byte longer than the largest source when the file is too big, so the
+/// text lint can refuse it for its size.
 ///
 /// # Errors
 ///
@@ -83,10 +58,9 @@ impl fmt::Display for ReadFailure {
 /// # Panics
 ///
 /// Never, whatever the file holds. The assertion checks `fill`'s own work.
-pub fn read<'buffer>(
-    path: &Path,
-    buffer: &'buffer mut SourceBuffer,
-) -> Result<&'buffer [u8], ReadFailure> {
+///
+/// If there isn't the memory to read it into, Rust ends the process, which isn't a panic.
+pub fn read(path: &Path) -> Result<Vec<u8>, ReadFailure> {
     // KS-CLOSE-USE: the file is checked before it's opened, and not after, since opening
     // something that isn't a file, like a FIFO, can wait forever. Something swapped in between
     // the two could still do that, or be a symlink by the time it's opened. Opening without
@@ -99,11 +73,13 @@ pub fn read<'buffer>(
         return Err(ReadFailure::NotAFile);
     }
     let mut file = open(path).map_err(ReadFailure::Access)?;
-    let length = fill(&mut file, &mut buffer.bytes)
+    let mut bytes = vec![0; READ_BYTES_MAX];
+    let length = fill(&mut file, &mut bytes)
         .map_err(|error| ReadFailure::Access(AccessFailure::from_reading(error)))?;
-    assert!(length <= BUFFER_BYTES, "a fill writes no more than the buffer holds");
-    // Only what this read wrote is returned, never what an earlier file left further on.
-    Ok(&buffer.bytes[..length])
+    assert!(length <= READ_BYTES_MAX, "a fill writes no more than it's given room for");
+    // Only what the read wrote is returned, never the zeros the room was made with.
+    bytes.truncate(length);
+    Ok(bytes)
 }
 
 /// Reads from `reader` into `buffer` until the buffer is full or the reader ends, and returns how

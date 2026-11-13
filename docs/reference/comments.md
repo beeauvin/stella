@@ -13,11 +13,14 @@ function main() returns Void {
 }
 ```
 
+A comment can go outside every block and in any block, such as a function's
+body. Tested by [`comments`](../../grammar/tests/parse.rs).
+
 That's the only way to write a comment. The compiler refuses each of these
-lines, and [`comments`](../../linter/text/tests/text.rs) tests each one:
+lines, and [`comments`](../../linter/text/tests/text.rs) tests each kind:
 
 - `function main() returns Void { // hi`, because code and a comment can't
   share a line.
-- `//hi`, because a space must follow the slashes.
-- `/// hi`, because three slashes don't start a comment.
-- `//! hi`, because neither do two slashes and a bang.
+- `//hi`, because a space must follow the two slashes.
+- `/// hi` and `//! hi`, for the same reason: a third slash or a bang isn't a
+  space.

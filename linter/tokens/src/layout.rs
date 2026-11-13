@@ -10,7 +10,7 @@
 //!    line of code ends with `{` or `}`. Each is found at the first token at fault, or for a line
 //!    that ends some other way, just past its last token. A `{` that neither ends its line nor
 //!    has a token before it is refused for not ending it. Which tokens can come before a `{` is
-//!    for the grammar to say, once it's built.
+//!    for the grammar to say.
 //! 2. The braces: every `}` closes a `{` before it, and every `{` is closed. A `}` with nothing
 //!    open always comes before any `{` left open, so the first such `}` is the earliest problem.
 //!    Otherwise it's the outermost `{` left open.
@@ -63,16 +63,16 @@ impl Pair<'_> {
 ///
 /// Only `lint_tokens` makes one, so holding a `Layout` proves the source passed the text lint,
 /// the lexer and the tokens lint.
-#[derive(Clone, Copy, Debug)]
-pub struct Layout<'source, 'buffer> {
-    tokens: Tokens<'source, 'buffer>,
+#[derive(Debug)]
+pub struct Layout<'source> {
+    tokens: Tokens<'source>,
 }
 
-impl<'source, 'buffer> Layout<'source, 'buffer> {
+impl<'source> Layout<'source> {
     /// Returns the tokens, just as the lexer made them.
     #[must_use]
-    pub const fn tokens(&self) -> Tokens<'source, 'buffer> {
-        self.tokens
+    pub const fn tokens(&self) -> &Tokens<'source> {
+        &self.tokens
     }
 }
 
@@ -87,9 +87,7 @@ impl<'source, 'buffer> Layout<'source, 'buffer> {
 ///
 /// Never, whatever the tokens. The assertions check what the lexer guarantees and the lint's own
 /// work, so one that fails is a bug in the compiler.
-pub fn lint_tokens<'source, 'buffer>(
-    lexed: Tokens<'source, 'buffer>,
-) -> Result<Layout<'source, 'buffer>, Problem> {
+pub fn lint_tokens(lexed: Tokens<'_>) -> Result<Layout<'_>, Problem> {
     let tokens = lexed.as_slice();
     assert!(
         tokens.len() <= usize_from_u32(TOKENS_MAX),

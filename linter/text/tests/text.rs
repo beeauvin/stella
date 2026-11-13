@@ -181,7 +181,9 @@ fn invalid_utf8() {
 
 #[test]
 fn lines() {
-    // Every indentation up to five levels: only whole levels of four spaces pass.
+    // Every indentation up to five levels: only whole levels of four spaces pass. Then a table
+    // of lines that end wrongly: no final newline, a blank line at the end, a trailing space
+    // and a line of only spaces, each alone, on the last line, and with another problem.
     for spaces in 0_usize..=20 {
         let source = format!("function main() returns Void {{\n{}// x\n}}\n", " ".repeat(spaces));
         if spaces.is_multiple_of(4) {

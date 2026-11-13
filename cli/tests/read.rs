@@ -15,7 +15,7 @@ use std::io::{self, Read};
 use std::iter::repeat_n;
 use std::path::PathBuf;
 
-use stella_cli::{AccessFailure, READ_INTERRUPTIONS_MAX, ReadFailure, SourceBuffer, fill, read};
+use stella_cli::{AccessFailure, READ_INTERRUPTIONS_MAX, ReadFailure, fill, read};
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
 use stella_test_support::{ModeGuard, Scratch, fifo, write};
 
@@ -125,14 +125,13 @@ fn fill_returns_the_readers_error() {
 fn read_returns_a_files_bytes() {
     // A file comes back whole, whatever its bytes are, and an empty file is no bytes.
     let directory = fresh_directory("bytes");
-    let mut buffer = SourceBuffer::new();
     for (name, contents) in [
         ("hello.stella", &b"function main() returns Void {\n}\n"[..]),
         ("empty.stella", b""),
         ("not-utf8.stella", b"\xFF\x00\r"),
     ] {
         write(&directory, name, contents);
-        let found = read(&directory.join(name), &mut buffer).expect("the file can be read");
+        let found = read(&directory.join(name)).expect("the file can be read");
         assert_eq!(found, contents, "for {name}");
     }
 }
@@ -143,38 +142,36 @@ fn read_stops_one_byte_past_the_largest_source() {
     // that, however large it is, so it's seen to be too big without being read whole.
     let directory = fresh_directory("sizes");
     let largest = usize_from_u32(SOURCE_BYTES_MAX);
-    let mut buffer = SourceBuffer::new();
     for (name, size, read_bytes) in [
         ("largest.stella", largest, largest),
         ("one-more.stella", largest + 1, largest + 1),
         ("huge.stella", largest * 4, largest + 1),
     ] {
         write(&directory, name, &vec![b'x'; size]);
-        let found = read(&directory.join(name), &mut buffer).expect("the file can be read");
+        let found = read(&directory.join(name)).expect("the file can be read");
         assert_eq!(found.len(), read_bytes, "for {name}");
         assert!(found.iter().all(|&byte| byte == b'x'), "for {name}");
     }
 }
 
 #[test]
-fn one_buffer_serves_every_file() {
-    // The same buffer is lent to file after file. Each file's bytes are its own, however much
-    // more the file before it left in the buffer.
-    let directory = fresh_directory("reuse");
-    write(&directory, "long.stella", &vec![b'x'; usize_from_u32(SOURCE_BYTES_MAX)]);
+fn every_file_read_is_its_own_bytes() {
+    // The largest source and a short one, read turn about, with each read kept while the next
+    // is made. Every read is as long as its file and holds its file's bytes, so a short file
+    // carries none of the room it was read into, and none of a longer file read before it.
+    let directory = fresh_directory("own");
+    let long = vec![b'x'; usize_from_u32(SOURCE_BYTES_MAX)];
+    write(&directory, "long.stella", &long);
     write(&directory, "short.stella", b"// y\n");
-    let mut buffer = SourceBuffer::new();
-    for (name, length) in [
-        ("long.stella", usize_from_u32(SOURCE_BYTES_MAX)),
-        ("short.stella", 5),
-        ("long.stella", usize_from_u32(SOURCE_BYTES_MAX)),
-        ("short.stella", 5),
-    ] {
-        let found = read(&directory.join(name), &mut buffer).expect("the file can be read");
-        assert_eq!(found.len(), length, "for {name}");
+    let names = ["long.stella", "short.stella", "long.stella", "short.stella"];
+    let reads: Vec<Vec<u8>> = names
+        .iter()
+        .map(|name| read(&directory.join(name)).expect("the file can be read"))
+        .collect();
+    for (name, found) in names.iter().zip(&reads) {
+        let contents = if *name == "long.stella" { long.as_slice() } else { b"// y\n" };
+        assert_eq!(found, contents, "for {name}");
     }
-    let short = read(&directory.join("short.stella"), &mut buffer).expect("the file can be read");
-    assert_eq!(short, b"// y\n");
 }
 
 #[test]
@@ -187,9 +184,8 @@ fn what_cant_be_read_says_why() {
     write(&directory, "locked.stella", b"// x\n");
     write(&directory, "file", b"");
     let _guard = ModeGuard::new(directory.join("locked.stella"), 0o000);
-    let mut buffer = SourceBuffer::new();
-    let mut failure_of = |name: &str| {
-        read(&directory.join(name), &mut buffer).map(<[u8]>::len).expect_err("it can't be read")
+    let failure_of = |name: &str| {
+        read(&directory.join(name)).map(|bytes| bytes.len()).expect_err("it can't be read")
     };
     let missing = failure_of("missing.stella");
     assert!(matches!(missing, ReadFailure::Access(AccessFailure::Missing)), "{missing:?}");
