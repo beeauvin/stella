@@ -12,7 +12,7 @@ builds, it tells you exactly what it needs. Period.
 ## Where it stands
 
 Stella is at its very start. For now, it builds the smallest program there is,
-for macOS 27 on arm64: one function, `main`, that does nothing.
+for macOS 15.7.5 or later on arm64: one function, `main`, that does nothing.
 
 ```stella
 function main() returns Void {

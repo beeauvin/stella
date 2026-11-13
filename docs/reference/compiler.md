@@ -76,10 +76,11 @@ takes exactly one path. Tested by [`misuse`](../../cli/tests/lint.rs),
 [`misuse`](../../cli/tests/build.rs) and
 [`misuses`](../../cli/tests/arguments.rs).
 
-For now, the compiler builds for one target, macOS 27 on arm64, and there's no
-target to choose. Tested by
+For now, the compiler builds for one target, macOS 15.7.5 or later on arm64,
+and there's no target to choose. 15.7.5 is the oldest macOS the binaries have
+been seen to run on, and CI runs them on it, on 26 and on 27. Tested by
 [`otool_reads_what_the_oracle_states`](../../macho/tests/write.rs), which reads
-macOS 27.0 back from the binary,
+macOS 15.7.5 back from the binary,
 [`the_smallest_program`](../../macho/tests/write.rs), which pins the header
 that says arm64, and
 [`macos_checks_the_signature_and_runs_it`](../../macho/tests/write.rs), which

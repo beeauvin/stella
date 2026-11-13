@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! Writes a program's code as a signed Mach-O executable for macOS 27, the last step of a build.
+//! Writes a program's code as a signed Mach-O executable for macOS, the last step of a build.
 //!
 //! `write` takes the `Code` that only `generate` makes, and a `BinaryName`, so it has nothing to
 //! refuse. It lays the file out with `layout`, asks the code for its bytes as they are where the

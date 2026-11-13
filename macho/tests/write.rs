@@ -116,13 +116,13 @@ const NAMES: [&str; 6] = ["hello", LONGEST, "a", "world", EVERY_CHARACTER, "abc"
 /// 2026-11-13 for the file this crate wrote, after `codesign --verify --strict` accepted that
 /// file on each and it ran there and exited with 0.
 const RAN: [(&str, &str); 2] = [
-    ("hello", "eab449c96bfc69885bfc33ecb944b7230a63e5113ed0a3a5f4f985864a9927a6"),
-    (LONGEST, "4e6d939cb5c2d91b1d117cfc2af062fe77ece9d2f9639bd7e36631d3f06d2dd7"),
+    ("hello", "42c88067fef5af0b583459ffff3effcdf86555b3aa5b5bb240ef5d9f7289e038"),
+    (LONGEST, "06a270788aec7b8fcc077caccbdacb2affc05228e357ad86efc09691275a45c1"),
 ];
 
 /// This is `hello`'s UUID as `otool -l` printed it on macOS 27.2 for the file pinned in `RAN`.
 /// Its third group starts with the version, 8, and its fourth with the variant's digit, B.
-const HELLO_UUID_TEXT: &str = "DE20627D-07F8-81E4-9F6A-B23776421548";
+const HELLO_UUID_TEXT: &str = "99A802D7-07CF-86B8-BF32-6E80C35E73BD";
 
 /// This is the SHA-256 of a page of zeros, as `head -c 4096 /dev/zero | shasum -a 256` printed it
 /// on macOS 27.2. The smallest program's last three pages are all zeros.
@@ -368,9 +368,9 @@ fn image_oracle(name: &str) -> Vec<u8> {
     image.u32s(&[0x1B, 24]);
     assert_eq!(image.bytes.len(), UUID_RANGE.start, "the UUID is 624 bytes in");
     image.bytes.extend_from_slice(&[0; 16]);
-    // The build version (`LC_BUILD_VERSION`): for macOS, which is platform 1, needing 27.0, made
-    // against the SDK of 27.0, by no tools that are named.
-    image.u32s(&[0x32, 24, 1, 0x001B_0000, 0x001B_0000, 0]);
+    // The build version (`LC_BUILD_VERSION`): for macOS, which is platform 1, needing 15.7.5,
+    // made against the SDK of 27.0, by no tools that are named.
+    image.u32s(&[0x32, 24, 1, 0x000F_0705, 0x001B_0000, 0]);
     // Where the program starts (`LC_MAIN`): at the code's first byte, on a stack the system
     // sizes.
     image.u32s(&[0x8000_0028, 24]);
@@ -695,7 +695,7 @@ fn printed_oracle(name: &str, uuid: &[u8]) -> Vec<PrintedBlock> {
     identity.1.push(("uuid", text(&uuid_text(uuid))));
     let mut version = command(8, "LC_BUILD_VERSION", 24);
     version.1.extend([
-        ("minos", text("27.0")),
+        ("minos", text("15.7.5")),
         ("sdk", text("27.0")),
         ("ntools", Printed::Number(0)),
     ]);
@@ -972,7 +972,8 @@ fn otool_reads_what_the_oracle_states() {
     // file, it prints the twelve commands and two sections in the oracle's order, and these
     // numbers the oracle states are in the fields otool names for them: every segment's
     // address, size, offset and protection, the code's section, empty symbol tables, where the
-    // program starts, the UUID as a well-formed one, macOS 27.0, and where the signature is.
+    // program starts, the UUID as a well-formed one, macOS 15.7.5 and the SDK of 27.0, and
+    // where the signature is.
     for (index, name) in NAMES.into_iter().enumerate() {
         let executable = written(SMALLEST, name);
         check(&executable, name);

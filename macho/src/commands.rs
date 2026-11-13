@@ -6,8 +6,8 @@
 //!
 //! macOS insists on most of what's here: the `__PAGEZERO` segment, which keeps the lowest 4 GiB
 //! unmapped, the loader's path, a UUID, where the program starts, libSystem, and a signature.
-//! The build version says the binary is for macOS 27. Without any one of those, macOS won't run
-//! the binary.
+//! The build version says the binary needs macOS 15.7.5 or later. Without any one of those,
+//! macOS won't run the binary.
 //!
 //! The symbol table and the loader's view of it are there though both are empty, since a
 //! program has no symbols. The loader on macOS 15 and 26 reads a binary that has nothing to fix
@@ -165,10 +165,19 @@ const _: () = assert!(
     "the stack's section is aligned as the stack is"
 );
 
-/// The platform is macOS (`PLATFORM_MACOS`), and the version is 27.0, for the system the
-/// binary needs and for the SDK it was made against: a major version in the high 16 bits.
+/// The platform is macOS (`PLATFORM_MACOS`). Each version holds its major number in the high 16
+/// bits, then its minor and its patch in 8 bits each.
 const PLATFORM_MACOS: u32 = 1;
-const MACOS_27_0: u32 = 27 << 16;
+
+/// This is the oldest macOS a binary says it runs on: 15.7.5, the oldest release it's been seen
+/// to run on, which CI runs it on every time. Nothing older was there to try. The loader
+/// doesn't hold a binary to this, so it's only true if it's what was seen.
+const MACOS_MINIMUM: u32 = (15 << 16) | (7 << 8) | 5;
+
+/// This is the SDK a binary says it was made against: macOS 27.0's, the newest, so the system's
+/// libraries give it their behaviour of today rather than an older one they keep for programs
+/// made against older SDKs.
+const MACOS_SDK: u32 = 27 << 16;
 
 /// libSystem's version on macOS 27.2, 1359.40.3, and the version a program needs it to
 /// be compatible with, 1.0.0. The loader checks only the second.
@@ -247,8 +256,8 @@ pub(crate) fn push_header_and_commands(image: &mut Image, layout: &Layout) {
         BUILD_VERSION,
         BUILD_VERSION_BYTES,
         PLATFORM_MACOS,
-        MACOS_27_0,
-        MACOS_27_0,
+        MACOS_MINIMUM,
+        MACOS_SDK,
         tools_count,
     ]);
     image.push_u32s(&[MAIN, MAIN_BYTES]);

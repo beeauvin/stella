@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//! Writing puts a program's code in a Mach-O executable that macOS 27 runs, byte by byte, with
-//! no assembler and no linker.
+//! Writing puts a program's code in a Mach-O executable that macOS runs, byte by byte, with no
+//! assembler and no linker.
 //!
 //! The file is written from its first byte to its last: the header and the load commands, the
 //! code, placed where the layout put it, zeros to the end of `__TEXT`, and then the signature.
