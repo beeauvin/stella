@@ -2,7 +2,7 @@
 
 This reference describes Stella as it stands today, and it grows as the
 language does. Each rule links to the tests that check it, or says it isn't
-built yet, when the part of the compiler that would check it doesn't exist.
+tested.
 
 Here is the smallest Stella program. For now, every program is this one, give
 or take [comments](comments.md) and blank lines:

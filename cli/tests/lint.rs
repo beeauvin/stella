@@ -52,8 +52,8 @@ const NO_SUCH_TYPE: &str = "this type doesn't exist; for now, the only type is `
 /// This is the sentence for a source with no `main`.
 const NO_MAIN: &str = "a program needs a function named `main`.";
 
-/// This is the line every misuse ends with.
-const USAGE: &str = "usage: stella lint [path]\n";
+/// These are the lines every misuse ends with.
+const USAGE: &str = "usage: stella build <path>\n       stella lint [path]\n";
 
 /// This is the sentence for a directory's name that isn't kebab.
 const DIRECTORY_NOT_KEBAB: &str = "a directory's name must be lowercase letters and digits \
@@ -855,7 +855,7 @@ fn a_closed_stderr() {
 #[test]
 fn misuse() {
     // Each wrong way to call the command exits with 2, says what's wrong, and ends with the
-    // usage line.
+    // usage lines.
     let directory = fresh_directory("misuse");
     write(&directory, "hello.stella", GOOD);
     for (arguments, sentence) in [

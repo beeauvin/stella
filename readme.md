@@ -11,10 +11,28 @@ builds, it tells you exactly what it needs. Period.
 
 ## Where it stands
 
-Stella is at its very start. The compiler can't build a program yet. What it
-can do is lint one: `stella lint` checks a source file's path, its text, its
-tokens, its layout, its grammar and what its code means, and says exactly
-where the first thing wrong is.
+Stella is at its very start. For now, it builds the smallest program there is,
+for macOS 27 on arm64: one function, `main`, that does nothing.
+
+```stella
+function main() returns Void {
+}
+```
+
+The compiler writes the binary itself, every byte of it, with no assembler and
+no linker, and says what the program needs:
+
+```console
+$ stella build hello.stella
+hello needs 0 bytes of running memory and 44 bytes of code, on top of what macOS needs to run any program.
+$ ./.build/hello
+$ echo $?
+0
+```
+
+Before it builds anything, it checks everything: the file's path, its text, its
+tokens, its layout, its grammar and what its code means. `stella lint` runs
+those checks alone, and says exactly where the first thing wrong is.
 
 ```console
 $ stella lint app/bad-indent.stella
@@ -24,8 +42,8 @@ app/bad-indent.stella:2:1: indentation must be a multiple of four spaces.
 ```
 
 The [reference](docs/reference/readme.md) describes the language as it stands
-today. Each rule in it links to the tests that check it, or says it isn't built
-yet.
+today. Each rule in it links to the tests that check it, or says it isn't
+tested.
 
 ## Trying it
 
@@ -40,15 +58,26 @@ cargo build --release
 With mise activated in your shell, `cargo` is that Rust. If it isn't activated,
 put `mise exec --` before each `cargo` command here.
 
-Then lint one program, or every program under the directory you're in:
+That makes the compiler, `target/release/stella`. Save the program above as
+`hello.stella`, then build it from the directory it's in, and run it:
+
+```sh
+target/release/stella build hello.stella
+./.build/hello
+```
+
+The binary goes in `.build/`, at the source's path without `.stella`. To check
+programs without building them, lint one, or every program under the directory
+you're in:
 
 ```sh
 target/release/stella lint hello.stella
 target/release/stella lint
 ```
 
-It exits with 0 when every program passes, 1 when one is refused, and 2 when
-something outside the program went wrong, like a file that doesn't exist.
+Either command exits with 0 when it's done what it was asked, 1 when a program
+is refused, and 2 when something outside the program went wrong, like a file
+that doesn't exist.
 
 ## Working on it
 
@@ -71,8 +100,10 @@ with a short code, like `KS-BOUNDED`, and
 
 ## How it's laid out
 
-A program goes through a line of checks. Each check hands the next a type that
-only it can make, so nothing downstream can be given text that wasn't checked.
+A program goes through a line of checks, and then, for a build, through the
+steps that make its binary. Each hands the next a type that only it can make,
+up to the finished executable, so nothing downstream can be given a program
+that wasn't checked.
 
 | Directory       | What it holds                                                 |
 | --------------- | ------------------------------------------------------------- |
@@ -87,7 +118,7 @@ only it can make, so nothing downstream can be given text that wasn't checked.
 | `meaning`       | The checks of what code means: its types, and its program.    |
 | `arm64`         | The generator of a program's machine code.                    |
 | `macho`         | The writer of the signed executable macOS runs.               |
-| `cli`           | The `stella` command, which reads files and runs the checks.  |
+| `cli`           | The `stella` command, which reads files and runs all of it.   |
 | `repository`    | Tests of the repository itself, like the reference's links.   |
 | `test-support`  | What the tests share.                                         |
 | `xtask`         | The workspace's own tools, run as `cargo xtask <command>`.    |

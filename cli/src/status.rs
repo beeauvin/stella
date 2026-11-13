@@ -10,7 +10,7 @@
 /// every program ends with the worst status any of them gets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Status {
-    /// Every program the command checked passed.
+    /// Every program the command checked passed, or the program was built.
     Passed,
     /// A program was refused.
     Refused,
@@ -19,8 +19,8 @@ pub enum Status {
 }
 
 impl Status {
-    /// Returns what the process exits with: 0 when every program passed, 1 when one was refused,
-    /// and 2 when something outside the program went wrong.
+    /// Returns what the process exits with: 0 when every program passed or the program was
+    /// built, 1 when one was refused, and 2 when something outside the program went wrong.
     #[must_use]
     pub const fn code(self) -> u8 {
         match self {

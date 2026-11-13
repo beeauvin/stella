@@ -23,6 +23,9 @@ function main() returns Void {
 ```
 
 Running the program runs `main`. When `main` returns, the program exits with
-status 0. Not built yet.
+status 0. Tested by [`the_smallest_program`](../../arm64/tests/generate.rs),
+which pins the code that calls `main` and returns 0, and by running the binary,
+in [`macos_checks_the_signature_and_runs_it`](../../macho/tests/write.rs) and
+[`builds_a_program`](../../cli/tests/build.rs).
 
 [The compiler](compiler.md) says how a program is built.

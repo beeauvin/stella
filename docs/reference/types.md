@@ -12,5 +12,7 @@ type's name is refused at that name, even one that's almost `Void`, like
 [`names_near_a_type`](../../meaning/tests/resolve.rs) and
 [`every_program`](../../meaning/tests/resolve.rs).
 
-That a function returns when its body ends isn't built yet. It waits for the
-rest of the compiler.
+That a function returns when its body ends is tested by
+[`the_smallest_program`](../../arm64/tests/generate.rs), which pins a body's
+code as `ret`, and by running the binary, in
+[`macos_checks_the_signature_and_runs_it`](../../macho/tests/write.rs).

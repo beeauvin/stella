@@ -45,6 +45,7 @@ dependencies = [
 name = "stella-cli"
 version = "0.0.0"
 dependencies = [
+ "stella-arm64",
  "stella-ast",
  "stella-blocks",
  "stella-grammar",
@@ -52,6 +53,7 @@ dependencies = [
  "stella-linter-path",
  "stella-linter-text",
  "stella-linter-tokens",
+ "stella-macho",
  "stella-meaning",
  "stella-source",
  "stella-test-support",

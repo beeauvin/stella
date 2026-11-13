@@ -21,8 +21,8 @@ use stella_test_support::Rng;
 /// These are the 37 characters a name can hold.
 const NAME_CHARACTERS: &str = "abcdefghijklmnopqrstuvwxyz0123456789-";
 
-/// Lints `path`, which must pass, and checks what it normalizes to and the program's name. The
-/// oracle must agree first.
+/// Lints `path`, which must pass, and checks what it normalizes to, the program's name and the
+/// directory it's in. The oracle must agree first.
 // KS-DISTINCT-ARGS: a path, then what it normalizes to, then the name in it, each shorter than
 // the last, and an expectation with two of them swapped fails its test.
 fn accepts(path: &str, normalized: &str, name: &str) {
@@ -30,6 +30,11 @@ fn accepts(path: &str, normalized: &str, name: &str) {
     let source_path = lint_path(path).expect("path should pass the path lint");
     assert_eq!(source_path.normalized(), normalized, "for {path:?}");
     assert_eq!(source_path.name(), name, "for {path:?}");
+    // The directory is what's left of the normalized path before the file and its `/`.
+    let file = format!("{name}.stella");
+    let before_file = normalized.strip_suffix(&file).expect("a path ends with its file");
+    let directory = before_file.strip_suffix('/').unwrap_or(before_file);
+    assert_eq!(source_path.directory(), directory, "for {path:?}");
 }
 
 /// Lints `path`, which must be refused with `problem`. The oracle must agree first.
@@ -147,7 +152,8 @@ fn every_code_point_in_a_directorys_name() {
 
 #[test]
 fn accepted_paths() {
-    // Each path passes, and comes back without its leading `./`, with the program's name.
+    // Each path passes, and comes back without its leading `./`, with the program's name and
+    // the directory it's in, which is empty for a file with no directory before it.
     for (path, normalized, name) in [
         ("hello.stella", "hello.stella", "hello"),
         ("hello-world.stella", "hello-world.stella", "hello-world"),
@@ -160,6 +166,15 @@ fn accepted_paths() {
         ("./programs/hello.stella", "programs/hello.stella", "hello"),
     ] {
         accepts(path, normalized, name);
+    }
+    for (path, directory) in [
+        ("hello.stella", ""),
+        ("./hello.stella", ""),
+        ("programs/hello.stella", "programs"),
+        ("./a/b/c/hello.stella", "a/b/c"),
+    ] {
+        let source_path = lint_path(path).expect("path should pass the path lint");
+        assert_eq!(source_path.directory(), directory, "for {path:?}");
     }
 }
 
