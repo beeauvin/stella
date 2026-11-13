@@ -15,7 +15,9 @@
 pub use examples::{EXAMPLES_MAX, Example, Examples};
 pub use files::{ModeGuard, Scratch, fifo, write};
 pub use rng::Rng;
-pub use write::{excerpt, indent, joined, nested_blocks, slice, source_of};
+pub use write::{
+    SEQUENCES_MAX, excerpt, indent, joined, nested_blocks, programs_of, sequences, slice, source_of,
+};
 
 mod examples;
 mod files;

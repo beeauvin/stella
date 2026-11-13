@@ -26,6 +26,8 @@
 !/blocks/**
 !/cli/
 !/cli/**
+!/grammar/
+!/grammar/**
 !/lexer/
 !/lexer/**
 !/linter/

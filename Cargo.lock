@@ -27,6 +27,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-grammar"
+version = "0.0.0"
+dependencies = [
+ "stella-blocks",
+ "stella-lexer",
+ "stella-linter-text",
+ "stella-linter-tokens",
+ "stella-source",
+ "stella-test-support",
+]
+
+[[package]]
 name = "stella-lexer"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,21 @@
+[package]
+name = "stella-grammar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+stella-blocks = { path = "../blocks" }
+stella-lexer = { path = "../lexer" }
+stella-source = { path = "../source" }
+
+[dev-dependencies]
+stella-linter-text = { path = "../linter/text" }
+stella-linter-tokens = { path = "../linter/tokens" }
+stella-test-support = { path = "../test-support" }
+
+[lints]
+workspace = true

@@ -81,6 +81,7 @@ only it can make, so nothing downstream can be given text that wasn't checked.
 | `lexer`         | The lexer, which turns checked text into tokens.              |
 | `linter/tokens` | The check of how tokens are laid out.                         |
 | `blocks`        | The nesting of laid-out lines into blocks.                    |
+| `grammar`       | The check of each line against the grammar.                   |
 | `cli`           | The `stella` command, which reads files and runs the checks.  |
 | `repository`    | Tests of the repository itself, like the reference's links.   |
 | `test-support`  | What the tests share.                                         |

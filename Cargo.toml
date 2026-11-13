@@ -2,6 +2,7 @@
 members = [
     "blocks",
     "cli",
+    "grammar",
     "lexer",
     "linter/path",
     "linter/text",
