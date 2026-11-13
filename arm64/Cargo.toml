@@ -1,0 +1,24 @@
+[package]
+name = "stella-arm64"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+stella-ast = { path = "../ast" }
+stella-meaning = { path = "../meaning" }
+stella-source = { path = "../source" }
+
+[dev-dependencies]
+stella-blocks = { path = "../blocks" }
+stella-grammar = { path = "../grammar" }
+stella-lexer = { path = "../lexer" }
+stella-linter-text = { path = "../linter/text" }
+stella-linter-tokens = { path = "../linter/tokens" }
+stella-test-support = { path = "../test-support" }
+
+[lints]
+workspace = true

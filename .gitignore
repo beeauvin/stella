@@ -22,6 +22,8 @@
 !/.github/**
 
 # The crates.
+!/arm64/
+!/arm64/**
 !/ast/
 !/ast/**
 !/blocks/

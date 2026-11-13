@@ -3,6 +3,21 @@
 version = 4
 
 [[package]]
+name = "stella-arm64"
+version = "0.0.0"
+dependencies = [
+ "stella-ast",
+ "stella-blocks",
+ "stella-grammar",
+ "stella-lexer",
+ "stella-linter-text",
+ "stella-linter-tokens",
+ "stella-meaning",
+ "stella-source",
+ "stella-test-support",
+]
+
+[[package]]
 name = "stella-ast"
 version = "0.0.0"
 dependencies = [

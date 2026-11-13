@@ -6,8 +6,9 @@
 //!
 //! `Rng` is the seeded generator every fuzz test draws from. `Examples` is a table of sources a
 //! test tries, which can't be dropped unchecked. `Scratch`, `write`, `fifo` and `ModeGuard` make
-//! the files a test works in, and `Run` is what a command a test ran did. The rest write and
-//! show Stella source the way the tests do.
+//! the files a test works in, and `Run` is what a command a test ran did. `assemble` and `text`
+//! ask the system's own tools what machine code is. The rest write and show Stella source the
+//! way the tests do.
 //! Nothing here depends on a check, so an oracle built from it states a rule on its own, and
 //! can't agree with the code it checks by sharing that code.
 
@@ -15,6 +16,7 @@
 
 pub use examples::{EXAMPLES_MAX, Example, Examples};
 pub use files::{ModeGuard, Scratch, fifo, write};
+pub use machine::{Text, assemble, text};
 pub use process::Run;
 pub use rng::Rng;
 pub use write::{
@@ -23,6 +25,7 @@ pub use write::{
 
 mod examples;
 mod files;
+mod machine;
 mod process;
 mod rng;
 mod write;
