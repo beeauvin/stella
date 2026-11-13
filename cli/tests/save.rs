@@ -17,12 +17,12 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command};
 use std::thread;
 
 use stella_cli::{BUILD_DIRECTORY, PARTS_MAX, SaveFailure, SaveFailureKind, save};
 use stella_linter_path::lint_path;
-use stella_test_support::{ModeGuard, Scratch, fifo, write};
+use stella_test_support::{ModeGuard, Run, Scratch, fifo, write};
 
 /// Returns a new, empty directory for one test, or one row of a table, to work in.
 fn fresh_directory(name: &str) -> PathBuf {
@@ -44,6 +44,16 @@ const NO_PROCESS: u32 = u32::MAX;
 /// `.<this process's number>.<count>.part`.
 fn part_in(directory: &str, count: u32) -> String {
     format!("{directory}/.{}.{count}.part", process::id())
+}
+
+/// Returns the mode a save gives a binary in this process: for anyone to read and run and for
+/// its owner to write, less what the process's umask takes away. Std can't read the umask, so
+/// a shell this process starts, which has the same one, says what it is.
+fn binary_mode() -> u32 {
+    let said = Run::of(Command::new("/bin/sh").args(["-c", "umask"]));
+    assert_eq!((said.status, said.stderr.as_str()), (0_i32, ""), "a shell says its umask");
+    let umask = u32::from_str_radix(said.stdout.trim(), 8).expect("a umask is an octal number");
+    0o755 & !umask
 }
 
 /// Returns the names of what's in `directory`, in order.
@@ -107,8 +117,9 @@ fn put(directory: &Path, path: &str, kind: &str) {
 #[test]
 fn a_binary_is_saved_at_its_sources_path_without_the_suffix() {
     // Sources at the top and two directories down, and one whose path is written with `./`.
-    // Each binary holds the bytes it was given, is for anyone to run, and is alone in a
-    // directory made for it. The build directory is named `.build`, so the walk skips it.
+    // Each binary holds the bytes it was given, is for anyone to run unless the umask says
+    // otherwise, and is alone in a directory made for it. The build directory is named
+    // `.build`, so the walk skips it.
     assert_eq!(BUILD_DIRECTORY, ".build");
     let directory = fresh_directory("saved");
     for (source, binary) in [
@@ -122,7 +133,7 @@ fn a_binary_is_saved_at_its_sources_path_without_the_suffix() {
         assert_eq!(fs::read(&path).expect("the binary is there"), bytes.as_bytes());
         let metadata = fs::symlink_metadata(&path).expect("the binary is there");
         assert!(metadata.is_file(), "{binary} should be a regular file");
-        assert_eq!(metadata.permissions().mode() & 0o7777, 0o755, "for {binary}");
+        assert_eq!(metadata.permissions().mode() & 0o7777, binary_mode(), "for {binary}");
         let parent = path.parent().expect("a binary is in a directory");
         let name = path.file_name().expect("a binary has a name").to_str();
         let name = name.expect("the tests' names are ASCII");

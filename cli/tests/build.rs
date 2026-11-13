@@ -68,15 +68,25 @@ fn stella_binary() -> OsString {
     env::var_os("CARGO_BIN_EXE_stella").expect("Cargo tells a test where the binary it built is")
 }
 
-/// Runs `stella` in `directory` with `arguments`, and nothing on stdin.
-fn stella(directory: &Path, arguments: &[&str]) -> Run {
-    Run::of(Command::new(stella_binary()).args(arguments).current_dir(directory))
+/// Returns the command that runs `stella` in `directory` with `arguments`. A shell sets the
+/// umask to 022 and then becomes `stella`, so what a build makes doesn't depend on the umask of
+/// whoever runs the tests.
+fn stella_command(directory: &Path, arguments: &[&str]) -> Command {
+    let mut shell = Command::new("/bin/sh");
+    shell.args(["-c", "umask 022 && exec \"$0\" \"$@\""]).arg(stella_binary()).args(arguments);
+    shell.current_dir(directory);
+    shell
 }
 
-/// Runs `stella build hello.stella` in `directory`, from a shell that has run `setup` first, so
-/// the build runs under whatever `setup` sets.
+/// Runs `stella` in `directory` with `arguments`, and nothing on stdin.
+fn stella(directory: &Path, arguments: &[&str]) -> Run {
+    Run::of(&mut stella_command(directory, arguments))
+}
+
+/// Runs `stella build hello.stella` in `directory`, from a shell that has set the umask to 022
+/// and then run `setup`, so the build runs under whatever `setup` sets.
 fn stella_after(directory: &Path, setup: &str) -> Run {
-    let script = format!("{setup} && exec \"$0\" build hello.stella");
+    let script = format!("umask 022 && {setup} && exec \"$0\" build hello.stella");
     let mut shell = Command::new("/bin/sh");
     Run::of(shell.args(["-c", &script]).arg(stella_binary()).current_dir(directory))
 }
@@ -126,13 +136,20 @@ fn names_in(directory: &Path) -> Vec<String> {
     names
 }
 
-/// Checks that the binary at `path` is a regular file anyone can run, that `codesign` accepts
-/// its signature strictly, and that it runs: it exits with 0 and says nothing.
+/// Checks that the binary at `path` is a regular file anyone can run, as a build under a umask
+/// of 022 makes it, that `codesign` accepts its signature strictly, and that it runs.
 fn runs(path: &Path) {
+    runs_with_mode(path, 0o755);
+}
+
+/// Checks that the binary at `path` is a regular file with `mode`, which lets its owner run it,
+/// that `codesign` accepts its signature strictly, and that it runs: it exits with 0 and says
+/// nothing.
+fn runs_with_mode(path: &Path, mode: u32) {
     let metadata = fs::symlink_metadata(path).expect("the binary should be there");
     assert!(metadata.is_file(), "{} should be a regular file", path.display());
-    let mode = metadata.permissions().mode() & 0o7777;
-    assert_eq!(mode, 0o755, "{} should be for anyone to run", path.display());
+    let made_with = metadata.permissions().mode() & 0o7777;
+    assert_eq!(made_with, mode, "the mode of {}", path.display());
     let mut codesign = Command::new("/usr/bin/codesign");
     let verified = Run::of(codesign.args(["--verify", "--strict"]).arg(path));
     assert_eq!(verified, Run::exits(0, ""), "codesign should accept {}", path.display());
@@ -206,13 +223,17 @@ fn the_binary_is_signed_in_its_sources_name() {
 }
 
 #[test]
-fn the_mode_ignores_the_umask() {
-    // Under a umask that takes away everything from everyone else, the binary is still for
-    // anyone to run, since the build sets its mode after making the file.
-    let directory = fresh_directory("umask");
-    write(&directory, "hello.stella", GOOD);
-    assert_eq!(stella_after(&directory, "umask 077"), built(HELLO_REPORT));
-    runs(&directory.join(".build/hello"));
+fn the_mode_follows_the_umask() {
+    // A binary is for anyone to read and run and for its owner to write, less what the umask
+    // takes away. So a umask that takes everything from everyone else leaves a binary only its
+    // owner can run, and one that takes nothing adds nothing: nobody else may write it.
+    for (umask, mode) in [("022", 0o755), ("077", 0o700), ("027", 0o750), ("000", 0o755)] {
+        let directory = fresh_directory(&format!("umask-{umask}"));
+        write(&directory, "hello.stella", GOOD);
+        let run = stella_after(&directory, &format!("umask {umask}"));
+        assert_eq!(run, built(HELLO_REPORT), "under a umask of {umask}");
+        runs_with_mode(&directory.join(".build/hello"), mode);
+    }
 }
 
 #[test]
@@ -254,8 +275,7 @@ fn builds_at_once() {
     let whole = fs::read(&binary).expect("the binary can be read");
     for round in 0_u32..12 {
         let start = || {
-            let mut build = Command::new(stella_binary());
-            build.args(["build", "hello.stella"]).current_dir(&directory);
+            let mut build = stella_command(&directory, &["build", "hello.stella"]);
             build.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
             build.spawn().expect("the binary Cargo built is there to run")
         };
@@ -443,8 +463,8 @@ fn a_report_that_cant_be_written() {
     let directory = fresh_directory("report");
     write(&directory, "hello.stella", GOOD);
     let read_only = fs::File::open("/dev/null").expect("`/dev/null` is there to open");
-    let mut build = Command::new(stella_binary());
-    build.args(["build", "hello.stella"]).current_dir(&directory).stdout(read_only);
+    let mut build = stella_command(&directory, &["build", "hello.stella"]);
+    build.stdout(read_only);
     let said = "stella: the report can't be written: Bad file descriptor (os error 9).\n";
     assert_eq!(Run::of(&mut build), Run::exits(FAILED, said));
     runs(&directory.join(".build/hello"));
@@ -455,8 +475,8 @@ fn a_report_that_cant_be_written() {
     write(&directory, "hello.stella", b"function main() returns Number {\n}\n");
     let linted = stella(&directory, &["lint", "hello.stella"]);
     let read_only = fs::File::open("/dev/null").expect("`/dev/null` is there to open");
-    let mut build = Command::new(stella_binary());
-    build.args(["build", "hello.stella"]).current_dir(&directory).stdout(read_only);
+    let mut build = stella_command(&directory, &["build", "hello.stella"]);
+    build.stdout(read_only);
     assert_eq!(Run::of(&mut build), linted);
 }
 

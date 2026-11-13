@@ -41,7 +41,8 @@ const PART_SUFFIX: &str = ".part";
 /// stops: the parts of that many saves at once, or that many left by builds that were killed.
 pub const PARTS_MAX: u32 = 64;
 
-/// A binary can be read and run by everyone, and written only by its owner.
+/// A binary can be read and run by everyone, and written only by its owner, less whatever the
+/// umask takes away.
 const BINARY_MODE: u32 = 0o755;
 
 /// A save failure is why a binary couldn't be saved, and where under the directory the command
@@ -151,7 +152,7 @@ pub fn save(root: &Path, source: SourcePath<'_>, bytes: &[u8]) -> Result<(), Sav
     }
     let mut part = save_make_part(root, &directory)?;
     part.file
-        .fill(bytes, BINARY_MODE)
+        .fill(bytes)
         .map_err(|reason| SaveFailure::at(&part.path, SaveFailureKind::Unwritable(reason)))?;
     part.file
         .move_over(&root.join(&binary))

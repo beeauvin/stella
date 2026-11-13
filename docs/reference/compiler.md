@@ -131,10 +131,11 @@ Tested by
 
 The binary is written beside its place first, to a part of the build's own,
 and then renamed over it. So a binary is never rewritten in place, which macOS
-can refuse to run, and nobody ever sees half of one. It's for anyone to run,
-whatever the umask is. Tested by [`rebuilding`](../../cli/tests/build.rs),
+can refuse to run, and nobody ever sees half of one. It's for anyone to read
+and run, and for its owner to write, less what the umask takes away. Tested by
+[`rebuilding`](../../cli/tests/build.rs),
 [`builds_at_once`](../../cli/tests/build.rs),
-[`the_mode_ignores_the_umask`](../../cli/tests/build.rs) and
+[`the_mode_follows_the_umask`](../../cli/tests/build.rs) and
 [`saving_again_puts_a_new_file_in_place`](../../cli/tests/save.rs).
 
 A part is named `.<process>.<count>.part`: the number of the process that's

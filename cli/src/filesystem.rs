@@ -13,9 +13,9 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::fs::{self, File, FileType, Metadata, OpenOptions, Permissions};
+use std::fs::{self, File, FileType, Metadata, OpenOptions};
 use std::io::{self, Write as _};
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
 use crate::message::shown;
@@ -203,11 +203,10 @@ pub(crate) fn make_file(path: PathBuf, mode: u32) -> Result<Creation<NewFile>, R
 }
 
 impl NewFile {
-    /// Writes all of `bytes` to the file, gives it `mode` whatever the umask is, and waits
-    /// until its bytes are on the disk.
-    pub(crate) fn fill(&mut self, bytes: &[u8], mode: u32) -> Result<(), Reason> {
+    /// Writes all of `bytes` to the file, and waits until its bytes are on the disk. The file
+    /// keeps the mode it was made with.
+    pub(crate) fn fill(&mut self, bytes: &[u8]) -> Result<(), Reason> {
         self.file.write_all(bytes).map_err(Reason)?;
-        self.file.set_permissions(Permissions::from_mode(mode)).map_err(Reason)?;
         self.file.sync_all().map_err(Reason)
     }
 
@@ -464,9 +463,9 @@ mod tests {
 
     #[test]
     fn a_new_file_is_filled_and_moved_over_another() {
-        // A new file is filled, given a wider mode than it was made with, and moved over a
-        // file that's there. That path then holds the new file itself, with its bytes and its
-        // mode, and nothing is left where the new file was made.
+        // A new file is filled and moved over a file that's there. That path then holds the new
+        // file itself, with its bytes and the mode it was made with, and nothing is left where
+        // the new file was made.
         let directory = fresh("new-file");
         write(&directory, "old", b"the old bytes");
         let part = directory.join("part");
@@ -475,13 +474,13 @@ mod tests {
         else {
             unreachable!("nothing is at {} yet", part.display());
         };
-        file.fill(b"the new bytes", 0o755).expect("the tests' own file can be written");
+        file.fill(b"the new bytes").expect("the tests' own file can be written");
         let inode_part = fs::metadata(&part).expect("the file is there").ino();
         assert_eq!(fs::read(&part).expect("the file can be read"), b"the new bytes");
         file.move_over(&directory.join("old")).expect("the tests' own file can be moved");
         let metadata = fs::symlink_metadata(directory.join("old")).expect("the file is there");
         assert_eq!(metadata.ino(), inode_part, "the new file itself is what's there now");
-        assert_eq!(metadata.permissions().mode() & 0o7777, 0o755, "the mode is the one it's given");
+        assert_eq!(metadata.permissions().mode() & 0o7777, 0o600, "the mode is as it was made");
         let bytes = fs::read(directory.join("old")).expect("the file can be read");
         assert_eq!(bytes, b"the new bytes");
         assert!(!part.exists(), "nothing is left where the file was made");
@@ -499,7 +498,7 @@ mod tests {
         else {
             unreachable!("nothing is at {} yet", part.display());
         };
-        file.fill(b"bytes", 0o755).expect("the tests' own file can be written");
+        file.fill(b"bytes").expect("the tests' own file can be written");
         let reason = file.move_over(&directory.join("inner")).expect_err("a directory is there");
         assert_eq!(reason.kind(), ErrorKind::IsADirectory);
         assert!(!part.exists(), "a file that couldn't be moved is removed");
