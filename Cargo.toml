@@ -8,6 +8,7 @@ members = [
     "linter/path",
     "linter/text",
     "linter/tokens",
+    "meaning",
     "repository",
     "source",
     "test-support",

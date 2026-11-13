@@ -34,6 +34,8 @@
 !/lexer/**
 !/linter/
 !/linter/**
+!/meaning/
+!/meaning/**
 !/repository/
 !/repository/**
 !/source/

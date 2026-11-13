@@ -86,6 +86,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "stella-meaning"
+version = "0.0.0"
+dependencies = [
+ "stella-ast",
+ "stella-blocks",
+ "stella-grammar",
+ "stella-lexer",
+ "stella-linter-text",
+ "stella-linter-tokens",
+ "stella-source",
+ "stella-test-support",
+]
+
+[[package]]
 name = "stella-repository"
 version = "0.0.0"
 dependencies = [
