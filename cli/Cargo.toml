@@ -1,0 +1,30 @@
+[package]
+name = "stella-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+name = "stella_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "stella"
+path = "src/main.rs"
+
+[dependencies]
+stella-blocks = { path = "../blocks" }
+stella-lexer = { path = "../lexer" }
+stella-linter-path = { path = "../linter/path" }
+stella-linter-text = { path = "../linter/text" }
+stella-linter-tokens = { path = "../linter/tokens" }
+stella-source = { path = "../source" }
+
+[dev-dependencies]
+stella-test-support = { path = "../test-support" }
+
+[lints]
+workspace = true

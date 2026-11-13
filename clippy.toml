@@ -1,0 +1,19 @@
+too-many-lines-threshold = 70             # KS-FN-LENGTH (Clippy's default is 100)
+too-many-arguments-threshold = 3          # KS-DISTINCT-ARGS (self counts; the default is 7)
+upper-case-acronyms-aggressive = true     # KS-NO-ABBREVIATIONS
+avoid-breaking-exported-api = false       # KS-NO-ABBREVIATIONS (check public names too)
+enum-variant-size-threshold = 128         # KS-DESIGN-PERF
+pass-by-value-size-limit = 128            # KS-DESIGN-PERF
+allowed-duplicate-crates = []             # KS-WEIGH-DEPS (name only what upstream must fix)
+max-include-file-size = 65536             # KS-MACROS (the default is 1,000,000 bytes)
+disallowed-macros = [
+    { path = "std::debug_assert", reason = "KS-ASSERT-ARGS: assertions stay on in release" },
+    { path = "std::debug_assert_eq", reason = "KS-ASSERT-ARGS: assertions stay on in release" },
+    { path = "std::debug_assert_ne", reason = "KS-ASSERT-ARGS: assertions stay on in release" },
+    { path = "std::include_str", reason = "KS-MACROS: read the file with std::fs" },
+    { path = "std::include_bytes", reason = "KS-MACROS: read the file with std::fs" },
+    { path = "std::option_env", reason = "KS-MACROS: read the variable with std::env::var" },
+]
+disallowed-methods = [
+    { path = "std::sync::mpsc::channel", reason = "KS-BOUNDED: use sync_channel(capacity)" },
+]

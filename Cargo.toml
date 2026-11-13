@@ -1,0 +1,148 @@
+[workspace]
+members = [
+    "blocks",
+    "cli",
+    "lexer",
+    "linter/path",
+    "linter/text",
+    "linter/tokens",
+    "repository",
+    "source",
+    "test-support",
+    "xtask",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+# The toolchain `mise.toml` pins. Clippy turns a lint off below the Rust it needs, so naming less
+# would loosen the lints.
+rust-version = "1.99.1"
+license = "MPL-2.0"
+repository = "https://github.com/voxstella/stella"
+publish = false
+
+# One set of lints for every crate, which a crate inherits with `[lints] workspace = true`. Each
+# line names the rule it enforces, or `hygiene` where it enforces none in particular. What each
+# rule means is in `docs/rules.md`.
+# The groups are denied whole at a lower priority, so a line that names one lint overrides its
+# group.
+[workspace.lints.rust]
+unsafe_code = "deny"                      # KS-NO-UNSAFE (each crate root forbids)
+unsafe_op_in_unsafe_fn = "forbid"         # KS-NO-UNSAFE
+trivial_numeric_casts = "deny"            # KS-SIZED-TYPES
+unknown_lints = "deny"                    # KS-STRICT-LINTS (`-D warnings` lets a bad name through)
+renamed_and_removed_lints = "deny"        # KS-STRICT-LINTS (the same, for a renamed name)
+missing_debug_implementations = "deny"    # hygiene
+missing_docs = "deny"                     # hygiene
+unreachable_pub = "deny"                  # hygiene (pub(crate) where pub reaches no one)
+missing_abi = "deny"                      # hygiene
+ambiguous_negative_literals = "deny"      # hygiene
+redundant_imports = "deny"                # hygiene
+redundant_lifetimes = "deny"              # hygiene
+unused_lifetimes = "deny"                 # hygiene
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"           # hygiene
+
+[workspace.lints.clippy]
+correctness = { level = "deny", priority = -1 } # KS-STRICT-LINTS
+suspicious = { level = "deny", priority = -1 }  # KS-STRICT-LINTS
+style = { level = "deny", priority = -1 }       # KS-STRICT-LINTS
+complexity = { level = "deny", priority = -1 }  # KS-STRICT-LINTS
+perf = { level = "deny", priority = -1 }        # KS-STRICT-LINTS
+pedantic = { level = "deny", priority = -1 }    # KS-STRICT-LINTS
+nursery = { level = "deny", priority = -1 }     # KS-STRICT-LINTS
+cargo = { level = "deny", priority = -1 }       # KS-STRICT-LINTS, KS-WEIGH-DEPS
+option_if_let_else = "allow"              # off: contradicts KS-SIMPLE-FLOW (branch with match)
+redundant_pub_crate = "allow"             # off: contradicts rustc's unreachable_pub
+struct_field_names = "allow"              # off: contradicts KS-UNITS-LAST
+allow_attributes = "deny"                 # KS-STRICT-LINTS
+allow_attributes_without_reason = "deny"  # KS-STRICT-LINTS
+as_conversions = "deny"                   # KS-SIZED-TYPES
+as_underscore = "deny"                    # KS-SIZED-TYPES
+as_pointer_underscore = "deny"            # KS-SIZED-TYPES
+fn_to_numeric_cast_any = "deny"           # KS-SIZED-TYPES
+default_numeric_fallback = "deny"         # KS-SIZED-TYPES
+host_endian_bytes = "deny"                # KS-SIZED-TYPES
+modulo_arithmetic = "deny"                # KS-OFF-BY-ONE
+non_zero_suggestions = "deny"             # KS-ASSERT-ARGS
+missing_asserts_for_indexing = "deny"     # KS-ASSERT-ARGS
+missing_assert_message = "deny"           # KS-ASSERT-SPLIT
+infinite_loop = "deny"                    # KS-BOUNDED
+else_if_without_else = "deny"             # KS-COMPOUND-CONDITIONS
+cognitive_complexity = "deny"             # KS-SIMPLE-FLOW
+unwrap_used = "deny"                      # KS-HANDLE-ERRORS (tests included)
+get_unwrap = "deny"                       # KS-HANDLE-ERRORS
+unused_result_ok = "deny"                 # KS-HANDLE-ERRORS
+let_underscore_untyped = "deny"           # KS-HANDLE-ERRORS
+try_err = "deny"                          # KS-HANDLE-ERRORS
+map_err_ignore = "deny"                   # KS-HANDLE-ERRORS (keeps the source error)
+exit = "deny"                             # KS-HANDLE-ERRORS
+panic = "deny"                            # KS-ASSERT-TRUST (assert!, expect, unreachable! stay)
+string_slice = "deny"                     # KS-HANDLE-ERRORS
+undocumented_unsafe_blocks = "deny"       # KS-NO-UNSAFE
+multiple_unsafe_ops_per_block = "deny"    # KS-NO-UNSAFE
+unnecessary_safety_comment = "deny"       # KS-NO-UNSAFE
+unnecessary_safety_doc = "deny"           # KS-NO-UNSAFE
+default_union_representation = "deny"     # KS-NO-UNSAFE
+doc_paragraphs_missing_punctuation = "deny" # KS-COMMENT-STYLE
+redundant_test_prefix = "deny"            # KS-SAY-HOW
+same_name_method = "deny"                 # hygiene
+partial_pub_fields = "deny"               # hygiene
+field_scoped_visibility_modifiers = "deny" # hygiene
+error_impl_error = "deny"                 # hygiene
+clone_on_ref_ptr = "deny"                 # hygiene
+print_stdout = "deny"                     # hygiene
+print_stderr = "deny"                     # hygiene
+todo = "deny"                             # hygiene
+unimplemented = "deny"                    # hygiene
+dbg_macro = "deny"                        # hygiene
+unseparated_literal_suffix = "deny"       # hygiene (one of a pair)
+pub_without_shorthand = "deny"            # hygiene (one of a pair)
+semicolon_inside_block = "deny"           # hygiene (one of a pair)
+self_named_module_files = "deny"          # hygiene (one of a pair)
+cfg_not_test = "deny"                     # hygiene
+deref_by_slicing = "deny"                 # hygiene
+disallowed_script_idents = "deny"         # hygiene
+doc_include_without_cfg = "deny"          # hygiene
+empty_drop = "deny"                       # hygiene
+empty_enum_variants_with_brackets = "deny" # hygiene
+empty_structs_with_brackets = "deny"      # hygiene
+filetype_is_file = "deny"                 # hygiene
+float_cmp_const = "deny"                  # hygiene
+large_include_file = "deny"               # hygiene
+lossy_float_literal = "deny"              # hygiene
+map_with_unused_argument_over_ranges = "deny" # hygiene
+mem_forget = "deny"                       # hygiene
+mixed_read_write_in_expression = "deny"   # hygiene
+needless_raw_strings = "deny"             # hygiene
+pathbuf_init_then_push = "deny"           # hygiene
+pointer_format = "deny"                   # hygiene
+precedence_bits = "deny"                  # hygiene
+rc_buffer = "deny"                        # hygiene
+rc_mutex = "deny"                         # hygiene
+redundant_type_annotations = "deny"       # hygiene
+ref_patterns = "deny"                     # hygiene
+renamed_function_params = "deny"          # hygiene
+rest_pat_in_fully_bound_structs = "deny"  # hygiene
+iter_over_hash_type = "deny"              # hygiene: output cannot depend on hash map order
+return_and_then = "deny"                  # hygiene
+str_to_string = "deny"                    # hygiene
+string_add = "deny"                       # hygiene
+string_lit_chars_any = "deny"             # hygiene
+suspicious_xor_used_as_pow = "deny"       # hygiene
+unnecessary_self_imports = "deny"         # hygiene
+unused_trait_names = "deny"               # hygiene
+verbose_file_reads = "deny"               # hygiene
+
+# A failed assertion stops the process: a panic that unwound could be caught and carried on from,
+# such as by a task boundary in tokio (KS-ASSERT-TRUST).
+[profile.dev]
+panic = "abort"
+
+# Release builds keep overflow checks on, because assertions stay on in release (KS-OFF-BY-ONE).
+[profile.release]
+overflow-checks = true
+panic = "abort"

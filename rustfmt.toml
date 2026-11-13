@@ -1,0 +1,8 @@
+# The first three are what `cargo fmt` gives an edition-2024 crate, written out so a bare `rustfmt`,
+# which falls back to edition 2015, formats alike.
+max_width = 100
+edition = "2024"
+style_edition = "2024"
+# A short `if`, struct literal or call stays on one line while it fits the width, so the 70 lines
+# a function gets are spent on what it does, not on wrapping.
+use_small_heuristics = "Max"
