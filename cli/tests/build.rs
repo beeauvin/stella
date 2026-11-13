@@ -29,8 +29,8 @@ const HELLO_REPORT: &str = "hello needs 0 bytes of running memory and 44 bytes o
 /// This is how many bytes the binary of `GOOD` takes.
 const HELLO_BYTES: u64 = 16_640;
 
-/// Every byte of a binary before its signature is signed. This one is in the binary's first
-/// page, which macOS reads to run it, so a binary with this byte changed doesn't run.
+/// Every byte of a binary before its signature is signed, so a binary with this one changed no
+/// longer matches its signature. It's in the binary's first page, which macOS reads to run it.
 const SIGNED_BYTE_INDEX: usize = 1_024;
 
 /// A build exits with this when the program is refused.
@@ -239,8 +239,11 @@ fn the_mode_follows_the_umask() {
 #[test]
 fn rebuilding() {
     // Building again writes a new file, renamed over the old one, with the same bytes. That
-    // holds even after the binary there was changed by hand and failed to run, which can leave
-    // macOS remembering the old file as one it won't run.
+    // holds even after the binary there was changed by hand, so its signature no longer matches,
+    // and was run. Where macOS refused to run it, that can leave macOS remembering the old file
+    // as one it won't run. Whether it refuses is down to System Integrity Protection: with it
+    // on, macOS 27.2 ended the broken binary every time. With it off, as Namespace's runners
+    // have it, macOS 15.7.5, 26.3.1 and 27.2 all ran it, though `codesign` said it was modified.
     let directory = fresh_directory("rebuilding");
     write(&directory, "hello.stella", GOOD);
     let binary = directory.join(".build/hello");
@@ -256,8 +259,13 @@ fn rebuilding() {
     let mut broken = first.clone();
     broken[SIGNED_BYTE_INDEX] ^= 0xFF;
     fs::write(&binary, &broken).expect("the binary is the tests' own to break");
-    let failed = Command::new(&binary).output().expect("a broken binary is still there to run");
-    assert!(!failed.status.success(), "a binary that no longer matches its signature fails");
+    let verified = Command::new("/usr/bin/codesign")
+        .args(["--verify", "--strict"])
+        .arg(&binary)
+        .output()
+        .expect("`codesign` is there to run on macOS");
+    assert!(!verified.status.success(), "a binary that no longer matches its signature is refused");
+    _ = Command::new(&binary).output().expect("a broken binary is still there to run");
     assert_eq!(stella(&directory, &["build", "hello.stella"]), built(HELLO_REPORT));
     assert_eq!(fs::read(&binary).expect("the binary can be read"), first);
     runs(&binary);
