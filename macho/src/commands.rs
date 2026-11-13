@@ -9,6 +9,12 @@
 //! The build version says the binary is for macOS 27. Without any one of those, macOS won't run
 //! the binary.
 //!
+//! The symbol table and the loader's view of it are there though both are empty, since a
+//! program has no symbols. The loader on macOS 15 and 26 reads a binary that has nothing to fix
+//! up through the second, and ends the program with a segmentation fault when it isn't there,
+//! before any of the program's code runs. It wants the first wherever there's the second. The
+//! system's linker writes both into every program.
+//!
 //! Each number's name here is this module's own. The name macOS's `<mach-o/loader.h>` gives it
 //! is beside it, to look it up by.
 
@@ -22,13 +28,15 @@ use crate::layout::{BASE_ADDRESS, CODE_OFFSET, Layout, PAGE_BYTES};
 pub(crate) const HEADER_BYTES: u32 = 32;
 
 /// This is how many load commands there are.
-pub(crate) const COMMANDS_COUNT: u32 = 10;
+pub(crate) const COMMANDS_COUNT: u32 = 12;
 
-/// This is how many bytes the load commands take, all ten, in the order they're written.
+/// This is how many bytes the load commands take, all twelve, in the order they're written.
 pub(crate) const COMMANDS_BYTES: u32 = SEGMENT_BYTES
     + (SEGMENT_BYTES + SECTION_BYTES)
     + (SEGMENT_BYTES + SECTION_BYTES)
     + SEGMENT_BYTES
+    + SYMBOLS_BYTES
+    + LOADER_SYMBOLS_BYTES
     + LOADER_BYTES
     + UUID_COMMAND_BYTES
     + BUILD_VERSION_BYTES
@@ -39,18 +47,33 @@ pub(crate) const COMMANDS_BYTES: u32 = SEGMENT_BYTES
 /// This is how many bytes a UUID takes.
 pub(crate) const UUID_BYTES: u32 = 16;
 
-/// This is where the UUID is in the file: in the sixth command, after its kind and its size.
+/// This is where the UUID is in the file: in the eighth command, after its kind and its size.
 pub(crate) const UUID_OFFSET: u32 = HEADER_BYTES
     + SEGMENT_BYTES
     + (SEGMENT_BYTES + SECTION_BYTES)
     + (SEGMENT_BYTES + SECTION_BYTES)
     + SEGMENT_BYTES
+    + SYMBOLS_BYTES
+    + LOADER_SYMBOLS_BYTES
     + LOADER_BYTES
     + COMMAND_START_BYTES;
 
-/// These are the load commands' kinds, in the order they're written.
-pub(crate) const COMMAND_KINDS: [u32; usize_from_u32(COMMANDS_COUNT)] =
-    [SEGMENT, SEGMENT, SEGMENT, SEGMENT, LOADER, UUID, BUILD_VERSION, MAIN, LIBRARY, SIGNATURE];
+/// These are the load commands' kinds, in the order they're written, which is the order the
+/// system's linker writes them in.
+pub(crate) const COMMAND_KINDS: [u32; usize_from_u32(COMMANDS_COUNT)] = [
+    SEGMENT,
+    SEGMENT,
+    SEGMENT,
+    SEGMENT,
+    SYMBOLS,
+    LOADER_SYMBOLS,
+    LOADER,
+    UUID,
+    BUILD_VERSION,
+    MAIN,
+    LIBRARY,
+    SIGNATURE,
+];
 
 /// A file that starts with this is a 64-bit Mach-O (`MH_MAGIC_64`).
 pub(crate) const MAGIC: u32 = 0xFEED_FACF;
@@ -64,6 +87,19 @@ const SEGMENT_BYTES: u32 = 72;
 
 /// This is how many bytes a section takes, after its segment's command.
 const SECTION_BYTES: u32 = 80;
+
+/// The symbol table (`LC_SYMTAB`), and how many bytes it takes: where the symbols are and how
+/// many, and where their names are and how many bytes those take. All four are 0.
+const SYMBOLS: u32 = 0x2;
+const SYMBOLS_BYTES: u32 = 24;
+
+/// The loader's view of the symbol table (`LC_DYSYMTAB`), and how many bytes it takes: nine
+/// places in the file, each with how many things are there, which are the symbols in three
+/// groups, the tables of contents, of modules and of symbols this binary refers to, the
+/// indirect symbols, and the relocations against outside symbols and local ones. All eighteen
+/// are 0.
+const LOADER_SYMBOLS: u32 = 0xB;
+const LOADER_SYMBOLS_BYTES: u32 = 80;
 
 /// The loader's path (`LC_LOAD_DYLINKER`), how many bytes it takes, and where its text starts.
 const LOADER: u32 = 0xE;
@@ -196,6 +232,11 @@ pub(crate) fn push_header_and_commands(image: &mut Image, layout: &Layout) {
     ]);
     assert_eq!(image.offset(), HEADER_BYTES, "the header is 32 bytes");
     push_segments(image, layout);
+    // The symbol tables say there's nothing in them: every place and every count is 0.
+    image.push_u32s(&[SYMBOLS, SYMBOLS_BYTES]);
+    image.pad_to(image.offset() + SYMBOLS_BYTES - COMMAND_START_BYTES);
+    image.push_u32s(&[LOADER_SYMBOLS, LOADER_SYMBOLS_BYTES]);
+    image.pad_to(image.offset() + LOADER_SYMBOLS_BYTES - COMMAND_START_BYTES);
     image.push_u32s(&[LOADER, LOADER_BYTES, LOADER_TEXT_OFFSET]);
     image.push_padded_text("/usr/lib/dyld", LOADER_BYTES - LOADER_TEXT_OFFSET);
     image.push_u32s(&[UUID, UUID_COMMAND_BYTES]);

@@ -247,7 +247,7 @@ fn placements() {
     let mut placements_count: u32 = 0;
     // From the lower base, the furthest back `adrp` reaches is the first page there is.
     let bases = [0x1_0000_0000_u64, 0x2_0000_0000];
-    let code_offsets = [0_u64, 4, 4_096 - 12, 4_096 - 8, 4_096, 0x290, 0x7FFC];
+    let code_offsets = [0_u64, 4, 4_096 - 12, 4_096 - 8, 4_096, 0x2F8, 0x7FFC];
     for (base, code_offset) in bases.into_iter().flat_map(|base| code_offsets.map(|at| (base, at)))
     {
         let code_address = base + code_offset;

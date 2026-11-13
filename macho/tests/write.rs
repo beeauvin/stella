@@ -15,8 +15,8 @@
 //! checks both is macOS:
 //!
 //! - `RAN` pins the SHA-256 of the files for two names, as `shasum -a 256` printed it on macOS
-//!   27.2 on 2026-11-12 for files that `codesign --verify --strict` accepted and that ran there
-//!   and exited with 0. `shasum` hashes the files again every time.
+//!   15.7.5, 26.3.1 and 27.2 on 2026-11-13 for files that `codesign --verify --strict` accepted
+//!   and that ran on each and exited with 0. `shasum` hashes the files again every time.
 //! - The code is `SMALLEST_CODE`, read out of a file that ran, not asked of the code generator.
 //! - Every time, `codesign --verify --strict` checks each file's signature, which checks every
 //!   page's hash, and the file is run. `otool -l` reads each number back from the field the
@@ -51,7 +51,7 @@ use stella_test_support::{Rng, Scratch};
 const SMALLEST: &str = "function main() returns Void {\n}\n";
 
 /// These are the smallest program's eleven instructions as its file holds them: the 44 bytes
-/// that start 656 bytes into the file pinned first in `RAN`, which macOS ran, read with `xxd` as
+/// that start 760 bytes into the file pinned first in `RAN`, which macOS ran, read with `xxd` as
 /// little-endian words. Beside each is how `otool -tv` disassembles it in that file.
 const SMALLEST_CODE: [u32; 11] = [
     0x9100_03E9, // mov x9, sp
@@ -59,7 +59,7 @@ const SMALLEST_CODE: [u32; 11] = [
     0x9000_002B, // adrp x11, 4 ; 0x100004000
     0x9100_016B, // add x11, x11, #0x0
     0x9100_017F, // mov sp, x11
-    0x9400_0005, // bl 0x1000002b8
+    0x9400_0005, // bl 0x100000320
     0x9100_013F, // mov sp, x9
     0xAA0A_03FE, // mov x30, x10
     0x5280_0000, // mov w0, #0x0
@@ -68,9 +68,9 @@ const SMALLEST_CODE: [u32; 11] = [
 ];
 
 /// This is where the code is in the file, after the header's 32 bytes and the load commands'
-/// 624, and where that puts it in memory, with `__TEXT` at 4 GiB.
-const CODE_OFFSET: usize = 32 + 624;
-const CODE_ADDRESS: u64 = 0x1_0000_0290;
+/// 728, and where that puts it in memory, with `__TEXT` at 4 GiB.
+const CODE_OFFSET: usize = 32 + 728;
+const CODE_ADDRESS: u64 = 0x1_0000_02F8;
 
 /// This is where the smallest program's stack ends, where `sp` starts: at the bottom of `__DATA`,
 /// a page above `__TEXT`, since it has no stack.
@@ -79,9 +79,10 @@ const STACK_TOP_ADDRESS: u64 = 0x1_0000_4000;
 /// This is how many bytes `__TEXT` takes for the smallest program: one page of 16 KiB.
 const TEXT_BYTES: usize = 16_384;
 
-/// This is where the UUID's 16 bytes are in the file: in the sixth load command, after the
-/// header, the four segments' commands, the loader's, and the command's own kind and size.
-const UUID_RANGE: Range<usize> = 520..536;
+/// This is where the UUID's 16 bytes are in the file: in the eighth load command, after the
+/// header, the four segments' commands, the two symbol tables', the loader's, and the
+/// command's own kind and size.
+const UUID_RANGE: Range<usize> = 624..640;
 
 /// This is where the signature's name starts, from the signature's start: after the `SuperBlob`'s
 /// header of 12 bytes, its one entry of 8, and the `CodeDirectory`'s header of 88.
@@ -111,17 +112,17 @@ const EVERY_CHARACTER: &str = concat!(
 const NAMES: [&str; 6] = ["hello", LONGEST, "a", "world", EVERY_CHARACTER, "abc"];
 
 /// These are the files for the smallest program under two names, each as its name and its
-/// SHA-256. Each hash is what `shasum -a 256` printed on macOS 27.2 on 2026-11-12 for the file
-/// this crate wrote, after `codesign --verify --strict` accepted that file and it ran and exited
-/// with 0.
+/// SHA-256. Each hash is what `shasum -a 256` printed on macOS 15.7.5, 26.3.1 and 27.2 on
+/// 2026-11-13 for the file this crate wrote, after `codesign --verify --strict` accepted that
+/// file on each and it ran there and exited with 0.
 const RAN: [(&str, &str); 2] = [
-    ("hello", "6361643d044060de3f8cf65ff45d179527d3e6bf0d829a1768cc047ee8c5a318"),
-    (LONGEST, "b0675528a635d29a661349458b0c98560f53a4a9a38e4bd7f9981435bbe52e25"),
+    ("hello", "eab449c96bfc69885bfc33ecb944b7230a63e5113ed0a3a5f4f985864a9927a6"),
+    (LONGEST, "4e6d939cb5c2d91b1d117cfc2af062fe77ece9d2f9639bd7e36631d3f06d2dd7"),
 ];
 
 /// This is `hello`'s UUID as `otool -l` printed it on macOS 27.2 for the file pinned in `RAN`.
 /// Its third group starts with the version, 8, and its fourth with the variant's digit, B.
-const HELLO_UUID_TEXT: &str = "86C5D861-48A3-86F5-B6E9-03AAC0E6FB55";
+const HELLO_UUID_TEXT: &str = "DE20627D-07F8-81E4-9F6A-B23776421548";
 
 /// This is the SHA-256 of a page of zeros, as `head -c 4096 /dev/zero | shasum -a 256` printed it
 /// on macOS 27.2. The smallest program's last three pages are all zeros.
@@ -303,7 +304,7 @@ fn segments_oracle(linkedit_bytes: usize) -> [Segment; 4] {
         name: "__text",
         address: CODE_ADDRESS,
         memory_bytes: 44,
-        file_offset: 656,
+        file_offset: 760,
         alignment_power: 2,
         // Only instructions (`S_ATTR_PURE_INSTRUCTIONS` and `S_ATTR_SOME_INSTRUCTIONS`).
         kind: 0x8000_0400,
@@ -347,18 +348,25 @@ fn segments_oracle(linkedit_bytes: usize) -> [Segment; 4] {
 /// Returns the file the oracle expects for the smallest program as a binary named `name`.
 fn image_oracle(name: &str) -> Vec<u8> {
     let mut image = Image::default();
-    // The header: a 64-bit Mach-O, for arm64 of any model, a program to run, with ten load
-    // commands of 624 bytes, and the flags `MH_NOUNDEFS`, `MH_DYLDLINK`, `MH_TWOLEVEL`, `MH_PIE`.
-    image.u32s(&[0xFEED_FACF, 0x0100_000C, 0, 2, 10, 624, 0x0020_0085, 0]);
+    // The header: a 64-bit Mach-O, for arm64 of any model, a program to run, with twelve load
+    // commands of 728 bytes, and the flags `MH_NOUNDEFS`, `MH_DYLDLINK`, `MH_TWOLEVEL`, `MH_PIE`.
+    image.u32s(&[0xFEED_FACF, 0x0100_000C, 0, 2, 12, 728, 0x0020_0085, 0]);
     for segment in &segments_oracle(linkedit_bytes_of(name)) {
         image.segment(segment);
     }
+    // The symbol table (`LC_SYMTAB`), and the loader's view of it (`LC_DYSYMTAB`), both empty:
+    // after each one's kind and size, every place and every count is 0. The loader on macOS 15
+    // and 26 ends a program that has neither with a segmentation fault.
+    image.u32s(&[0x2, 24]);
+    image.u32s(&[0; 4]);
+    image.u32s(&[0xB, 80]);
+    image.u32s(&[0; 18]);
     // The loader's path (`LC_LOAD_DYLINKER`), 12 bytes into its command.
     image.u32s(&[0xE, 32, 12]);
     image.padded_text("/usr/lib/dyld", 20);
     // The UUID (`LC_UUID`), left as zeros until the page it's in can be hashed.
     image.u32s(&[0x1B, 24]);
-    assert_eq!(image.bytes.len(), UUID_RANGE.start, "the UUID is 520 bytes in");
+    assert_eq!(image.bytes.len(), UUID_RANGE.start, "the UUID is 624 bytes in");
     image.bytes.extend_from_slice(&[0; 16]);
     // The build version (`LC_BUILD_VERSION`): for macOS, which is platform 1, needing 27.0, made
     // against the SDK of 27.0, by no tools that are named.
@@ -366,7 +374,7 @@ fn image_oracle(name: &str) -> Vec<u8> {
     // Where the program starts (`LC_MAIN`): at the code's first byte, on a stack the system
     // sizes.
     image.u32s(&[0x8000_0028, 24]);
-    image.u64s(&[656, 0]);
+    image.u64s(&[760, 0]);
     // libSystem (`LC_LOAD_DYLIB`): its path 24 bytes into the command, a timestamp of 2, its
     // version 1359.40.3, and the version it must be compatible with, 1.0.0.
     image.u32s(&[0xC, 56, 24, 2, 0x054F_2803, 0x0001_0000]);
@@ -378,7 +386,7 @@ fn image_oracle(name: &str) -> Vec<u8> {
     // 274 and 276 bytes, with zeros between. It pads to 8 bytes where Stella pads to 16, and
     // `codesign` takes either.
     image.u32s(&[0x1D, 16, 16_384, u32_of(linkedit_bytes_of(name))]);
-    assert_eq!(image.bytes.len(), CODE_OFFSET, "the header and the commands are 656 bytes");
+    assert_eq!(image.bytes.len(), CODE_OFFSET, "the header and the commands are 760 bytes");
     image.u32s(&SMALLEST_CODE);
     image.bytes.resize(TEXT_BYTES, 0);
     let uuid = uuid_oracle(&image.bytes, name);
@@ -674,38 +682,45 @@ fn printed_oracle(name: &str, uuid: &[u8]) -> Vec<PrintedBlock> {
     for (index, segment) in segments_oracle(linkedit_bytes_of(name)).iter().enumerate() {
         blocks.extend(printed_segment(index, segment));
     }
-    let mut loader = command(4, "LC_LOAD_DYLINKER", 32);
+    let mut symbols = command(4, "LC_SYMTAB", 24);
+    symbols.1.extend(["symoff", "nsyms", "stroff", "strsize"].map(|key| (key, Printed::Number(0))));
+    let mut loader_symbols = command(5, "LC_DYSYMTAB", 80);
+    loader_symbols.1.extend(
+        ["nlocalsym", "nextdefsym", "nundefsym", "nindirectsyms", "nextrel", "nlocrel"]
+            .map(|key| (key, Printed::Number(0))),
+    );
+    let mut loader = command(6, "LC_LOAD_DYLINKER", 32);
     loader.1.push(("name", text("/usr/lib/dyld (offset 12)")));
-    let mut identity = command(5, "LC_UUID", 24);
+    let mut identity = command(7, "LC_UUID", 24);
     identity.1.push(("uuid", text(&uuid_text(uuid))));
-    let mut version = command(6, "LC_BUILD_VERSION", 24);
+    let mut version = command(8, "LC_BUILD_VERSION", 24);
     version.1.extend([
         ("minos", text("27.0")),
         ("sdk", text("27.0")),
         ("ntools", Printed::Number(0)),
     ]);
-    let mut entry = command(7, "LC_MAIN", 24);
-    entry.1.extend([("entryoff", Printed::Number(656)), ("stacksize", Printed::Number(0))]);
-    let mut library = command(8, "LC_LOAD_DYLIB", 56);
+    let mut entry = command(9, "LC_MAIN", 24);
+    entry.1.extend([("entryoff", Printed::Number(760)), ("stacksize", Printed::Number(0))]);
+    let mut library = command(10, "LC_LOAD_DYLIB", 56);
     library.1.extend([
         ("name", text("/usr/lib/libSystem.B.dylib (offset 24)")),
         ("current version", text("1359.40.3")),
         ("compatibility version", text("1.0.0")),
     ]);
-    let mut signature = command(9, "LC_CODE_SIGNATURE", 16);
+    let mut signature = command(11, "LC_CODE_SIGNATURE", 16);
     let signature_room_bytes = u64::from(u32_of(linkedit_bytes_of(name)));
     signature.1.extend([
         ("dataoff", Printed::Number(16_384)),
         ("datasize", Printed::Number(signature_room_bytes)),
     ]);
-    blocks.extend([loader, identity, version, entry, library, signature]);
+    blocks.extend([symbols, loader_symbols, loader, identity, version, entry, library, signature]);
     blocks
 }
 
 #[test]
 fn the_smallest_program() {
     // The smallest program, named `hello`, is the oracle's file byte for byte: 16,640 bytes,
-    // which start with a 64-bit Mach-O's magic and hold the code that ran, 656 bytes in. Its
+    // which start with a 64-bit Mach-O's magic and hold the code that ran, 760 bytes in. Its
     // UUID is the one otool printed for the file that ran, and it's marked as a UUID: version 8,
     // and RFC 9562's variant.
     let hello = written(SMALLEST, "hello");
@@ -954,10 +969,10 @@ fn codesign_signs_it_again() {
 #[test]
 fn otool_reads_what_the_oracle_states() {
     // `otool -l` prints each load command field by field, as macOS reads the format. For each
-    // file, it prints the ten commands and two sections in the oracle's order, and these
+    // file, it prints the twelve commands and two sections in the oracle's order, and these
     // numbers the oracle states are in the fields otool names for them: every segment's
-    // address, size, offset and protection, the code's section, where the program starts, the
-    // UUID as a well-formed one, macOS 27.0, and where the signature is.
+    // address, size, offset and protection, the code's section, empty symbol tables, where the
+    // program starts, the UUID as a well-formed one, macOS 27.0, and where the signature is.
     for (index, name) in NAMES.into_iter().enumerate() {
         let executable = written(SMALLEST, name);
         check(&executable, name);
@@ -984,8 +999,8 @@ fn otool_reads_what_the_oracle_states() {
         }
         // The UUID as otool printed it, by its own text: the third group starts with the
         // version, 8, and the fourth with the variant, which makes its first digit 8 to B.
-        let is_identity = |block: &&OtoolBlock| block.heading == "Load command 5";
-        let identity = blocks.iter().find(is_identity).expect("the UUID's command is the sixth");
+        let is_identity = |block: &&OtoolBlock| block.heading == "Load command 7";
+        let identity = blocks.iter().find(is_identity).expect("the UUID's command is the eighth");
         let groups: Vec<&str> = printed_after(identity, "uuid").split('-').collect();
         assert_eq!(groups.iter().map(|group| group.len()).collect::<Vec<_>>(), [8, 4, 4, 4, 12]);
         assert!(groups[2].starts_with('8'), "the version of {name}'s UUID");

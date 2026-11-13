@@ -7,7 +7,7 @@
 //! stack on either side of every page edge near the bottom and the top of what it may be.
 //!
 //! An oracle states each number a layout holds on its own, from the Mach-O format's numbers
-//! written out here: a header of 32 bytes, load commands of 624, pages of 16 KiB, hashes of 32
+//! written out here: a header of 32 bytes, load commands of 728, pages of 16 KiB, hashes of 32
 //! bytes for every 4 KiB. It shares nothing with `layout` but the sizes it's asked about, and
 //! every layout is compared with it one accessor at a time. Before `layout` sees any sizes, the
 //! oracle is checked two ways. Its numbers must hold together, each segment after the one before
@@ -40,9 +40,9 @@ const RAN: [(Sizes, u32); 3] = [
     (Sizes { code_bytes: 56, stack_bytes: 16_400, name_bytes: 7 }, 16_640),
 ];
 
-/// This is the most code that leaves `__TEXT` one page: 16 KiB, less the 656 bytes of header and
+/// This is the most code that leaves `__TEXT` one page: 16 KiB, less the 760 bytes of header and
 /// load commands before the code.
-const CODE_BYTES_ONE_PAGE: u32 = 16_384 - 656;
+const CODE_BYTES_ONE_PAGE: u32 = 16_384 - 760;
 
 /// These are sizes of code at each edge: one instruction, the smallest program, either side of
 /// where `__TEXT` needs a second page, and the most.
@@ -97,8 +97,8 @@ struct Expected {
 fn oracle(sizes: Sizes) -> Expected {
     let Sizes { code_bytes, stack_bytes, name_bytes } = sizes;
     // `__TEXT` starts above the 4 GiB that `__PAGEZERO` keeps unmapped. It holds the header's 32
-    // bytes, the load commands' 624, and then the code, in whole pages of 16 KiB.
-    let text_pages_count = (32 + 624 + code_bytes).div_ceil(16_384);
+    // bytes, the load commands' 728, and then the code, in whole pages of 16 KiB.
+    let text_pages_count = (32 + 728 + code_bytes).div_ceil(16_384);
     let text_bytes = text_pages_count * 16_384;
     // `__DATA` follows `__TEXT` in memory. It's the stack, in whole pages, and one page when
     // there's no stack. It takes nothing in the file.
@@ -114,7 +114,7 @@ fn oracle(sizes: Sizes) -> Expected {
     // padded with zeros to 16 bytes.
     let linkedit_bytes = signature_bytes.div_ceil(16) * 16;
     Expected {
-        code_address: 0x1_0000_0000 + 32 + 624,
+        code_address: 0x1_0000_0000 + 32 + 728,
         code_bytes,
         text_bytes,
         data_address,
@@ -207,11 +207,11 @@ fn binaries_that_ran() {
 #[test]
 fn the_smallest_program() {
     // The smallest program's layout, with every number written out by hand. They're the numbers
-    // `otool -l` prints for its binary: `__TEXT` at 4 GiB and one page long, the code 656 bytes
+    // `otool -l` prints for its binary: `__TEXT` at 4 GiB and one page long, the code 760 bytes
     // in, `__DATA` a page above with the stack's top at its bottom, `__LINKEDIT` a page above
     // that, and a signature of 242 bytes padded to 256.
     let expected = Expected {
-        code_address: 0x1_0000_0290,
+        code_address: 0x1_0000_02F8,
         code_bytes: 44,
         text_bytes: 16_384,
         data_address: 0x1_0000_4000,
@@ -234,7 +234,7 @@ fn the_limits() {
     // Each number the crate gives out is the format's, written out here. The most of everything
     // at once is the largest layout, and it takes exactly the most a file can.
     assert_eq!(BASE_ADDRESS, 0x1_0000_0000);
-    assert_eq!(CODE_OFFSET, 656);
+    assert_eq!(CODE_OFFSET, 760);
     assert_eq!(PAGE_BYTES, 16_384);
     assert_eq!(HASH_PAGE_BYTES, 4_096);
     assert_eq!(HASH_BYTES, 32);
@@ -242,7 +242,7 @@ fn the_limits() {
     assert_eq!(STACK_BYTES_MAX, 1_073_741_824);
     // The most code needs a second page of `__TEXT`, and not a third.
     assert_eq!(TEXT_BYTES_MAX, 32_768);
-    assert_eq!((656 + CODE_BYTES_MAX).div_ceil(16_384), 2);
+    assert_eq!((760 + CODE_BYTES_MAX).div_ceil(16_384), 2);
     // The headers' 108 bytes, the longest name and its 0, and eight hashes.
     assert_eq!(SIGNATURE_BYTES_MAX, 108 + 249 + 8 * 32);
     assert_eq!(IMAGE_BYTES_MAX, 33_392);
@@ -258,7 +258,7 @@ fn the_limits() {
     assert_eq!(expected.data_bytes, STACK_BYTES_MAX, "the most stack is whole pages");
     // The stack's top is as far from the code as it gets: a little over 1 GiB, well within the
     // 4 GiB that `adrp` reaches.
-    assert_eq!(expected.stack_top_address - expected.code_address, 1_073_741_824 + 32_768 - 656);
+    assert_eq!(expected.stack_top_address - expected.code_address, 1_073_741_824 + 32_768 - 760);
     // The edges are the sizes they're said to be.
     assert_eq!(CODE_EDGES.map(|code_bytes| code_bytes % INSTRUCTION_BYTES), [0; 6]);
     assert_eq!(STACK_EDGES.map(|stack_bytes| stack_bytes % STACK_ALIGNMENT_BYTES), [0; 16]);
