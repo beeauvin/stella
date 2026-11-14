@@ -13,17 +13,23 @@
 //! - **In code,** spaces separate tokens and aren't tokens. How many there are and where they go
 //!   is the tokens lint's to check.
 //! - **A word** is an ASCII letter, then any ASCII letters, digits and `_`. The longest run is one
-//!   word. A word that's exactly `function` or `returns` is that keyword, and keywords match by
-//!   case.
+//!   word. A word that's exactly `function`, `return` or `returns` is that keyword, and keywords
+//!   match by case.
 //! - **Every other word is a name.** One that starts with a lowercase letter, like `main`, is a
 //!   `Name`, and it must be snake case: lowercase letters and digits, with single underscores
 //!   between them. One that starts with a capital, like `Void`, is a `TypeName`, and it must be
 //!   Pascal case: words that each start with one capital, then lowercase letters and digits. A
 //!   name that breaks its shape is refused at the first character that breaks it.
+//! - **An integer** is an ASCII digit, then any ASCII digits. The longest run is one integer.
+//!   Each value has one spelling, so an integer can't start with `0` unless it's `0`, and it's
+//!   refused at that `0`. A letter or `_` right after an integer is refused where it is, since
+//!   otherwise `3x` would be two tokens with no space between them, and the problem would seem to
+//!   be the space. An integer can be as long as its line: what it's worth, and whether that fits,
+//!   are for the checks after the grammar.
 //! - **A symbol** is `(`, `)`, `{` or `}`.
 //! - **Anything else** in code is refused. Lexing stops at the first character in the file that
 //!   isn't in a token or a space: one that can't start a token where one would start, like `;`,
-//!   or a digit or `_` with no word for it to go on.
+//!   or a `_` with no word for it to go on.
 //!
 //! The tokens of a source are its own: `lex` makes room for the most that source can hold before
 //! it reads a character, and that room never grows.
@@ -39,7 +45,8 @@ use crate::problem::{Kind, Problem};
 /// last byte is a `\n`, which is in no token.
 pub const TOKENS_MAX: u32 = SOURCE_BYTES_MAX - 1;
 
-/// A token is one piece of code, a name, a keyword, a symbol or a comment, and where it is.
+/// A token is one piece of code, a name, a keyword, an integer, a symbol or a comment, and where
+/// it is.
 ///
 /// It holds where its text is rather than the text, so it's plain data that borrows nothing.
 /// `Tokens::text` gives the text back. Only `lex` makes one, so a token always names text that's
@@ -94,12 +101,16 @@ const _: () = assert!(
 pub enum TokenKind {
     /// The keyword `function`, which begins a function.
     Function,
+    /// The keyword `return`, which gives back a function's value.
+    Return,
     /// The keyword `returns`, which comes before a function's return type.
     Returns,
     /// A name that starts with a lowercase letter, like `main`. It's snake case.
     Name,
     /// A name that starts with a capital, like `Void`. It's Pascal case.
     TypeName,
+    /// An integer, like `3`: ASCII digits, with no `0` first unless it's `0`.
+    Integer,
     /// The symbol `(`.
     ParenthesisOpen,
     /// The symbol `)`.
@@ -153,7 +164,7 @@ impl<'source> Tokens<'source> {
 /// # Errors
 ///
 /// Returns the first problem in the source, when some character in its code is in no token and
-/// isn't a space, or a name breaks its shape.
+/// isn't a space, a name breaks its shape, or an integer starts with `0` or runs into a word.
 ///
 /// # Panics
 ///
@@ -256,6 +267,11 @@ fn lex_line(line: Line<'_>, tokens: &mut Vec<Token>) -> Result<(), Problem> {
                 let kind = word_kind(word).map_err(|(kind, at)| line.problem(kind, index + at))?;
                 (Some(kind), length)
             }
+            b'0'..=b'9' => {
+                let length = integer_length(&bytes[index..])
+                    .map_err(|(kind, at)| line.problem(kind, index + at))?;
+                (Some(TokenKind::Integer), length)
+            }
             byte => return Err(line.problem(Kind::Unexpected(char::from(byte)), index)),
         };
         assert!(length >= 1, "every step moves forward, so the loop ends within the line");
@@ -278,6 +294,25 @@ fn word_length(bytes: &[u8]) -> usize {
     length
 }
 
+/// Returns how many bytes long the integer at the start of `bytes` is: a digit, then any digits.
+/// An integer that starts with `0` and goes on, or that a letter or `_` follows, is a problem
+/// instead: its kind, and the index of the byte at fault.
+fn integer_length(bytes: &[u8]) -> Result<usize, (Kind, usize)> {
+    assert!(bytes[0].is_ascii_digit(), "an integer is lexed where a digit is");
+    let length = bytes.iter().take_while(|byte| byte.is_ascii_digit()).count();
+    assert!(length >= 1, "a digit is in the integer it starts");
+    // Each value has one spelling, so `0` is the only integer that starts with `0`.
+    if bytes[0] == b'0' && length > 1 {
+        return Err((Kind::IntegerStartsWithZero, 0));
+    }
+    match bytes.get(length) {
+        Some(b'a'..=b'z' | b'A'..=b'Z' | b'_') => Err((Kind::IntegerRunsIntoWord, length)),
+        // Whatever else comes next, or nothing, starts a token of its own or is refused for
+        // itself.
+        Some(_) | None => Ok(length),
+    }
+}
+
 /// Returns what `word` is: a keyword, a name or a type's name. A name that breaks its shape is a
 /// problem instead: its kind, and the index in the word of the first byte that breaks it.
 fn word_kind(word: &[u8]) -> Result<TokenKind, (Kind, usize)> {
@@ -287,6 +322,7 @@ fn word_kind(word: &[u8]) -> Result<TokenKind, (Kind, usize)> {
     }
     let kind = match word {
         b"function" => TokenKind::Function,
+        b"return" => TokenKind::Return,
         b"returns" => TokenKind::Returns,
         [b'A'..=b'Z', ..] => TokenKind::TypeName,
         [b'a'..=b'z', ..] => TokenKind::Name,

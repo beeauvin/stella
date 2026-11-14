@@ -18,7 +18,7 @@ use stella_blocks::nest;
 use stella_grammar::parse;
 use stella_lexer::lex;
 use stella_linter_tokens::lint_tokens;
-use stella_meaning::{Program, check_program, resolve};
+use stella_meaning::{Program, check_fit, check_program, resolve};
 use stella_source::Position;
 
 use crate::message::{Place, message};
@@ -68,5 +68,7 @@ pub(crate) fn check(source: &[u8]) -> Result<Program<'_>, Refusal<'_>> {
         .map_err(|problem| Refusal::new(source, Some(problem.position), &problem.kind))?;
     let types = resolve(build(forms))
         .map_err(|problem| Refusal::new(source, problem.position(), &problem))?;
-    check_program(types).map_err(|problem| Refusal::new(source, problem.position(), &problem))
+    let fitted =
+        check_fit(types).map_err(|problem| Refusal::new(source, problem.position(), &problem))?;
+    check_program(fitted).map_err(|problem| Refusal::new(source, problem.position(), &problem))
 }

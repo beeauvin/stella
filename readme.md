@@ -11,11 +11,20 @@ builds, it tells you exactly what it needs. Period.
 
 ## Where it stands
 
-Stella is at its very start. For now, it builds the smallest program there is,
-for macOS 15.7.5 or later on arm64: one function, `main`, that does nothing.
+Stella is at its very start. For now, it builds programs of one function,
+`main`, for macOS 15.7.5 or later on arm64. The smallest does nothing:
 
 ```stella
 function main() returns Void {
+}
+```
+
+And `main` can return a `U8`, a whole number from 0 to 255, which the program
+exits with:
+
+```stella
+function main() returns U8 {
+    return 3
 }
 ```
 
@@ -115,7 +124,7 @@ that wasn't checked.
 | `blocks`        | The nesting of laid-out lines into blocks.                    |
 | `grammar`       | The check of each line against the grammar.                   |
 | `ast`           | The tree of a program's functions.                            |
-| `meaning`       | The checks of what code means: its types, and its program.    |
+| `meaning`       | What code means: its types, their fit, and its program.       |
 | `arm64`         | The generator of a program's machine code.                    |
 | `macho`         | The writer of the signed executable macOS runs.               |
 | `cli`           | The `stella` command, which reads files and runs all of it.   |

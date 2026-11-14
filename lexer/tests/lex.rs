@@ -8,7 +8,8 @@
 //! Code holds only printable ASCII, so every one of those characters is tried against `role`, a
 //! table worded the way the tokens page is: where a token starts, in a name, in a type's name,
 //! where a line starts, after indentation, right after a symbol, and after a comment that isn't
-//! ASCII. A name's shape is tried on every short word from a small alphabet. The rest are tables
+//! ASCII. A name's shape is tried on every short word from a small alphabet, and an integer's on
+//! every run of up to three digits. The rest are tables
 //! of sources and the tokens or problem each should get. A seeded fuzz test checks random sources
 //! against an oracle, which states the tokens and names pages as plainly as it can, using `role`
 //! too, and every example checks the oracle as well. Every token any test sees is checked to be
@@ -19,10 +20,12 @@
 
 use std::fmt::Debug;
 
-use stella_lexer::Kind::{NameNotSnakeCase, TypeNameNotPascalCase, Unexpected};
+use stella_lexer::Kind::{
+    IntegerRunsIntoWord, IntegerStartsWithZero, NameNotSnakeCase, TypeNameNotPascalCase, Unexpected,
+};
 use stella_lexer::TokenKind::{
-    BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
-    TypeName,
+    BraceClose, BraceOpen, Comment, Function, Integer, Name, ParenthesisClose, ParenthesisOpen,
+    Return, Returns, TypeName,
 };
 use stella_lexer::{Kind, Problem, TOKENS_MAX, TokenKind, Tokens, lex};
 use stella_linter_text::lint;
@@ -39,6 +42,7 @@ type Refusal = (Kind, u32, u32);
 /// capital that runs into the next piece, and the symbols.
 const PIECES: &[&str] = &[
     "function",
+    "return",
     "returns",
     "main",
     "Void",
@@ -55,8 +59,11 @@ const PIECES: &[&str] = &[
     "}",
 ];
 
-/// These go on with a word, but can't start a token, so they're pieces now and then.
-const IN_WORD: &[&str] = &["9", "_"];
+/// These are integers, one of them spelled with a `0` first, so they're pieces now and then.
+const INTEGERS: &[&str] = &["0", "3", "255", "03"];
+
+/// This goes on with a word, but can't start a token, so it's a piece now and then.
+const IN_WORD: &[&str] = &["_"];
 
 /// These can't start a token, or be in one, so they're pieces now and then too.
 const REFUSED: &[&str] = &[";", "\"", "/", "#", "`", "-", "="];
@@ -100,7 +107,7 @@ enum Role {
     Lowercase,
     /// It starts a type's name, or goes on with one. In a name, it breaks the name's shape.
     Capital,
-    /// It goes on with any word, but can't start a token.
+    /// It starts an integer, or goes on with any word or integer.
     Digit,
     /// It goes on with a name, but can't start a token. In a type's name, it breaks the shape.
     Underscore,
@@ -259,6 +266,7 @@ fn oracle(source: &str) -> Result<Vec<ExpectedToken<'_>>, Refusal> {
                     }
                     let kind = match word {
                         "function" => Function,
+                        "return" => Return,
                         "returns" => Returns,
                         _ if first == Role::Capital => TypeName,
                         _ => Name,
@@ -266,7 +274,22 @@ fn oracle(source: &str) -> Result<Vec<ExpectedToken<'_>>, Refusal> {
                     found.push((kind, line, column(index), word));
                     index = end;
                 }
-                Role::Digit | Role::Underscore | Role::Refused => {
+                Role::Digit => {
+                    let mut end = index + 1;
+                    while end < characters.len() && role(characters[end]) == Role::Digit {
+                        end += 1;
+                    }
+                    // Only `0` starts with `0`, and nothing that goes on with a word follows.
+                    if characters[index] == '0' && end > index + 1 {
+                        return Err((IntegerStartsWithZero, line, column(index)));
+                    }
+                    if end < characters.len() && in_word(role(characters[end])) {
+                        return Err((IntegerRunsIntoWord, line, column(end)));
+                    }
+                    found.push((Integer, line, column(index), slice(content, index..end)));
+                    index = end;
+                }
+                Role::Underscore | Role::Refused => {
                     return Err((Unexpected(characters[index]), line, column(index)));
                 }
             }
@@ -326,10 +349,11 @@ fn random_source(rng: &mut Rng) -> String {
                     if index > 0 {
                         source.push_str(rng.pick(GAPS));
                     }
-                    let piece = match rng.below(16) {
+                    let piece = match rng.below(17) {
                         0 => String::from(rng.pick(REFUSED)),
                         1 => String::from(rng.pick(IN_WORD)),
                         2 | 3 => near_keyword(rng),
+                        4 => String::from(rng.pick(INTEGERS)),
                         _ => String::from(rng.pick(PIECES)),
                     };
                     source.push_str(&piece);
@@ -344,7 +368,7 @@ fn random_source(rng: &mut Rng) -> String {
 /// Returns a keyword, or a word that's nearly one: cut short, run on, or with a letter in
 /// another case.
 fn near_keyword(rng: &mut Rng) -> String {
-    let keyword = rng.pick(&["function", "returns"]);
+    let keyword = rng.pick(&["function", "return", "returns"]);
     match rng.below(4) {
         0 => String::from(keyword),
         1 => keyword.chars().take(1 + rng.below(keyword.len() - 1)).collect(),
@@ -461,7 +485,7 @@ fn words() {
 fn names() {
     // A name that starts with a lowercase letter is snake case: lowercase letters and digits,
     // with single underscores between them. A digit can go anywhere but first.
-    for name in ["x", "main", "main2", "my_function", "a1", "x9y8", "a_1_b", "x_2", "rung_0"] {
+    for name in ["x", "main", "main2", "my_function", "a1", "x9y8", "a_1_b", "x_2", "step_0"] {
         lexes(&format!("{name}\n"), &[(Name, 1, 1, name)]);
     }
     // A name that starts with a capital is a type's, and Pascal case: words that each start with
@@ -539,6 +563,7 @@ fn every_short_word() {
 fn keywords() {
     // Each keyword alone is that keyword, and nothing else is.
     lexes("function\n", &[(Function, 1, 1, "function")]);
+    lexes("return\n", &[(Return, 1, 1, "return")]);
     lexes("returns\n", &[(Returns, 1, 1, "returns")]);
     // A keyword is a whole word, matched by case, so none of these is one. Each is a name of its
     // shape instead, or refused for its shape.
@@ -548,8 +573,9 @@ fn keywords() {
         "func",
         "fn",
         "fun",
-        "return",
+        "returned",
         "returning",
+        "return2",
         "ret",
         "functionreturns",
         "main",
@@ -563,12 +589,14 @@ fn keywords() {
         ("FUNCTION", TypeNameNotPascalCase, 2),
         ("RETURNS", TypeNameNotPascalCase, 2),
         ("function_", NameNotSnakeCase, 9),
+        ("return_", NameNotSnakeCase, 7),
         ("returns_", NameNotSnakeCase, 8),
         ("functionReturns", NameNotSnakeCase, 9),
     ] {
         refuses(&format!("{word}\n"), (kind, 1, column));
     }
     // Keywords are reserved, so a keyword is never a name, even where a name would go.
+    lexes("return return\n", &[(Return, 1, 1, "return"), (Return, 1, 8, "return")]);
     lexes(
         "function function() returns returns {\n}\n",
         &[
@@ -582,6 +610,48 @@ fn keywords() {
             (BraceClose, 2, 1, "}"),
         ],
     );
+}
+
+#[test]
+fn integers() {
+    // Every run of one to three digits, alone on a line. Each value has one spelling, so a run
+    // that starts with `0` and goes on is refused at its `0`, and every other run is one integer.
+    let mut count: u32 = 0;
+    for length in 1..=3 {
+        for value in 0..10_u32.pow(length) {
+            let digits = format!("{value:0width$}", width = usize_from_u32(length));
+            let source = format!("{digits}\n");
+            if digits.starts_with('0') && digits.len() > 1 {
+                refuses(&source, (IntegerStartsWithZero, 1, 1));
+            } else {
+                lexes(&source, &[(Integer, 1, 1, &digits)]);
+            }
+            count += 1;
+        }
+    }
+    assert_eq!(count, 1_110);
+    // An integer is as long as its run of digits, however long: what it's worth is for the
+    // checks after the grammar. The longest fills a source.
+    let long = "1".repeat(30);
+    lexes(&format!("{long}\n"), &[(Integer, 1, 1, &long)]);
+    let longest = "9".repeat(usize_from_u32(SOURCE_BYTES_MAX) - 1);
+    lexes(&format!("{longest}\n"), &[(Integer, 1, 1, &longest)]);
+    // A letter or `_` can't follow an integer, and is refused where it is. A word can hold
+    // digits, so a name or a type's name that has some is still a word.
+    for (source, column) in [("3x\n", 2), ("3X\n", 2), ("3_\n", 2), ("10abc\n", 3), ("0x10\n", 2)] {
+        refuses(source, (IntegerRunsIntoWord, 1, column));
+    }
+    lexes("x3\n", &[(Name, 1, 1, "x3")]);
+    lexes("X3\n", &[(TypeName, 1, 1, "X3")]);
+    // A symbol or a space ends an integer, as it ends a word.
+    lexes(
+        "(3)\n",
+        &[(ParenthesisOpen, 1, 1, "("), (Integer, 1, 2, "3"), (ParenthesisClose, 1, 3, ")")],
+    );
+    lexes("3{\n", &[(Integer, 1, 1, "3"), (BraceOpen, 1, 2, "{")]);
+    lexes("return 3\n", &[(Return, 1, 1, "return"), (Integer, 1, 8, "3")]);
+    lexes("main 2\n", &[(Name, 1, 1, "main"), (Integer, 1, 6, "2")]);
+    lexes("0 0\n", &[(Integer, 1, 1, "0"), (Integer, 1, 3, "0")]);
 }
 
 #[test]
@@ -642,7 +712,8 @@ fn every_printable_character() {
                 refuses(&in_type, (TypeNameNotPascalCase, 1, 2));
             }
             Role::Digit => {
-                refuses(&at_start, (Unexpected(character), 1, 3));
+                // A digit starts an integer, which a letter can't follow.
+                refuses(&at_start, (IntegerRunsIntoWord, 1, 4));
                 lexes(&in_name, &[(Name, 1, 1, named)]);
                 lexes(&in_type, &[(TypeName, 1, 1, typed)]);
             }
@@ -689,7 +760,13 @@ fn every_printable_character_in_context() {
                 lexes(&after_symbol, &[(ParenthesisOpen, 1, 1, "("), (kind, 1, 2, word)]);
                 lexes(&after_comment, &[comment, (Name, 2, 1, "a"), (kind, 2, 3, word)]);
             }
-            Role::Digit | Role::Underscore | Role::Refused => {
+            Role::Digit => {
+                refuses(&start, (IntegerRunsIntoWord, 1, 2));
+                refuses(&indented, (IntegerRunsIntoWord, 1, 6));
+                refuses(&after_symbol, (IntegerRunsIntoWord, 1, 3));
+                refuses(&after_comment, (IntegerRunsIntoWord, 2, 4));
+            }
+            Role::Underscore | Role::Refused => {
                 refuses(&start, (Unexpected(character), 1, 1));
                 refuses(&indented, (Unexpected(character), 1, 5));
                 refuses(&after_symbol, (Unexpected(character), 1, 2));
@@ -723,10 +800,16 @@ fn the_first_problem_wins() {
     // Comments and blank lines before it are passed over, and still counted.
     let source = "// ;\n\nfunction main() returns Void {\n    // @\n    #\n}\n";
     refuses(source, (Unexpected('#'), 5, 5));
-    // A word can hold a digit or `_`, but can't start with one.
-    refuses("9lives\n", (Unexpected('9'), 1, 1));
+    // A word can hold a digit or `_`, but can't start with one: a digit starts an integer, which
+    // a letter can't follow.
+    refuses("9lives\n", (IntegerRunsIntoWord, 1, 2));
     refuses("_main\n", (Unexpected('_'), 1, 1));
-    refuses("main 2\n", (Unexpected('2'), 1, 6));
+    refuses("main 2x\n", (IntegerRunsIntoWord, 1, 7));
+    // An integer's problems are like any other's, and whichever comes first wins.
+    refuses("03 ;\n", (IntegerStartsWithZero, 1, 1));
+    refuses("; 03\n", (Unexpected(';'), 1, 1));
+    refuses("03x\n", (IntegerStartsWithZero, 1, 1));
+    refuses("3;\n", (Unexpected(';'), 1, 2));
     // Names aren't kebab, as file names are, so `-` can't be in a word.
     refuses("my-name\n", (Unexpected('-'), 1, 3));
     refuses("function main() returns Void {\n    \"hello\"\n}\n", (Unexpected('"'), 2, 5));
@@ -851,17 +934,19 @@ fn text_of_a_token_from_a_longer_source_is_a_bug() {
 
 #[test]
 fn fuzz_against_the_oracle() {
-    // 30,000 random sources, each lexed and checked against what the oracle says of it. Every
+    // 40,000 random sources, each lexed and checked against what the oracle says of it. Every
     // kind of token and of problem is counted, so the test fails if the sources stop reaching one.
     let mut rng = Rng::new(0x4C45_5845_5200_0001);
     let sources: Vec<String> =
-        std::iter::repeat_with(|| random_source(&mut rng)).take(30_000).collect();
+        std::iter::repeat_with(|| random_source(&mut rng)).take(40_000).collect();
     let mut skipped_count: u32 = 0;
     let kinds = [
         Function,
+        Return,
         Returns,
         Name,
         TypeName,
+        Integer,
         ParenthesisOpen,
         ParenthesisClose,
         BraceOpen,
@@ -869,10 +954,15 @@ fn fuzz_against_the_oracle() {
         Comment,
     ];
     let mut kind_counts = kinds.map(|kind| (kind, 0_u32));
-    let refused = [';', '"', '/', '#', '`', '-', '=', '9', '_'].map(Unexpected);
+    let refused = [';', '"', '/', '#', '`', '-', '=', '_'].map(Unexpected);
     let mut refused_counts: Vec<(Kind, u32)> = refused
         .into_iter()
-        .chain([NameNotSnakeCase, TypeNameNotPascalCase])
+        .chain([
+            NameNotSnakeCase,
+            TypeNameNotPascalCase,
+            IntegerStartsWithZero,
+            IntegerRunsIntoWord,
+        ])
         .map(|kind| (kind, 0))
         .collect();
     let mut checks = Vec::new();
@@ -892,7 +982,7 @@ fn fuzz_against_the_oracle() {
     // before anything is lexed, so it holds whatever the lexer does.
     let accepted_count = checks.iter().filter(|(_, expected)| expected.is_ok()).count();
     assert!(accepted_count > 4_500, "only {accepted_count} were accepted");
-    assert!(skipped_count < 15_000, "{skipped_count} were refused by the text lint");
+    assert!(skipped_count < 20_000, "{skipped_count} were refused by the text lint");
     for (kind, count) in kind_counts {
         assert!(count > 1_000, "only {count} tokens were {kind:?}");
     }

@@ -14,8 +14,10 @@
 //! - **A `}`** is alone on its line, and closes the innermost block still open. Its line isn't a
 //!   node: the block it closes records which token it is.
 //!
-//! A comment is a node that opens no block. The layout lets no line of code end without a
-//! brace, so every other node opens one. A blank line holds no tokens, so it isn't a node.
+//! - **Any other line of code** ends some other way, and is a node that opens no block, as a
+//!   comment is. Which such lines are allowed is the grammar's to say.
+//!
+//! A blank line holds no tokens, so it isn't a node.
 //!
 //! The nodes are kept flat, in the order they're in the source. Each node knows the node whose
 //! block it's in, and a node that opens a block knows where its block ends. So a block's nodes
@@ -26,8 +28,8 @@ use std::iter::FusedIterator;
 use std::ops::Range;
 
 use stella_lexer::TokenKind::{
-    BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
-    TypeName,
+    BraceClose, BraceOpen, Comment, Function, Integer, Name, ParenthesisClose, ParenthesisOpen,
+    Return, Returns, TypeName,
 };
 use stella_lexer::{TOKENS_MAX, Token, Tokens};
 use stella_linter_text::LEVEL_SPACES;
@@ -36,9 +38,9 @@ use stella_source::{SOURCE_BYTES_MAX, is_own, u32_from_usize, usize_from_u32};
 
 /// This is a bound on how many nodes a source can hold.
 ///
-/// Every node is a line that holds a token and ends with a `\n`, so it's at least two bytes. No
-/// source reaches it today: a comment is at least three bytes, and so is a line that opens a
-/// block, so the most is 5,461. But it holds for any node there could be.
+/// Every node is a line that holds a token and ends with a `\n`, so it's at least two bytes. A
+/// source reaches it with a line of code of one character on every line, such as `a`, which opens
+/// no block: 8,192 of them fill the largest source.
 pub const NODES_MAX: u32 = SOURCE_BYTES_MAX / 2;
 
 /// A node is one line of the source that holds tokens, other than a `}`'s, and where it sits
@@ -323,7 +325,8 @@ fn assert_line(line: &[Token], depth: u32) {
     assert_eq!(column, column_at(depth), "a line is indented a level for each block it's in");
     for token in before {
         let goes_on = match token.kind() {
-            Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose => true,
+            Function | Return | Returns | Name | TypeName | Integer | ParenthesisOpen
+            | ParenthesisClose => true,
             BraceOpen | BraceClose | Comment => false,
         };
         assert!(goes_on, "a brace or a comment is the last token on its line");

@@ -89,7 +89,7 @@ fn is_kebab(name: &str) -> bool {
 /// Returns a random path: one to four parts, each one to three pieces long. Most pieces are
 /// valid in a name, so every answer the oracle can give comes up, accepting included.
 fn random_path(rng: &mut Rng) -> String {
-    let valid = ["a", "b", "z", "0", "9", "hello", "rung", "x86"];
+    let valid = ["a", "b", "z", "0", "9", "hello", "step", "x86"];
     let invalid = ["--", ".", "..", "", "A", "_", " ", "é", ".stella", ".txt"];
     let starts = ["", "", "", "", "", "./", "/", "../"];
     let mut path = String::from(rng.pick(&starts));
@@ -157,7 +157,7 @@ fn accepted_paths() {
     for (path, normalized, name) in [
         ("hello.stella", "hello.stella", "hello"),
         ("hello-world.stella", "hello-world.stella", "hello-world"),
-        ("rung-0.stella", "rung-0.stella", "rung-0"),
+        ("step-0.stella", "step-0.stella", "step-0"),
         ("2048.stella", "2048.stella", "2048"),
         ("programs/hello.stella", "programs/hello.stella", "hello"),
         ("a/b/c/hello.stella", "a/b/c/hello.stella", "hello"),

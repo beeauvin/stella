@@ -26,8 +26,8 @@ use stella_lexer::lex;
 use stella_linter_text::lint;
 use stella_linter_tokens::lint_tokens;
 use stella_meaning::Kind::NoSuchType;
-use stella_meaning::Type::Void;
-use stella_meaning::{Problem, Type, Types, resolve};
+use stella_meaning::Type::{Integer, Void};
+use stella_meaning::{IntegerType, Problem, Type, Types, resolve};
 use stella_source::{Position, SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
 use stella_test_support::{Example, Examples, Rng, excerpt, indent, programs_of, source_of};
 
@@ -38,7 +38,7 @@ type Outcome = Result<Vec<Type>, Problem>;
 const SMALLEST: &str = "function main() returns Void {\n}\n";
 
 /// Every type there is, each with the name the types page gives it.
-const TYPES: [(Type, &str); 1] = [(Void, "Void")];
+const TYPES: [(Type, &str); 2] = [(Void, "Void"), (Integer(IntegerType::U8), "U8")];
 
 /// These are the items a program is made of, in `every_program`.
 const ITEMS: [&str; 4] = [
@@ -66,6 +66,7 @@ const NEAR_VOID: &[&str] =
 const fn row_of(found: Type) -> usize {
     match found {
         Void => 0,
+        Integer(IntegerType::U8) => 1,
     }
 }
 
@@ -228,12 +229,13 @@ fn random_type(rng: &mut Rng) -> String {
     name
 }
 
-/// Returns a function's return type: mostly `Void`, sometimes a name close to it, and sometimes
+/// Returns a function's return type: mostly `Void`, sometimes `U8`, a name close to `Void`, or
 /// any type's name.
 fn random_return_type(rng: &mut Rng) -> String {
     match rng.below(20) {
         0 => String::from(rng.pick(NEAR_VOID)),
         1 => random_type(rng),
+        2 => String::from("U8"),
         _ => String::from("Void"),
     }
 }
@@ -323,34 +325,44 @@ fn names_near_a_type() {
     // only in its case, or with more before or after it. Every such name that's still a type's
     // name to the lexer is tried, and they're counted, so the test can't pass by trying none.
     let mut examples = Examples::new();
-    let mut near_count: u32 = 0;
-    for (_, name) in TYPES {
+    let mut near_counts = [0_u32; TYPES.len()];
+    for ((_, name), near_count) in TYPES.into_iter().zip(&mut near_counts) {
         for near in names_near(name) {
             let source = function("main", &near);
             if parses(&source) {
                 examples.add(&source, Err(no_such_type_at(1, 25)));
-                near_count += 1;
+                *near_count += 1;
             }
         }
     }
+    let [void_count, u8_count] = near_counts;
     // `Void` has 286. Cut short, it's `V`, `Vo` and `Voi`, and missing a character it's `Vid`
     // and `Vod` too, since `oid` is no type's name. Its `V` changes to the 25 other capitals.
     // Its `o` changes to the 35 other lowercase letters and digits, since a capital there would
     // follow another. Its `i` and its `d` each change to the 61 other letters and digits. Any of
     // the 62 can follow it. The word before it is `A` and one of the 36 lowercase letters and
     // digits. And there's `VoidVoid`.
-    assert_eq!(near_count, 3 + 2 + 25 + 35 + 61 + 61 + 62 + 36 + 1, "the names near a type");
-    assert_eq!(near_count, 286, "the names near a type, added up");
+    assert_eq!(void_count, 3 + 2 + 25 + 35 + 61 + 61 + 62 + 36 + 1, "the names near `Void`");
+    assert_eq!(void_count, 286, "the names near `Void`, added up");
+    // `U8` has 160. Cut short or missing its `8`, it's `U`, and missing its `U`, it's `8`, an
+    // integer, which is no type's name to the grammar. Its `U` changes to the 25 other capitals,
+    // but not to a lowercase letter, which makes a name, or a digit, which makes an integer. Its
+    // `8` changes to the 26 lowercase letters and the 9 other digits, but not to a capital,
+    // which would follow `U`. Any of the 62 can follow it. The word before it is `A` and one of
+    // the 36 lowercase letters and digits. And there's `U8U8`.
+    assert_eq!(u8_count, 1 + 25 + 26 + 9 + 62 + 36 + 1, "the names near `U8`");
+    assert_eq!(u8_count, 160, "the names near `U8`, added up");
     check(examples);
 }
 
 #[test]
 fn unknown_types() {
-    // A type's name is found whole, so a name that's almost `Void` is no more a type than `Bar`.
+    // A type's name is found whole, so a name that's almost `Void` or `U8` is no more a type
+    // than `Bar`.
     let mut examples = Examples::new();
     let near = [
         "Bar", "V", "Vo", "Voi", "Voids", "Void2", "Vo1d", "VoidVoid", "Avoid", "Vvoid", "VoiD",
-        "VoId", "Xoid", "Vaid", "Voix",
+        "VoId", "Xoid", "Vaid", "Voix", "U16", "U9", "U80", "Uint8", "U8u8",
     ];
     for return_type in near {
         examples.add(&function("main", return_type), Err(no_such_type_at(1, 25)));

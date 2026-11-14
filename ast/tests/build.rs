@@ -22,10 +22,10 @@
 
 use std::ptr;
 
-use stella_ast::{Ast, FUNCTIONS_MAX, Function, build};
+use stella_ast::{Ast, FUNCTIONS_MAX, Function, Statement, build};
 use stella_blocks::nest;
 use stella_grammar::{Form, parse};
-use stella_lexer::TokenKind::{self, Name, TypeName};
+use stella_lexer::TokenKind::{self, BraceClose, Integer, Name, Return, TypeName};
 use stella_lexer::{Token, lex};
 use stella_linter_text::lint;
 use stella_linter_tokens::lint_tokens;
@@ -88,6 +88,19 @@ struct PlainFunction {
     return_type: String,
     /// The column the return type starts at.
     return_type_column: u32,
+    /// The `return` lines in the function's body, in order.
+    returns: Vec<PlainReturn>,
+}
+
+/// A `return` line with its parts in the open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlainReturn {
+    /// The number of the line it's on.
+    line: u32,
+    /// The integer it gives back, as it's written.
+    value: String,
+    /// The column the integer starts at.
+    value_column: u32,
 }
 
 /// An item is one thing a program holds outside every block.
@@ -114,6 +127,10 @@ struct ShapeCounts {
     comments_in_bodies: u32,
     /// How many blank lines are in the functions' bodies.
     blank_lines_in_bodies: u32,
+    /// How many `return` lines are in the functions' bodies.
+    returns: u32,
+    /// How many `return` lines have a comment after them in their body.
+    commented_returns: u32,
     /// How many names are longer than a byte counts.
     long_names: u32,
     /// How many return types are longer than a byte counts.
@@ -126,17 +143,22 @@ impl ShapeCounts {
         self.functions += u32_from_usize(functions.len());
         self.programs_without_a_function += u32::from(functions.is_empty());
         self.programs_of_three_functions += u32::from(functions.len() >= 3);
-        let mut in_body = false;
+        let (mut in_body, mut returned) = (false, false);
         for line in lines {
             if line.starts_with("function ") {
-                in_body = true;
+                (in_body, returned) = (true, false);
             } else if line == "}" {
                 in_body = false;
             } else {
-                self.comments_in_bodies += u32::from(in_body && line.starts_with("    //"));
+                let comment = in_body && line.starts_with("    //");
+                self.comments_in_bodies += u32::from(comment);
+                self.commented_returns += u32::from(comment && returned);
                 self.blank_lines_in_bodies += u32::from(in_body && line.is_empty());
+                returned = returned || line.starts_with("    return ");
             }
         }
+        self.returns +=
+            functions.iter().map(|function| u32_from_usize(function.returns.len())).sum::<u32>();
         let long = |text: &str| u32::from(text.len() > 255);
         self.long_names += functions.iter().map(|function| long(&function.name)).sum::<u32>();
         self.long_types +=
@@ -200,6 +222,16 @@ fn plain(ast: &Ast<'_>, function: &Function) -> PlainFunction {
     assert_eq!(name.position().line(), line, "a function's name is on its first line");
     assert_eq!(return_type.kind(), TypeName, "a function's return type is a type's name");
     assert_eq!(return_type.position().line(), line, "and so is its return type");
+    // The `}` that closes the body is the block's, alone on a later line, not indented.
+    let close = ast.close(function);
+    let block = node.block().expect("a function's first line opens its body");
+    let close_index = usize_from_u32(block.close_token_index());
+    let own_close = &forms.blocks().tokens().as_slice()[close_index];
+    assert!(ptr::eq(close, own_close), "it's the very `}}` that closes the body");
+    assert_eq!(close.kind(), BraceClose, "a body is closed by `}}`");
+    assert!(close.position().line() > line, "a body's `}}` is on a later line");
+    assert_eq!(close.position().column(), 1, "and isn't indented");
+    let returns = ast.statements(function).iter().map(|statement| plain_return(ast, statement));
     PlainFunction {
         node_index,
         line,
@@ -207,6 +239,28 @@ fn plain(ast: &Ast<'_>, function: &Function) -> PlainFunction {
         name_column: name.position().column(),
         return_type: String::from(ast.text(return_type)),
         return_type_column: return_type.position().column(),
+        returns: returns.collect(),
+    }
+}
+
+/// Returns `statement`, one of `ast`'s, with its parts in the open. On the way, it checks that
+/// its `return` starts a line in a body, a level in, and that its value is the integer after it.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "KS-ASSERT-ARGS: the AST checks a statement is its own by where it is, which a copy \
+              would lose"
+)]
+fn plain_return(ast: &Ast<'_>, statement: &Statement) -> PlainReturn {
+    let (keyword, value) = (ast.keyword_of(statement), ast.value(statement));
+    assert_eq!(keyword.kind(), Return, "a `return` line starts with `return`");
+    assert_eq!(keyword.position().column(), 5, "a `return` line is a level in");
+    assert_eq!(value.kind(), Integer, "its value is an integer");
+    assert_eq!(value.position().line(), keyword.position().line(), "on the same line");
+    assert_eq!(value.position().column(), 12, "right after `return `");
+    PlainReturn {
+        line: keyword.position().line(),
+        value: String::from(ast.text(value)),
+        value_column: value.position().column(),
     }
 }
 
@@ -227,7 +281,8 @@ fn laid_out(expected: ExpectedFunction<'_>) -> PlainFunction {
     let name_column = 10;
     let return_type_column = name_column + u32_from_usize(name.len() + "() returns ".len());
     let (name, return_type) = (String::from(name), String::from(return_type));
-    PlainFunction { node_index, line, name, name_column, return_type, return_type_column }
+    let returns = Vec::new();
+    PlainFunction { node_index, line, name, name_column, return_type, return_type_column, returns }
 }
 
 /// Returns each of `functions` with its parts in the open.
@@ -262,7 +317,8 @@ fn check(examples: Examples<Vec<PlainFunction>>) {
 
 /// Returns the functions `source`'s AST should hold, worked out from its text alone. `source`
 /// must pass the grammar, so a line that starts with `function ` is a function's first line, laid
-/// out the one way, and every other line that isn't blank or a `}` is a comment. Each of those
+/// out the one way, one that starts with `    return ` is a `return` line in the body of the
+/// function before it, and every other line that isn't blank or a `}` is a comment. Each of those
 /// lines is a node. Columns are counted in bytes, since code is ASCII.
 fn oracle(source: &str) -> Vec<PlainFunction> {
     let mut functions = Vec::new();
@@ -271,6 +327,13 @@ fn oracle(source: &str) -> Vec<PlainFunction> {
         let code = content.trim_start_matches(' ');
         if code.is_empty() || code == "}" {
             continue;
+        }
+        if let Some(value) = content.strip_prefix("    return ") {
+            let function: &mut PlainFunction =
+                functions.last_mut().expect("a `return` line is in a function's body");
+            let value_column = u32_from_usize("    return ".len() + 1);
+            let value = String::from(value);
+            function.returns.push(PlainReturn { line, value, value_column });
         }
         if let Some(rest) = content.strip_prefix("function ") {
             let (name, rest) = rest.split_once("() returns ").expect("a function's first line");
@@ -283,6 +346,7 @@ fn oracle(source: &str) -> Vec<PlainFunction> {
                 name_column: u32_from_usize("function ".len() + 1),
                 return_type: String::from(return_type),
                 return_type_column: u32_from_usize(return_type_start + 1),
+                returns: Vec::new(),
             });
         }
         node_index += 1;
@@ -408,9 +472,18 @@ fn random_program(rng: &mut Rng) -> Vec<String> {
             _ => {
                 let (name, return_type) = (random_name(rng), random_type(rng));
                 lines.push(format!("function {name}() returns {return_type} {{"));
+                let mut returned = false;
                 for _ in 0..rng.below(5) {
-                    match rng.below(4) {
+                    match rng.below(5) {
                         0 => lines.push(String::new()),
+                        // A body holds one `return` at most.
+                        1 if !returned => {
+                            let value = run(rng, b"123456789", 1);
+                            let rest_count = rng.below(4);
+                            let rest = run(rng, b"0123456789", rest_count);
+                            lines.push(format!("{}return {value}{rest}", indent(1)));
+                            returned = true;
+                        }
                         _ => lines.push(format!("{}//{}", indent(1), rng.pick(COMMENT_TEXTS))),
                     }
                 }
@@ -440,6 +513,7 @@ fn the_smallest_program() {
         name_column: 10,
         return_type: String::from("Void"),
         return_type_column: 25,
+        returns: Vec::new(),
     };
     assert_eq!(laid_out((0, 1, "main", "Void")), main, "`laid_out` agrees with the one layout");
     examples.add(SMALLEST, vec![main]);
@@ -634,6 +708,62 @@ fn the_largest_sources() {
 }
 
 #[test]
+fn statements() {
+    // A function's statements are its body's `return` lines, in its own run of the table, and
+    // comments aren't among them. A function with none has an empty run, wherever it is.
+    let returns_3 = "function main() returns U8 {\n    return 3\n}\n";
+    assert_eq!(oracle(returns_3), built(returns_3), "the oracle, for {returns_3:?}");
+    let functions = built(returns_3);
+    let expected = PlainReturn { line: 2, value: String::from("3"), value_column: 12 };
+    assert_eq!(functions[0].returns, [expected]);
+    // Comments around it, and a long integer, read whole.
+    let long = "9".repeat(300);
+    let source =
+        format!("function a() returns U8 {{\n    // x\n\n    return {long}\n    // y\n}}\n");
+    let functions = built(&source);
+    assert_eq!(oracle(&source), functions, "the oracle, for {}", excerpt(&source));
+    let expected = PlainReturn { line: 4, value: long, value_column: 12 };
+    assert_eq!(functions[0].returns, [expected]);
+    // Each function's run is its own: one with a `return`, one without, then one with.
+    let source = "function a() returns U8 {\n    return 1\n}\nfunction b() returns Void {\n    // \
+                  none\n}\nfunction c() returns U8 {\n    return 22\n}\n";
+    let ast = ast_of(source);
+    let counts: Vec<usize> =
+        ast.functions().iter().map(|function| ast.statements(function).len()).collect();
+    assert_eq!(counts, [1, 0, 1]);
+    let values: Vec<&str> = ast
+        .functions()
+        .iter()
+        .flat_map(|function| ast.statements(function))
+        .map(|statement| ast.text(ast.value(statement)))
+        .collect();
+    assert_eq!(values, ["1", "22"]);
+    assert_eq!(oracle(source), functions_of(&ast), "the oracle, for {}", excerpt(source));
+}
+
+#[test]
+#[should_panic(expected = "a statement is one of its source's")]
+fn value_of_a_copy_of_a_statement_is_a_bug() {
+    // A copy of a statement is equal to it and is somewhere else, so it's no statement of the
+    // AST's.
+    let ast = ast_of("function main() returns U8 {\n    return 3\n}\n");
+    let function = ast.functions().first().expect("the source has a function");
+    let copy = *ast.statements(function).first().expect("the function has a statement");
+    let _: &Token = ast.value(&copy);
+}
+
+#[test]
+#[should_panic(expected = "a statement is one of its source's")]
+fn keyword_of_a_statement_from_another_ast_is_a_bug() {
+    // Two ASTs of one source hold equal statements. Each still means something only in its own.
+    let source = "function main() returns U8 {\n    return 3\n}\n";
+    let (first, second) = (ast_of(source), ast_of(source));
+    let function = second.functions().first().expect("the source has a function");
+    let statement = second.statements(function).first().expect("the function has a statement");
+    let _: &Token = first.keyword_of(statement);
+}
+
+#[test]
 fn every_source_owns_its_functions() {
     // Sources built one after another, the most functions a source can hold among them, with
     // every one's AST kept while the next is built. Each source's functions are still its own at
@@ -804,6 +934,8 @@ fn fuzz_against_the_oracle() {
         ("blank lines in bodies", reached.blank_lines_in_bodies, 10_000),
         ("names longer than a byte counts", reached.long_names, 450),
         ("types longer than a byte counts", reached.long_types, 350),
+        ("`return` lines", reached.returns, 7_000),
+        ("`return` lines with a comment after them", reached.commented_returns, 6_000),
     ] {
         assert!(count > floor, "only {count} reached {shape}; reached {reached:?}");
     }

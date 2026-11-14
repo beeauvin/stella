@@ -4,8 +4,10 @@ This reference describes Stella as it stands today, and it grows as the
 language does. Each rule links to the tests that check it, or says it isn't
 tested.
 
-Here is the smallest Stella program. For now, every program is this one, give
-or take [comments](comments.md) and blank lines:
+Here is the smallest Stella program. For now, every program is one function,
+`main`, which returns `Void`, as this one does, or gives back a
+[`U8`](types.md) for the program to exit with, give or take
+[comments](comments.md) and blank lines:
 
 ```stella
 function main() returns Void {

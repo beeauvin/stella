@@ -7,18 +7,20 @@
 
 #![forbid(unsafe_code)]
 
-use stella_grammar::Kind::{CodeInBody, Expected, NotAFunction};
+use stella_grammar::Kind::{AfterReturn, AfterReturnValue, Expected, NotAFunction, NotAReturn};
 use stella_grammar::Part::{
-    BraceOpen, Name, ParenthesisClose, ParenthesisOpen, ReturnType, Returns,
+    BraceOpen, Name, ParenthesisClose, ParenthesisOpen, ReturnType, ReturnValue, Returns,
 };
 
 #[test]
 fn sentences() {
-    // Every kind of problem the grammar has, and every part a function's first line can be
-    // missing, each with its sentence written out whole.
+    // Every kind of problem the grammar has, and every part a line can be missing, each with its
+    // sentence written out whole.
     for (kind, sentence) in [
         (NotAFunction, "outside a block, a line of code must start with `function`."),
-        (CodeInBody, "a function's body can hold only comments, for now."),
+        (NotAReturn, "in a function's body, a line of code must start with `return`, for now."),
+        (AfterReturn, "nothing can come after `return` in a body."),
+        (AfterReturnValue, "a line with `return` ends with its value."),
         (Expected(Name), "the function's name must come after `function`."),
         (Expected(ParenthesisOpen), "`(` must come after the function's name."),
         (
@@ -28,6 +30,7 @@ fn sentences() {
         (Expected(Returns), "`returns` and the function's return type must come after `()`."),
         (Expected(ReturnType), "the function's return type must come after `returns`."),
         (Expected(BraceOpen), "`{` must come after the function's return type."),
+        (Expected(ReturnValue), "an integer must come after `return`."),
     ] {
         assert_eq!(kind.to_string(), sentence, "for {kind:?}");
     }

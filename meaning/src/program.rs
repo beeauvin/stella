@@ -11,14 +11,16 @@
 //! - **A function after `main`** is refused at its `function`.
 //!
 //! The functions are checked in the order they're in the source, so the first fault in the file
-//! is the one reported. `main` returns `Void`, and for now that can't be otherwise: the types
-//! check refused every name but `Void`. So nothing is refused for it here. When there's a second
-//! type, the compiler won't build until this check says what `main` may return.
+//! is the one reported. `main` returns `Void`, and the program exits with 0, or `U8`, and the
+//! program exits with the value `main` gives back. Those are every type there is, so nothing is
+//! refused for `main`'s type here. A type that's added stops the build at this check's `match`,
+//! until it says whether `main` may return it.
 
 use stella_source::usize_from_u32;
 
+use crate::fit::Fitted;
 use crate::problem::{Kind, Problem};
-use crate::resolve::{Type, Types};
+use crate::resolve::{IntegerType, Type};
 
 /// This is the name of the function that running a program runs.
 const MAIN_NAME: &str = "main";
@@ -33,16 +35,16 @@ const MAIN_FUNCTION_INDEX: u32 = 0;
 /// the compiler has, and that running it runs `main`.
 #[derive(Debug)]
 pub struct Program<'source> {
-    types: Types<'source>,
+    fitted: Fitted<'source>,
     /// The index of `main`, in the AST's functions.
     main_function_index: u32,
 }
 
 impl<'source> Program<'source> {
-    /// Returns what the types check found, just as `resolve` made it.
+    /// Returns what the fit check found, just as `check_fit` made it.
     #[must_use]
-    pub const fn types(&self) -> &Types<'source> {
-        &self.types
+    pub const fn fitted(&self) -> &Fitted<'source> {
+        &self.fitted
     }
 
     /// Returns the index of `main`, in the AST's functions.
@@ -52,7 +54,7 @@ impl<'source> Program<'source> {
     }
 }
 
-/// Checks that `types`'s functions make a program, and returns it.
+/// Checks that `fitted`'s functions make a program, and returns it.
 ///
 /// # Errors
 ///
@@ -63,7 +65,8 @@ impl<'source> Program<'source> {
 ///
 /// Never, whatever was resolved. The assertions check what the types check proved and this
 /// check's own work, so one that fails is a bug in the compiler.
-pub fn check_program(types: Types<'_>) -> Result<Program<'_>, Problem> {
+pub fn check_program(fitted: Fitted<'_>) -> Result<Program<'_>, Problem> {
+    let types = fitted.types();
     let ast = types.ast();
     let functions = ast.functions();
     assert_eq!(types.as_slice().len(), functions.len(), "each function has one type");
@@ -81,11 +84,10 @@ pub fn check_program(types: Types<'_>) -> Result<Program<'_>, Problem> {
         return Err(Problem::at(Kind::AnotherFunction, ast.keyword(second).position()));
     }
     assert_eq!(functions.len(), 1, "a program is exactly one function");
-    // `main` returns `Void`. The types check refused every other name, so nothing else can
-    // reach here yet. A type added to `Type` stops the build at this `match`, which is where
-    // the refusal of a `main` that returns it goes.
+    // `main` may return `Void` or `U8`, every type there is. A type added to `Type` stops the
+    // build at this `match`, which is where the refusal of a `main` that returns it goes.
     match types.as_slice()[usize_from_u32(MAIN_FUNCTION_INDEX)] {
-        Type::Void => {}
+        Type::Void | Type::Integer(IntegerType::U8) => {}
     }
-    Ok(Program { types, main_function_index: MAIN_FUNCTION_INDEX })
+    Ok(Program { fitted, main_function_index: MAIN_FUNCTION_INDEX })
 }

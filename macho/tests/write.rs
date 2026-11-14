@@ -43,7 +43,7 @@ use stella_lexer::lex;
 use stella_linter_text::lint;
 use stella_linter_tokens::lint_tokens;
 use stella_macho::{BinaryName, Executable, NAME_BYTES_MAX, Sizes, layout, sha256, write};
-use stella_meaning::{check_program, resolve};
+use stella_meaning::{check_fit, check_program, resolve};
 use stella_test_support::{Rng, Scratch};
 
 /// This is the smallest program, laid out the one way. For now every program is this one, give
@@ -239,13 +239,15 @@ fn code_of(source: &str) -> Code {
     let laid_out = lint_tokens(tokens).expect("source should pass the tokens lint");
     let forms = parse(nest(laid_out)).expect("source should parse");
     let types = resolve(build(forms)).expect("source's types should resolve");
-    let program = check_program(types).expect("source should be a program");
+    let fitted = check_fit(types).expect("source should fit its types");
+    let program = check_program(fitted).expect("source should be a program");
     generate(&program)
 }
 
 /// Writes `source`, which must pass every check, as a binary named `name`, which must be a name
-/// a binary can have. For now every program's code is the smallest's, so this checks that the
-/// code is `SMALLEST_CODE` once it's placed where the format puts it, before `write` sees it.
+/// a binary can have. Every source here is a `main` that returns `Void`, whose code is the
+/// smallest's, so this checks that the code is `SMALLEST_CODE` once it's placed where the format
+/// puts it, before `write` sees it.
 fn written(source: &str, name: &str) -> Executable {
     let code = code_of(source);
     assert_eq!(code.size_bytes(), 44, "the code is the smallest program's eleven instructions");

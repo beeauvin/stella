@@ -312,18 +312,27 @@ fn children_by_parent(nodes: &[PlainNode], parent: Option<u32>) -> Vec<u32> {
     (0..nodes.len()).filter(|&index| nodes[index].parent == parent).map(u32_from_usize).collect()
 }
 
-/// Returns a random program laid out the one way, as its lines: blank lines, comments, and blocks
-/// nested up to eight deep, each opened by a few random tokens and `{`, and closed by `}`.
+/// Returns a random program laid out the one way, as its lines: blank lines, comments, lines of a
+/// few random tokens that open no block, and blocks nested up to eight deep, each opened by a few
+/// random tokens and `{`, and closed by `}`.
 fn random_program(rng: &mut Rng) -> Vec<String> {
     let mut lines = Vec::new();
     let mut depth: u32 = 0;
     for _ in 0..=rng.below(40) {
-        match rng.below(8) {
+        // One draw in nine is a line that opens no block, so blocks open as often as before
+        // against how often they close.
+        match rng.below(9) {
             0 => lines.push(String::new()),
             1 | 2 => lines.push(format!("{}//{}", indent(depth), rng.pick(COMMENT_TEXTS))),
             3 | 4 if depth > 0 => {
                 depth -= 1;
                 lines.push(format!("{}}}", indent(depth)));
+            }
+            8 => {
+                let count = 1 + rng.below(4);
+                let texts: Vec<&str> =
+                    std::iter::repeat_with(|| rng.pick(PIECES)).take(count).collect();
+                lines.push(format!("{}{}", indent(depth), joined(&texts)));
             }
             _ if depth < 8 => {
                 let heads = 1 + rng.below(4);
@@ -408,6 +417,31 @@ fn comments() {
         &mut examples,
         "a {\n    // }\n    // b {\n}\n// {\n",
         &[(1, 2, 0, 4), (2, 1, 1, 0), (3, 1, 1, 0), (5, 1, 0, 0)],
+    );
+    check(examples);
+}
+
+#[test]
+fn lines_that_open_no_block() {
+    // A line of code that doesn't end with `{` is a node in the block it's in, like a comment,
+    // and opens nothing, however many tokens it holds and wherever it is.
+    let mut examples = Examples::new();
+    nests(&mut examples, "main\n", &[(1, 1, 0, 0)]);
+    nests(&mut examples, "function main() returns Void\n", &[(1, 6, 0, 0)]);
+    nests(&mut examples, "a\nb c\n", &[(1, 1, 0, 0), (2, 2, 0, 0)]);
+    // In a block, before and after one of its own, and after a comment.
+    nests(
+        &mut examples,
+        "a {\n    b\n    c {\n        d e\n    }\n    // f\n    g()\n}\nh\n",
+        &[
+            (1, 2, 0, 8),
+            (2, 1, 1, 0),
+            (3, 2, 1, 5),
+            (4, 2, 3, 0),
+            (6, 1, 1, 0),
+            (7, 3, 1, 0),
+            (9, 1, 0, 0),
+        ],
     );
     check(examples);
 }
@@ -593,12 +627,17 @@ fn the_largest_sources() {
         (1..=63).map(|line| (line, 2, line - 1, 128 - line)).collect();
     outline.push((64, 1, 63, 0));
     nests(&mut examples, &source_of(&deepest), &outline);
-    // The most nodes: a comment on every line. A source has room for a node in every two bytes,
-    // so lines of code that open no block, once there are any, will fit too.
+    // The most comments: a comment on every line.
     assert!("//\n".repeat(5_461).len() <= size);
     assert!("//\n".repeat(5_462).len() > size);
-    const { assert!(NODES_MAX == SOURCE_BYTES_MAX / 2, "room for a node in every two bytes") };
     nests(&mut examples, &"//\n".repeat(5_461), &comments_outline(5_461));
+    // The most nodes there can be: a line of code of one character on every line, which opens no
+    // block. A source has room for a node in every two bytes, and this fills it exactly.
+    const { assert!(NODES_MAX == SOURCE_BYTES_MAX / 2, "room for a node in every two bytes") };
+    let most = "a\n".repeat(usize_from_u32(NODES_MAX));
+    assert_eq!(most.len(), size, "the most nodes fill the largest source");
+    let outline: Vec<OutlineLine> = (1..=NODES_MAX).map(|line| (line, 1, 0, 0)).collect();
+    nests(&mut examples, &most, &outline);
     // Lines 256 apart, which a byte can't tell from lines side by side.
     let apart = format!("//\n{}//\n", "\n".repeat(255));
     nests(&mut examples, &apart, &[(1, 1, 0, 0), (257, 1, 0, 0)]);

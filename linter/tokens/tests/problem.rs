@@ -9,13 +9,12 @@
 
 use stella_lexer::TokenKind;
 use stella_lexer::TokenKind::{
-    BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
-    TypeName,
+    BraceClose, BraceOpen, Comment, Function, Integer, Name, ParenthesisClose, ParenthesisOpen,
+    Return, Returns, TypeName,
 };
 use stella_linter_tokens::Kind::{
     BraceCloseNotAlone, BraceClosesNothing, BraceNeverClosed, BraceOpenNotLast,
-    BraceOpenStartsLine, IndentationNotDepth, LineEndsWithoutBrace, SpaceMissing, SpaceUnwanted,
-    SpacesExtra,
+    BraceOpenStartsLine, IndentationNotDepth, SpaceMissing, SpaceUnwanted, SpacesExtra,
 };
 use stella_linter_tokens::Neighbors;
 
@@ -33,7 +32,6 @@ fn sentences() {
         (BraceOpenNotLast, "`{` must end its line."),
         (BraceOpenStartsLine, "`{` can't start a line."),
         (BraceCloseNotAlone, "`}` must be on a line of its own."),
-        (LineEndsWithoutBrace, "a line of code must end with `{` or `}`."),
         (BraceClosesNothing, "this `}` has no `{` to close."),
         (BraceNeverClosed, "this `{` is never closed."),
         (IndentationNotDepth(0), "this line can't be indented, since no `{` is still open on it."),
@@ -76,9 +74,11 @@ fn sentences() {
     // in either place, even the pairs that can't share a line.
     let named = [
         (Function, "`function`"),
+        (Return, "`return`"),
         (Returns, "`returns`"),
         (Name, "a name"),
         (TypeName, "a type's name"),
+        (Integer, "an integer"),
         (ParenthesisOpen, "`(`"),
         (ParenthesisClose, "`)`"),
         (BraceOpen, "`{`"),

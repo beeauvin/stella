@@ -24,6 +24,7 @@ use stella_macho::{
     BASE_ADDRESS, CODE_OFFSET, HASH_BYTES, HASH_PAGE_BYTES, IMAGE_BYTES_MAX, NAME_BYTES_MAX,
     PAGE_BYTES, SIGNATURE_BYTES_MAX, STACK_BYTES_MAX, Sizes, TEXT_BYTES_MAX, layout,
 };
+use stella_source::usize_from_u32;
 use stella_test_support::Rng;
 
 /// These are the sizes of the smallest program, named `hello`: 11 instructions, no stack, and a
@@ -44,10 +45,22 @@ const RAN: [(Sizes, u32); 3] = [
 /// load commands before the code.
 const CODE_BYTES_ONE_PAGE: u32 = 16_384 - 760;
 
+/// This is the most code that leaves `__TEXT` two pages: 32 KiB, less the same 760 bytes.
+const CODE_BYTES_TWO_PAGES: u32 = 2 * 16_384 - 760;
+
 /// These are sizes of code at each edge: one instruction, the smallest program, either side of
-/// where `__TEXT` needs a second page, and the most.
-const CODE_EDGES: [u32; 6] =
-    [4, 44, CODE_BYTES_ONE_PAGE - 4, CODE_BYTES_ONE_PAGE, CODE_BYTES_ONE_PAGE + 4, CODE_BYTES_MAX];
+/// where `__TEXT` needs a second page and a third, and the most.
+const CODE_EDGES: [u32; 9] = [
+    4,
+    44,
+    CODE_BYTES_ONE_PAGE - 4,
+    CODE_BYTES_ONE_PAGE,
+    CODE_BYTES_ONE_PAGE + 4,
+    CODE_BYTES_TWO_PAGES - 4,
+    CODE_BYTES_TWO_PAGES,
+    CODE_BYTES_TWO_PAGES + 4,
+    CODE_BYTES_MAX,
+];
 
 /// These are sizes of stack at each edge: none, the least there is, either side of one page and
 /// of two, either side of a mebibyte, and the last page and the last 16 bytes of the most.
@@ -240,12 +253,14 @@ fn the_limits() {
     assert_eq!(HASH_BYTES, 32);
     assert_eq!(NAME_BYTES_MAX, 248);
     assert_eq!(STACK_BYTES_MAX, 1_073_741_824);
-    // The most code needs a second page of `__TEXT`, and not a third.
-    assert_eq!(TEXT_BYTES_MAX, 32_768);
-    assert_eq!((760 + CODE_BYTES_MAX).div_ceil(16_384), 2);
-    // The headers' 108 bytes, the longest name and its 0, and eight hashes.
-    assert_eq!(SIGNATURE_BYTES_MAX, 108 + 249 + 8 * 32);
-    assert_eq!(IMAGE_BYTES_MAX, 33_392);
+    // The most code needs a third page of `__TEXT`, and not a fourth: a body can be two
+    // instructions, so the most functions' bodies take twice the room they did.
+    assert_eq!(TEXT_BYTES_MAX, 49_152);
+    assert_eq!((760 + CODE_BYTES_MAX).div_ceil(16_384), 3);
+    // The headers' 108 bytes, the longest name and its 0, and twelve hashes.
+    assert_eq!(SIGNATURE_BYTES_MAX, 108 + 249 + 12 * 32);
+    // All of `__TEXT`, then the signature in whole 16 bytes.
+    assert_eq!(IMAGE_BYTES_MAX, 49_152 + 752);
     let most = Sizes {
         code_bytes: CODE_BYTES_MAX,
         stack_bytes: STACK_BYTES_MAX,
@@ -258,9 +273,9 @@ fn the_limits() {
     assert_eq!(expected.data_bytes, STACK_BYTES_MAX, "the most stack is whole pages");
     // The stack's top is as far from the code as it gets: a little over 1 GiB, well within the
     // 4 GiB that `adrp` reaches.
-    assert_eq!(expected.stack_top_address - expected.code_address, 1_073_741_824 + 32_768 - 760);
+    assert_eq!(expected.stack_top_address - expected.code_address, 1_073_741_824 + 49_152 - 760);
     // The edges are the sizes they're said to be.
-    assert_eq!(CODE_EDGES.map(|code_bytes| code_bytes % INSTRUCTION_BYTES), [0; 6]);
+    assert_eq!(CODE_EDGES.map(|code_bytes| code_bytes % INSTRUCTION_BYTES), [0; 9]);
     assert_eq!(STACK_EDGES.map(|stack_bytes| stack_bytes % STACK_ALIGNMENT_BYTES), [0; 16]);
     assert_eq!(CODE_EDGES.last(), Some(&CODE_BYTES_MAX));
     assert_eq!(STACK_EDGES.last(), Some(&STACK_BYTES_MAX));
@@ -271,24 +286,39 @@ fn the_limits() {
 fn every_code_size() {
     // Every size of code there is, from one instruction to the most, with each edge of stack and
     // of name. Code that fills the first page exactly leaves `__TEXT` one page, and one
-    // instruction more makes it two, with four more hashes.
+    // instruction more makes it two, with four more hashes. The same holds at the second page.
     let mut tried_count: u32 = 0;
-    let mut two_pages_count: u32 = 0;
+    let mut pages_counts = [0_u32; 3];
     for code_bytes in (INSTRUCTION_BYTES..=CODE_BYTES_MAX).step_by(4) {
         for stack_bytes in STACK_EDGES {
             for name_bytes in NAME_EDGES {
                 let expected = check(Sizes { code_bytes, stack_bytes, name_bytes });
-                let pages_count = if code_bytes <= CODE_BYTES_ONE_PAGE { 1 } else { 2 };
+                let pages_count: u32 = if code_bytes <= CODE_BYTES_ONE_PAGE {
+                    1
+                } else if code_bytes <= CODE_BYTES_TWO_PAGES {
+                    2
+                } else {
+                    3
+                };
                 assert_eq!(expected.text_bytes, pages_count * 16_384, "for {code_bytes} bytes");
                 assert_eq!(expected.hash_pages_count, pages_count * 4, "for {code_bytes} bytes");
                 tried_count += 1;
-                two_pages_count += u32::from(pages_count == 2);
+                pages_counts[usize_from_u32(pages_count - 1)] += 1;
             }
         }
     }
     assert_eq!(tried_count, (CODE_BYTES_MAX / 4) * 16 * 5);
-    assert_eq!(two_pages_count, ((CODE_BYTES_MAX - CODE_BYTES_ONE_PAGE) / 4) * 16 * 5);
-    assert!(two_pages_count > 0, "some code needs a second page");
+    let per_size = 16 * 5;
+    assert_eq!(
+        pages_counts,
+        [
+            (CODE_BYTES_ONE_PAGE / 4) * per_size,
+            ((CODE_BYTES_TWO_PAGES - CODE_BYTES_ONE_PAGE) / 4) * per_size,
+            ((CODE_BYTES_MAX - CODE_BYTES_TWO_PAGES) / 4) * per_size,
+        ],
+        "how many sizes of code take one page, two and three"
+    );
+    assert!(pages_counts.iter().all(|&count| count > 0), "some code needs each count of pages");
 }
 
 #[test]
@@ -355,8 +385,7 @@ fn fuzz_against_the_oracle() {
         let count = usize::try_from(count).expect("a `u32` fits in a `usize`");
         u32::try_from(rng.below(count)).expect("a number below a `u32` is a `u32`")
     };
-    let mut one_page_count: u32 = 0;
-    let mut two_pages_count: u32 = 0;
+    let mut pages_counts = [0_u32; 3];
     for _ in 0..100_000_u32 {
         let most = if rng.below(8) == 0 { rng.below(3) } else { 3 };
         let code_instructions_count = 1 + below(&mut rng, CODE_BYTES_MAX / INSTRUCTION_BYTES);
@@ -367,12 +396,14 @@ fn fuzz_against_the_oracle() {
             name_bytes: if most == 2 { NAME_BYTES_MAX } else { 1 + below(&mut rng, 248) },
         };
         let expected = check(sizes);
-        one_page_count += u32::from(expected.text_bytes == 16_384);
-        two_pages_count += u32::from(expected.text_bytes == 32_768);
+        let pages_count = expected.text_bytes / 16_384;
+        assert!((1..=3).contains(&pages_count), "`__TEXT` is one page, two or three");
+        pages_counts[usize_from_u32(pages_count - 1)] += 1;
     }
-    assert_eq!(one_page_count + two_pages_count, 100_000, "`__TEXT` is one page or two");
-    assert!(one_page_count >= 10_000, "{one_page_count} layouts of one page");
-    assert!(two_pages_count >= 1_000, "{two_pages_count} layouts of two pages");
+    let [one, two, three] = pages_counts;
+    assert!(one >= 10_000, "{one} layouts of one page");
+    assert!(two >= 10_000, "{two} layouts of two pages");
+    assert!(three >= 1_000, "{three} layouts of three pages");
 }
 
 #[test]

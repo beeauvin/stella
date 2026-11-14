@@ -19,15 +19,14 @@
 use std::cmp::Ordering;
 
 use stella_lexer::TokenKind::{
-    self, BraceClose, BraceOpen, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
-    TypeName,
+    self, BraceClose, BraceOpen, Function, Integer, Name, ParenthesisClose, ParenthesisOpen,
+    Return, Returns, TypeName,
 };
 use stella_lexer::lex;
 use stella_linter_text::{LEVEL_SPACES, lint};
 use stella_linter_tokens::Kind::{
     BraceCloseNotAlone, BraceClosesNothing, BraceNeverClosed, BraceOpenNotLast,
-    BraceOpenStartsLine, IndentationNotDepth, LineEndsWithoutBrace, SpaceMissing, SpaceUnwanted,
-    SpacesExtra,
+    BraceOpenStartsLine, IndentationNotDepth, SpaceMissing, SpaceUnwanted, SpacesExtra,
 };
 use stella_linter_tokens::{Kind, Neighbors, Problem, lint_tokens};
 use stella_source::{SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
@@ -47,21 +46,25 @@ const SMALLEST: &str = "function main() returns Void {\n}\n";
 
 /// The tokens that can come first of two on a line, once the braces are where they go, each
 /// written as code writes it.
-const FIRSTS: [(TokenKind, &str); 6] = [
+const FIRSTS: [(TokenKind, &str); 8] = [
     (Function, "function"),
+    (Return, "return"),
     (Returns, "returns"),
     (Name, "main"),
     (TypeName, "Void"),
+    (Integer, "3"),
     (ParenthesisOpen, "("),
     (ParenthesisClose, ")"),
 ];
 
 /// The tokens that can come second: the same ones, and `{`.
-const SECONDS: [(TokenKind, &str); 7] = [
+const SECONDS: [(TokenKind, &str); 9] = [
     (Function, "function"),
+    (Return, "return"),
     (Returns, "returns"),
     (Name, "main"),
     (TypeName, "Void"),
+    (Integer, "3"),
     (ParenthesisOpen, "("),
     (ParenthesisClose, ")"),
     (BraceOpen, "{"),
@@ -70,14 +73,16 @@ const SECONDS: [(TokenKind, &str); 7] = [
 /// How many spaces go between each first token, by row, and each second, by column, as the
 /// layout page says: one, except none after `(`, and none before `(` or `)`.
 #[rustfmt::skip]
-const SPACES: [[usize; 7]; 6] = [
-    // function, returns, main, Void, (, ), {
-    [1, 1, 1, 1, 0, 0, 1], // function
-    [1, 1, 1, 1, 0, 0, 1], // returns
-    [1, 1, 1, 1, 0, 0, 1], // main
-    [1, 1, 1, 1, 0, 0, 1], // Void
-    [0, 0, 0, 0, 0, 0, 0], // (
-    [1, 1, 1, 1, 0, 0, 1], // )
+const SPACES: [[usize; 9]; 8] = [
+    // function, return, returns, main, Void, 3, (, ), {
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // function
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // return
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // returns
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // main
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // Void
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // 3
+    [0, 0, 0, 0, 0, 0, 0, 0, 0], // (
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // )
 ];
 
 /// These are what a random line of code is made of, before the `{` it ends with.
@@ -165,9 +170,10 @@ const fn column_at(levels: u32) -> u32 {
     levels * LEVEL_SPACES + 1
 }
 
-/// Says whether a token of `kind` is a word, which runs into a word right after it.
-const fn is_word(kind: TokenKind) -> bool {
-    matches!(kind, Function | Returns | Name | TypeName)
+/// Says whether a token of `kind` is a word or an integer. Two of them with nothing between are
+/// one word, or one integer, or an integer that a letter runs into, which the lexer refuses.
+const fn runs_together(kind: TokenKind) -> bool {
+    matches!(kind, Function | Return | Returns | Name | TypeName | Integer)
 }
 
 /// Returns the lines of blocks opened `depth` deep, each line laid out the one way, then `line`,
@@ -236,7 +242,9 @@ fn split(content: &str, from: usize) -> Vec<(usize, &str)> {
 fn kind_of(text: &str) -> TokenKind {
     match text {
         "function" => Function,
+        "return" => Return,
         "returns" => Returns,
+        _ if text.starts_with(|character: char| character.is_ascii_digit()) => Integer,
         "(" => ParenthesisOpen,
         ")" => ParenthesisClose,
         "{" => BraceOpen,
@@ -255,10 +263,8 @@ fn oracle(source: &str) -> Expectation {
     oracle_within_lines(&lines)
 }
 
-/// The first step, from each line's text: a `{` is at the end of its line and not at its start, a
-/// `}` is all of its line, and a line of code ends in `{` or `}`. A brace out of place is found
-/// before a line that ends some other way, since it's before the line's end. Of two problems at
-/// the same `{`, the first listed wins.
+/// The first step, from each line's text: a `{` is at the end of its line and not at its start,
+/// and a `}` is all of its line. Of two problems at the same `{`, the first listed wins.
 fn oracle_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
     for line in lines {
         let LineKind::Code(_) = line.kind else {
@@ -275,9 +281,6 @@ fn oracle_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
         let first = out_of_place.into_iter().flatten().min_by_key(|&(_, index)| index);
         if let Some((kind, index)) = first {
             return Err((kind, line.number, column(line.indentation + index)));
-        }
-        if !code.ends_with(['{', '}']) {
-            return Err((LineEndsWithoutBrace, line.number, column(line.content.len())));
         }
     }
     Ok(())
@@ -504,22 +507,21 @@ fn lines() {
     examples.add("a {\nb }\n", Err((BraceCloseNotAlone, 2, 3)));
     examples.add("a {\n} b\n", Err((BraceCloseNotAlone, 2, 1)));
     examples.add("a {\n    b {\n    }}\n", Err((BraceCloseNotAlone, 3, 5)));
-    // A line of code ends with `{` or `}`, so no other token can end one. So a function's first
-    // line is never split, wherever it would break, and can't leave its `{` to the next line.
+    // A line of code can end with any token. Which lines may end without opening a block is the
+    // grammar's to say, so here a function's first line can break anywhere but before its `{`,
+    // since a `{` can't start a line.
     for (_, text) in FIRSTS {
-        let after = u32::try_from(text.len()).expect("a short word") + 1;
-        examples.add(&format!("{text}\n"), Err((LineEndsWithoutBrace, 1, after)));
+        examples.add(&format!("{text}\n"), Ok(()));
     }
-    examples.add("function main() returns Void\n{\n}\n", Err((LineEndsWithoutBrace, 1, 29)));
-    examples.add("function main() returns\nVoid {\n}\n", Err((LineEndsWithoutBrace, 1, 24)));
-    examples.add("function main()\nreturns Void {\n}\n", Err((LineEndsWithoutBrace, 1, 16)));
-    examples.add("function main(\n) returns Void {\n}\n", Err((LineEndsWithoutBrace, 1, 15)));
-    examples.add("function main\n() returns Void {\n}\n", Err((LineEndsWithoutBrace, 1, 14)));
-    examples.add("function\nmain() returns Void {\n}\n", Err((LineEndsWithoutBrace, 1, 9)));
-    examples
-        .add("function main() returns Void {\n    main()\n}\n", Err((LineEndsWithoutBrace, 2, 11)));
-    examples.add("main\n", Err((LineEndsWithoutBrace, 1, 5)));
-    examples.add("(\n", Err((LineEndsWithoutBrace, 1, 2)));
+    examples.add("function main() returns Void\n{\n}\n", Err((BraceOpenStartsLine, 2, 1)));
+    examples.add("function main() returns\nVoid {\n}\n", Ok(()));
+    examples.add("function main()\nreturns Void {\n}\n", Ok(()));
+    examples.add("function main(\n) returns Void {\n}\n", Ok(()));
+    examples.add("function main\n() returns Void {\n}\n", Ok(()));
+    examples.add("function\nmain() returns Void {\n}\n", Ok(()));
+    examples.add("function main() returns Void {\n    main()\n}\n", Ok(()));
+    examples.add("main\n", Ok(()));
+    examples.add("(\n", Ok(()));
     // A comment is a whole line, so it ends a line of its own, and a blank line has no code.
     examples.add("function main() returns Void {\n    // a comment ends here\n\n}\n", Ok(()));
     // A `{` can't start a line: some token comes before it on its line.
@@ -714,14 +716,16 @@ fn every_gap() {
         for (column, &(second, second_text)) in SECONDS.iter().enumerate() {
             let wanted = SPACES[row][column];
             for gap in 0..=2 {
-                // Two words with nothing between them are one word.
-                if gap == 0 && is_word(first) && is_word(second) {
+                // Two words or integers with nothing between them aren't two tokens.
+                if gap == 0 && runs_together(first) && runs_together(second) {
                     continue;
                 }
                 let rest = match second {
                     BraceOpen => "",
                     ParenthesisOpen => ") {",
-                    Function | Returns | Name | TypeName | ParenthesisClose => " {",
+                    Function | Return | Returns | Name | TypeName | Integer | ParenthesisClose => {
+                        " {"
+                    }
                     BraceClose | TokenKind::Comment => {
                         unreachable!("no line here has a `}}` or a comment second")
                     }
@@ -755,7 +759,7 @@ fn every_gap() {
             }
         }
     }
-    assert_eq!(cases_count, 6 * 7 * 3 - 4 * 4);
+    assert_eq!(cases_count, 8 * 9 * 3 - 6 * 6);
     check(examples);
 }
 
@@ -766,7 +770,7 @@ fn the_steps_run_in_order() {
     let mut examples = Examples::new();
     // The lines come first, so a problem with them wins over a problem with the braces, or
     // within a line, that comes earlier in the file.
-    examples.add("}\na  {\nb\n", Err((LineEndsWithoutBrace, 3, 2)));
+    examples.add("}\na  {\nb }\n", Err((BraceCloseNotAlone, 3, 3)));
     examples.add("a  {\n}\n}\nb { c\n", Err((BraceOpenNotLast, 4, 3)));
     examples.add("}\n{\n", Err((BraceOpenStartsLine, 2, 1)));
     examples.add("a  {\n}\n{\n}\n", Err((BraceOpenStartsLine, 3, 1)));
@@ -784,7 +788,7 @@ fn the_first_problem_wins() {
     // Each source has two problems for one step, and the earlier in the file is the one reported.
     let mut examples = Examples::new();
     // Within each step, the earliest problem in the file wins.
-    examples.add("a b\n{ }\n", Err((LineEndsWithoutBrace, 1, 4)));
+    examples.add("a { b\n{ }\n", Err((BraceOpenNotLast, 1, 3)));
     examples.add("a {\n} b\nc\n", Err((BraceCloseNotAlone, 2, 1)));
     // On one line, the first token at fault. A `{` that starts its line and doesn't end it is
     // refused for not ending it.
@@ -872,11 +876,10 @@ fn the_widest_lines() {
         let source = format!("{}//\n", indent(levels));
         examples.add(&source, Err((IndentationNotDepth(0), 1, 1)));
     }
-    // A line of code can fill the largest source, and its problems are as far right as a column
-    // goes: just past the line's end.
+    // A line of code can fill the largest source, with or without a block, and its problems are
+    // as far right as a column on it goes.
     examples.add(&format!("a{} {{\n}}\n", ")".repeat(size - 6)), Ok(()));
-    let longest = format!("a{}\n", ")".repeat(size - 2));
-    examples.add(&longest, Err((LineEndsWithoutBrace, 1, SOURCE_BYTES_MAX)));
+    examples.add(&format!("a{}\n", ")".repeat(size - 2)), Ok(()));
     let spaced = format!("a{}  {{\n}}\n", ")".repeat(size - 7));
     examples.add(
         &spaced,
@@ -907,7 +910,6 @@ fn fuzz_against_the_oracle() {
         BraceOpenNotLast,
         BraceOpenStartsLine,
         BraceCloseNotAlone,
-        LineEndsWithoutBrace,
         BraceClosesNothing,
         BraceNeverClosed,
         IndentationNotDepth(0),
