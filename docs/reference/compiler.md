@@ -41,7 +41,7 @@ The compiler refuses a path it can't build from: an absolute path, or one with
 `..` as a part. It also refuses a file whose name doesn't end in `.stella`.
 Every name in the path, each directory's and the file's before `.stella`, is
 lowercase letters and digits joined by single hyphens, like `hello-world` or
-`rung-0`. One leading `./` is fine, so `./programs/hello.stella` means the same
+`step-0`. One leading `./` is fine, so `./programs/hello.stella` means the same
 as `programs/hello.stella`. Anywhere else, `.` or an empty part, as in
 `programs//hello.stella`, is refused. Tested by
 [`every_code_point_in_a_files_name`](../../linter/path/tests/path.rs),
@@ -326,10 +326,11 @@ one less to worry about:
 6. ASCII: outside comments, every character is ASCII.
 7. The [tokens](tokens.md): in code, every character is in a token or is a
    space, and every name has its one [shape](names.md).
-8. The [layout](layout.md): where lines end and braces sit, whether the braces
-   pair up, and then each line's indentation and spaces.
+8. The [layout](layout.md): where braces sit, whether the braces pair up, and
+   then each line's indentation and spaces.
 9. The grammar: each line's tokens come in the order the block it's in
-   allows, as [functions](functions.md) and [programs](programs.md) say.
+   allows, and the line ends where its rule does, as
+   [functions](functions.md) and [programs](programs.md) say.
 10. The [types](types.md): every type a function returns exists.
 11. The [program](programs.md): there's exactly one function, and it's named
     `main`.

@@ -10,9 +10,9 @@
 //! the grammar should make of it: the form of each node, or the problem and where it is. An oracle
 //! works the same out from each line's text alone, by comparing a line of code outside every block
 //! with a function's first line, token by token, and every row checks the oracle before `parse`
-//! sees any. The tokens that can come before a line's `{` are few, so every line of them up to a
-//! length that settles every case is tried, and a seeded fuzz test checks random programs against
-//! the oracle. The largest sources sit at each limit a source of 16,384 bytes has.
+//! sees any. The tokens a line can hold are few, so every line of them, with a `{` and without,
+//! up to a length that settles every case is tried, and a seeded fuzz test checks random programs
+//! against the oracle. The largest sources sit at each limit a source of 16,384 bytes has.
 
 #![forbid(unsafe_code)]
 
@@ -186,7 +186,8 @@ fn tokens_in(code: &str, indentation: usize) -> Vec<(TokenKind, u32)> {
 /// Returns what the grammar should make of `source`, which is laid out the one way, worked out
 /// from each line's text. A blank line and a `}` aren't nodes, and a comment is a node in any
 /// block. A line of code outside every block must be a function's first line, token for token,
-/// and is at fault at the first token that isn't. Every line of code outside every block that
+/// and is at fault at the first token that isn't, or just past its end when it stops short of
+/// the rule. Every line of code outside every block that
 /// passes opens a function's body, so until the first problem, a line of code that's indented is
 /// in one, and it's at fault at its first token.
 fn oracle(source: &str) -> Outcome {
@@ -216,6 +217,12 @@ fn oracle(source: &str) -> Outcome {
                 return at(Expected(PARTS[index - 1]), token);
             }
         }
+        // A line has no spaces at its end, so the column just past its last character is just
+        // past its last token.
+        if tokens.len() < RULE.len() {
+            let end = (TokenKind::BraceOpen, u32_from_usize(content.len()) + 1);
+            return at(Expected(PARTS[tokens.len() - 1]), end);
+        }
         assert_eq!(tokens.len(), RULE.len(), "a line that matches the rule ends where it does");
         forms.push(Function);
     }
@@ -226,6 +233,20 @@ fn oracle(source: &str) -> Outcome {
 fn line_of(sequence: &[usize]) -> String {
     let mut texts: Vec<&str> = sequence.iter().map(|&spelling| SPELLINGS[spelling]).collect();
     texts.push("{");
+    joined(&texts)
+}
+
+/// Says whether `position` is just past the end of its line in `source`, where a part that's
+/// missing is reported.
+fn is_past_the_end(source: &str, position: Position) -> bool {
+    let line = source.split_terminator('\n').nth(usize_from_u32(position.line()) - 1);
+    let line = line.expect("a problem is on one of the source's lines");
+    usize_from_u32(position.column()) == line.len() + 1
+}
+
+/// Returns the line of `sequence`'s tokens alone, with no `{`, written the one way.
+fn open_line_of(sequence: &[usize]) -> String {
+    let texts: Vec<&str> = sequence.iter().map(|&spelling| SPELLINGS[spelling]).collect();
     joined(&texts)
 }
 
@@ -280,11 +301,20 @@ fn random_first_line(rng: &mut Rng) -> Vec<&'static str> {
 /// line, or a line of code that opens a block of its own.
 fn random_function(rng: &mut Rng, lines: &mut Vec<String>) {
     let mut texts = random_first_line(rng);
+    // Now and then the line ends before its `{`, and so opens no body.
+    if rng.below(8) == 0 {
+        lines.push(joined(&texts));
+        return;
+    }
     texts.push("{");
     lines.push(joined(&texts));
     for _ in 0..rng.below(4) {
         match rng.below(8) {
             0 => lines.push(String::new()),
+            1 if rng.below(3) == 0 => {
+                let texts = random_pieces(rng);
+                lines.push(format!("{}{}", indent(1), joined(&texts)));
+            }
             1 => {
                 let mut texts = random_pieces(rng);
                 long_tail(rng, &mut texts);
@@ -310,6 +340,7 @@ fn random_program(rng: &mut Rng) -> Vec<String> {
         match rng.below(10) {
             0 => lines.push(String::new()),
             1 | 2 => lines.push(format!("//{}", rng.pick(COMMENT_TEXTS))),
+            3 if rng.below(3) == 0 => lines.push(joined(&random_pieces(rng))),
             3 => {
                 let mut texts = random_pieces(rng);
                 texts.push("{");
@@ -467,6 +498,35 @@ fn function_lines() {
 }
 
 #[test]
+fn lines_that_end_early() {
+    // How a line ends is the grammar's to check, so a line of code outside every block can stop
+    // anywhere before its rule does, and is refused where it stops.
+    let mut examples = Examples::new();
+    // A line that ends before its `{` is refused for the first part it lacks, just past its last
+    // token, however early it stops.
+    refuses(&mut examples, "function\n", (Expected(Name), 1, 9));
+    refuses(&mut examples, "function main\n", (Expected(ParenthesisOpen), 1, 14));
+    refuses(&mut examples, "function main(\n", (Expected(ParenthesisClose), 1, 15));
+    refuses(&mut examples, "function main()\n", (Expected(Returns), 1, 16));
+    refuses(&mut examples, "function main() returns\n", (Expected(ReturnType), 1, 24));
+    refuses(&mut examples, "function main() returns Void\n", (Expected(BraceOpen), 1, 29));
+    // So a first line split anywhere is refused where it ends, and what's on the next line is
+    // never reached.
+    refuses(&mut examples, "function\nmain() returns Void {\n}\n", (Expected(Name), 1, 9));
+    let split = "function main()\nreturns Void {\n}\n";
+    refuses(&mut examples, split, (Expected(Returns), 1, 16));
+    let split = "function main() returns\nVoid {\n}\n";
+    refuses(&mut examples, split, (Expected(ReturnType), 1, 24));
+    // A line that isn't a function's is refused for that, however it ends.
+    refuses(&mut examples, "main\n", (NotAFunction, 1, 1));
+    refuses(&mut examples, "(\n", (NotAFunction, 1, 1));
+    refuses(&mut examples, "main()\n", (NotAFunction, 1, 1));
+    // A token out of place is found before the line's end.
+    refuses(&mut examples, "function main) returns Void\n", (Expected(ParenthesisOpen), 1, 14));
+    check(examples);
+}
+
+#[test]
 fn bodies() {
     // A function's body holds only comments, for now, so any line of code in it is refused at
     // its first token, whatever follows: a function's first line, or anything else.
@@ -477,6 +537,9 @@ fn bodies() {
     refuses(&mut examples, &body("    main {\n    }\n"), (CodeInBody, 2, 5));
     refuses(&mut examples, &body("    function main {\n    }\n"), (CodeInBody, 2, 5));
     refuses(&mut examples, &body("    ({\n    }\n"), (CodeInBody, 2, 5));
+    // A line of code that opens no block, too.
+    refuses(&mut examples, &body("    main()\n"), (CodeInBody, 2, 5));
+    refuses(&mut examples, &body("    function main() returns Void\n"), (CodeInBody, 2, 5));
     // After comments and blank lines in the body.
     let after = body("    // a\n\n    // b\n    Void {\n    }\n");
     refuses(&mut examples, &after, (CodeInBody, 5, 5));
@@ -533,10 +596,20 @@ fn the_largest_sources() {
     // the grammar counts can be counted in anything smaller.
     let mut examples = Examples::new();
     let size = usize_from_u32(SOURCE_BYTES_MAX);
-    // The most nodes: a comment on every line, and every form is a comment.
+    // The most nodes the grammar passes: a comment on every line, and every form is a comment.
     assert!("//\n".repeat(5_461).len() <= size);
     assert!("//\n".repeat(5_462).len() > size);
     accepts(&mut examples, &"//\n".repeat(5_461), &[Comment; 5_461]);
+    // The most nodes there can be, a line of code of one character on every line, reach the
+    // grammar, which refuses the first.
+    let most = "a\n".repeat(size / 2);
+    assert_eq!(most.len(), size, "the most nodes fill the largest source");
+    refuses(&mut examples, &most, (NotAFunction, 1, 1));
+    // A line of code that fills the largest source and ends before its rule does is refused
+    // just past its end, at the furthest column a line has.
+    let ended = format!("function {}\n", "a".repeat(size - 10));
+    assert_eq!(ended.len(), size, "the line fills the largest source");
+    refuses(&mut examples, &ended, (Expected(ParenthesisOpen), 1, SOURCE_BYTES_MAX));
     // The most functions.
     assert!(SHORTEST_FUNCTION.repeat(606).len() <= size);
     assert!(SHORTEST_FUNCTION.repeat(607).len() > size);
@@ -680,6 +753,34 @@ fn every_line() {
     for (source, expected) in sources.iter().zip(expected) {
         assert_eq!(parsed(source), expected, "for {}", excerpt(source));
     }
+    // Every line of 1 to 6 tokens with no `{`, outside every block. Each token where it goes is
+    // one of six kinds, and exactly one is right, so a line is at fault at its token `i` when
+    // the `i` before it are right and that one isn't, in five ways for each tail. A line whose
+    // every token is right stops short of the rule, and is refused for the next part, just past
+    // its end.
+    let open_sources: Vec<String> = (1..=6)
+        .flat_map(|length| sequences(SPELLINGS.len(), length))
+        .map(|sequence| format!("{}\n", open_line_of(&sequence)))
+        .collect();
+    assert_eq!(open_sources.len(), 55_986);
+    let open_counted = [
+        (None, 0_u32),
+        (Some(NotAFunction), 46_655),
+        (Some(Expected(Name)), 7_776),
+        (Some(Expected(ParenthesisOpen)), 1_296),
+        (Some(Expected(ParenthesisClose)), 216),
+        (Some(Expected(Returns)), 36),
+        (Some(Expected(ReturnType)), 6),
+        (Some(Expected(BraceOpen)), 1),
+    ];
+    let mut open_found = open_counted.map(|(kind, _)| (kind, 0_u32));
+    for source in &open_sources {
+        assert!(lays_out(source), "{} should be laid out the one way", excerpt(source));
+        let expected = oracle(source);
+        count(&mut open_found, &expected.as_ref().err().map(|problem| problem.kind));
+        assert_eq!(parsed(source), expected, "for {}", excerpt(source));
+    }
+    assert_eq!(open_found, open_counted, "what the oracle finds, by kind, with no `{{`");
     // Every line of 1 to 4 tokens before its `{`, in a function's body, is refused at its first
     // token. What follows it on the line can't matter.
     let mut body_count: u32 = 0;
@@ -742,6 +843,7 @@ fn fuzz_against_the_oracle() {
     let mut kind_counts = kind_floors.map(|(kind, _)| (kind, 0_u32));
     let (mut with_function_count, mut without_function_count): (u32, u32) = (0, 0);
     let (mut past_line_1_count, mut wide_count): (u32, u32) = (0, 0);
+    let mut past_the_end_count: u32 = 0;
     let mut checks = Vec::new();
     for _ in 0_u32..20_000 {
         let source = source_of(&random_program(&mut rng));
@@ -753,6 +855,7 @@ fn fuzz_against_the_oracle() {
             Err(problem) => {
                 count(&mut kind_counts, &problem.kind);
                 past_line_1_count += u32::from(problem.position.line() > 1);
+                past_the_end_count += u32::from(is_past_the_end(&source, problem.position));
             }
         }
         wide_count += u32::from(source.contains(&"(".repeat(250)));
@@ -766,6 +869,7 @@ fn fuzz_against_the_oracle() {
         ("passed, with no function", without_function_count, 800),
         ("had a problem past line 1", past_line_1_count, 3_900),
         ("had a line wider than a byte counts", wide_count, 400),
+        ("were refused just past a line's end", past_the_end_count, 1_100),
     ] {
         assert!(count > floor, "only {count} {outcome}");
     }

@@ -41,8 +41,6 @@ pub enum Kind {
     BraceOpenStartsLine,
     /// A `}` isn't the only token on its line.
     BraceCloseNotAlone,
-    /// A line of code ends with a token other than `{` or `}`. It's placed just past that token.
-    LineEndsWithoutBrace,
 
     // The braces.
     /// A `}` comes when no `{` is open, so there's nothing for it to close.
@@ -80,7 +78,6 @@ impl fmt::Display for Kind {
             Self::BraceOpenNotLast => "`{` must end its line.",
             Self::BraceOpenStartsLine => "`{` can't start a line.",
             Self::BraceCloseNotAlone => "`}` must be on a line of its own.",
-            Self::LineEndsWithoutBrace => "a line of code must end with `{` or `}`.",
             Self::BraceClosesNothing => "this `}` has no `{` to close.",
             Self::BraceNeverClosed => "this `{` is never closed.",
             Self::IndentationNotDepth(0) => {

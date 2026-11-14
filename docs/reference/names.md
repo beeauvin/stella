@@ -7,7 +7,7 @@ Tested by [`names`](../../lexer/tests/lex.rs) and
 - A function's, a variable's or an instance's name is snake case: lowercase
   letters and digits, with single underscores between them, like `main` or
   `my_function`. It starts with a letter, and a digit can go anywhere after
-  that, as in `rung_0`. A capital is refused, so camel case like `myFunction`
+  that, as in `step_0`. A capital is refused, so camel case like `myFunction`
   is too, and so are two underscores in a row and an underscore at the end.
 - A type's name is Pascal case: words that each start with one capital, then
   lowercase letters and digits, like `Void` or `MessageQueue`. An underscore is

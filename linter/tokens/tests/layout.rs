@@ -26,8 +26,7 @@ use stella_lexer::lex;
 use stella_linter_text::{LEVEL_SPACES, lint};
 use stella_linter_tokens::Kind::{
     BraceCloseNotAlone, BraceClosesNothing, BraceNeverClosed, BraceOpenNotLast,
-    BraceOpenStartsLine, IndentationNotDepth, LineEndsWithoutBrace, SpaceMissing, SpaceUnwanted,
-    SpacesExtra,
+    BraceOpenStartsLine, IndentationNotDepth, SpaceMissing, SpaceUnwanted, SpacesExtra,
 };
 use stella_linter_tokens::{Kind, Neighbors, Problem, lint_tokens};
 use stella_source::{SOURCE_BYTES_MAX, u32_from_usize, usize_from_u32};
@@ -255,10 +254,8 @@ fn oracle(source: &str) -> Expectation {
     oracle_within_lines(&lines)
 }
 
-/// The first step, from each line's text: a `{` is at the end of its line and not at its start, a
-/// `}` is all of its line, and a line of code ends in `{` or `}`. A brace out of place is found
-/// before a line that ends some other way, since it's before the line's end. Of two problems at
-/// the same `{`, the first listed wins.
+/// The first step, from each line's text: a `{` is at the end of its line and not at its start,
+/// and a `}` is all of its line. Of two problems at the same `{`, the first listed wins.
 fn oracle_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
     for line in lines {
         let LineKind::Code(_) = line.kind else {
@@ -275,9 +272,6 @@ fn oracle_lines(lines: &[Line<'_>]) -> Result<(), Refusal> {
         let first = out_of_place.into_iter().flatten().min_by_key(|&(_, index)| index);
         if let Some((kind, index)) = first {
             return Err((kind, line.number, column(line.indentation + index)));
-        }
-        if !code.ends_with(['{', '}']) {
-            return Err((LineEndsWithoutBrace, line.number, column(line.content.len())));
         }
     }
     Ok(())
@@ -504,22 +498,21 @@ fn lines() {
     examples.add("a {\nb }\n", Err((BraceCloseNotAlone, 2, 3)));
     examples.add("a {\n} b\n", Err((BraceCloseNotAlone, 2, 1)));
     examples.add("a {\n    b {\n    }}\n", Err((BraceCloseNotAlone, 3, 5)));
-    // A line of code ends with `{` or `}`, so no other token can end one. So a function's first
-    // line is never split, wherever it would break, and can't leave its `{` to the next line.
+    // A line of code can end with any token. Which lines may end without opening a block is the
+    // grammar's to say, so here a function's first line can break anywhere but before its `{`,
+    // since a `{` can't start a line.
     for (_, text) in FIRSTS {
-        let after = u32::try_from(text.len()).expect("a short word") + 1;
-        examples.add(&format!("{text}\n"), Err((LineEndsWithoutBrace, 1, after)));
+        examples.add(&format!("{text}\n"), Ok(()));
     }
-    examples.add("function main() returns Void\n{\n}\n", Err((LineEndsWithoutBrace, 1, 29)));
-    examples.add("function main() returns\nVoid {\n}\n", Err((LineEndsWithoutBrace, 1, 24)));
-    examples.add("function main()\nreturns Void {\n}\n", Err((LineEndsWithoutBrace, 1, 16)));
-    examples.add("function main(\n) returns Void {\n}\n", Err((LineEndsWithoutBrace, 1, 15)));
-    examples.add("function main\n() returns Void {\n}\n", Err((LineEndsWithoutBrace, 1, 14)));
-    examples.add("function\nmain() returns Void {\n}\n", Err((LineEndsWithoutBrace, 1, 9)));
-    examples
-        .add("function main() returns Void {\n    main()\n}\n", Err((LineEndsWithoutBrace, 2, 11)));
-    examples.add("main\n", Err((LineEndsWithoutBrace, 1, 5)));
-    examples.add("(\n", Err((LineEndsWithoutBrace, 1, 2)));
+    examples.add("function main() returns Void\n{\n}\n", Err((BraceOpenStartsLine, 2, 1)));
+    examples.add("function main() returns\nVoid {\n}\n", Ok(()));
+    examples.add("function main()\nreturns Void {\n}\n", Ok(()));
+    examples.add("function main(\n) returns Void {\n}\n", Ok(()));
+    examples.add("function main\n() returns Void {\n}\n", Ok(()));
+    examples.add("function\nmain() returns Void {\n}\n", Ok(()));
+    examples.add("function main() returns Void {\n    main()\n}\n", Ok(()));
+    examples.add("main\n", Ok(()));
+    examples.add("(\n", Ok(()));
     // A comment is a whole line, so it ends a line of its own, and a blank line has no code.
     examples.add("function main() returns Void {\n    // a comment ends here\n\n}\n", Ok(()));
     // A `{` can't start a line: some token comes before it on its line.
@@ -766,7 +759,7 @@ fn the_steps_run_in_order() {
     let mut examples = Examples::new();
     // The lines come first, so a problem with them wins over a problem with the braces, or
     // within a line, that comes earlier in the file.
-    examples.add("}\na  {\nb\n", Err((LineEndsWithoutBrace, 3, 2)));
+    examples.add("}\na  {\nb }\n", Err((BraceCloseNotAlone, 3, 3)));
     examples.add("a  {\n}\n}\nb { c\n", Err((BraceOpenNotLast, 4, 3)));
     examples.add("}\n{\n", Err((BraceOpenStartsLine, 2, 1)));
     examples.add("a  {\n}\n{\n}\n", Err((BraceOpenStartsLine, 3, 1)));
@@ -784,7 +777,7 @@ fn the_first_problem_wins() {
     // Each source has two problems for one step, and the earlier in the file is the one reported.
     let mut examples = Examples::new();
     // Within each step, the earliest problem in the file wins.
-    examples.add("a b\n{ }\n", Err((LineEndsWithoutBrace, 1, 4)));
+    examples.add("a { b\n{ }\n", Err((BraceOpenNotLast, 1, 3)));
     examples.add("a {\n} b\nc\n", Err((BraceCloseNotAlone, 2, 1)));
     // On one line, the first token at fault. A `{` that starts its line and doesn't end it is
     // refused for not ending it.
@@ -872,11 +865,10 @@ fn the_widest_lines() {
         let source = format!("{}//\n", indent(levels));
         examples.add(&source, Err((IndentationNotDepth(0), 1, 1)));
     }
-    // A line of code can fill the largest source, and its problems are as far right as a column
-    // goes: just past the line's end.
+    // A line of code can fill the largest source, with or without a block, and its problems are
+    // as far right as a column on it goes.
     examples.add(&format!("a{} {{\n}}\n", ")".repeat(size - 6)), Ok(()));
-    let longest = format!("a{}\n", ")".repeat(size - 2));
-    examples.add(&longest, Err((LineEndsWithoutBrace, 1, SOURCE_BYTES_MAX)));
+    examples.add(&format!("a{}\n", ")".repeat(size - 2)), Ok(()));
     let spaced = format!("a{}  {{\n}}\n", ")".repeat(size - 7));
     examples.add(
         &spaced,
@@ -907,7 +899,6 @@ fn fuzz_against_the_oracle() {
         BraceOpenNotLast,
         BraceOpenStartsLine,
         BraceCloseNotAlone,
-        LineEndsWithoutBrace,
         BraceClosesNothing,
         BraceNeverClosed,
         IndentationNotDepth(0),

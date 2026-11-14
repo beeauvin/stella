@@ -14,8 +14,7 @@ use stella_lexer::TokenKind::{
 };
 use stella_linter_tokens::Kind::{
     BraceCloseNotAlone, BraceClosesNothing, BraceNeverClosed, BraceOpenNotLast,
-    BraceOpenStartsLine, IndentationNotDepth, LineEndsWithoutBrace, SpaceMissing, SpaceUnwanted,
-    SpacesExtra,
+    BraceOpenStartsLine, IndentationNotDepth, SpaceMissing, SpaceUnwanted, SpacesExtra,
 };
 use stella_linter_tokens::Neighbors;
 
@@ -33,7 +32,6 @@ fn sentences() {
         (BraceOpenNotLast, "`{` must end its line."),
         (BraceOpenStartsLine, "`{` can't start a line."),
         (BraceCloseNotAlone, "`}` must be on a line of its own."),
-        (LineEndsWithoutBrace, "a line of code must end with `{` or `}`."),
         (BraceClosesNothing, "this `}` has no `{` to close."),
         (BraceNeverClosed, "this `{` is never closed."),
         (IndentationNotDepth(0), "this line can't be indented, since no `{` is still open on it."),

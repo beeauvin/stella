@@ -461,7 +461,7 @@ fn words() {
 fn names() {
     // A name that starts with a lowercase letter is snake case: lowercase letters and digits,
     // with single underscores between them. A digit can go anywhere but first.
-    for name in ["x", "main", "main2", "my_function", "a1", "x9y8", "a_1_b", "x_2", "rung_0"] {
+    for name in ["x", "main", "main2", "my_function", "a1", "x9y8", "a_1_b", "x_2", "step_0"] {
         lexes(&format!("{name}\n"), &[(Name, 1, 1, name)]);
     }
     // A name that starts with a capital is a type's, and Pascal case: words that each start with

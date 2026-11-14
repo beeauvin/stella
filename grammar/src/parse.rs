@@ -16,8 +16,9 @@
 //!
 //! Nodes are checked in the order they're in the source, so a node's parent, which comes before
 //! it, has always passed, and the block it opens is known. The first node that fails is the one
-//! reported, at the first token at fault. Every node of code ends with `{`, so a part that's
-//! missing is always found as some other token in its place, never past the end of the line.
+//! reported, at the first token at fault. How a line ends is the grammar's to check, not the
+//! layout's, so a line can run out before its rule does. Then the part that's missing is reported
+//! just past the line's last token, since there's no token in its place.
 //!
 //! There's one form for each node, in the same order.
 
@@ -27,7 +28,7 @@ use stella_lexer::TokenKind::{
     self, BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen,
     Returns, TypeName,
 };
-use stella_source::usize_from_u32;
+use stella_source::{Position, u32_from_usize, usize_from_u32};
 
 use crate::problem::{Kind, Part, Problem};
 
@@ -94,8 +95,8 @@ const _: () = assert!(
 
 const _: () = assert!(
     ends_with_its_only_brace(&FUNCTION_LINE),
-    "a function's first line ends with `{{`, as every node of code does, and holds no other, so \
-     a line can't run out of tokens before the rule runs out of pieces"
+    "a function's first line ends with `{{` and holds no other, and a `{{` ends its line, so a \
+     line that matches the rule's last piece has no token after it"
 );
 
 /// A form says what a node is, as the grammar proved it. Each node has exactly one.
@@ -182,12 +183,11 @@ pub fn parse(blocks: Blocks<'_>) -> Result<Forms<'_>, Problem> {
 /// Checks `node`, whose tokens are `tokens`, against what the block it's in allows, and returns
 /// its form, or its problem. `forms` holds the form of every node before it.
 fn parse_node(node: &Node, tokens: &[Token], forms: &[Form]) -> Result<Form, Problem> {
-    let (first, last) = (&tokens[0], &tokens[tokens.len() - 1]);
+    let first = &tokens[0];
     if first.kind() == Comment {
         assert_eq!(tokens.len(), 1, "a comment is alone on its line");
         return Ok(Form::Comment);
     }
-    assert_eq!(last.kind(), BraceOpen, "a node of code ends with `{{`");
     // A node of code is checked against what the block it's in allows, which its parent's form
     // says. The parent comes before it, so it has passed, and has its form.
     let Some(parent_index) = node.parent_index() else {
@@ -202,13 +202,12 @@ fn parse_node(node: &Node, tokens: &[Token], forms: &[Form]) -> Result<Form, Pro
 }
 
 /// Checks `tokens`, a node of code outside every block, against a function's first line, piece
-/// by piece. Returns its form, or the problem at the first token out of place. A line that
-/// doesn't start with `function` is refused for that, since outside every block nothing else is
-/// allowed.
+/// by piece. Returns its form, or the problem at the first token out of place, or just past the
+/// line's last token when the line ends before the rule does. A line that doesn't start with
+/// `function` is refused for that, since outside every block nothing else is allowed.
 fn parse_function_line(tokens: &[Token]) -> Result<Form, Problem> {
     let (first, rest) = tokens.split_first().expect("a node holds a token");
     let last = tokens.last().expect("a node holds a token");
-    assert_eq!(last.kind(), BraceOpen, "a node of code ends with `{{`");
     if first.kind() != Function {
         return Err(Problem { kind: Kind::NotAFunction, position: first.position() });
     }
@@ -217,10 +216,26 @@ fn parse_function_line(tokens: &[Token]) -> Result<Form, Problem> {
             return Err(Problem { kind: Kind::Expected(piece.part), position: token.position() });
         }
     }
-    // Every piece matched, and both the rule and the line end with their only `{`, so the line
-    // has exactly the rule's tokens.
+    // Every token matched its piece. A line with fewer tokens than the rule has pieces ended
+    // early, and the first piece it lacks is the part that's missing.
+    if let Some(missing) = FUNCTION_LINE.get(rest.len()) {
+        return Err(Problem { kind: Kind::Expected(missing.part), position: just_past(last) });
+    }
+    // The rule's last piece is its only `{`, which ends its line, so the line has exactly the
+    // rule's tokens.
     assert_eq!(rest.len(), FUNCTION_LINE.len(), "a function's first line is its rule's tokens");
+    assert_eq!(last.kind(), BraceOpen, "a function's first line ends with `{{`");
     Ok(Form::Function)
+}
+
+/// Returns the position just past `token`, the last on its line, where a part that's missing
+/// would have gone. A comment is alone on its line, so `token` is code, which is ASCII: it's as
+/// many columns wide as it is bytes long.
+fn just_past(token: &Token) -> Position {
+    assert_ne!(token.kind(), Comment, "a comment is alone on its line, so it ends no line of code");
+    let position = token.position();
+    let width = u32_from_usize(token.span().len());
+    Position::on_line(position.line()).at_column(position.column() + width)
 }
 
 /// Asserts that `forms`, made for `blocks`' nodes, hold together, as the AST will trust: a node

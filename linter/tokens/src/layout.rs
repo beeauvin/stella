@@ -6,11 +6,10 @@
 //! next less to worry about. The first step that fails is the one reported, and within a step,
 //! the earliest problem in the file:
 //!
-//! 1. The lines: `{` ends its line and doesn't start it, `}` is the only token on its line, and a
-//!    line of code ends with `{` or `}`. Each is found at the first token at fault, or for a line
-//!    that ends some other way, just past its last token. A `{` that neither ends its line nor
-//!    has a token before it is refused for not ending it. Which tokens can come before a `{` is
-//!    for the grammar to say.
+//! 1. The lines: `{` ends its line and doesn't start it, and `}` is the only token on its line.
+//!    Each is found at the first token at fault. A `{` that neither ends its line nor has a token
+//!    before it is refused for not ending it. Which tokens can come before a `{`, and how a line
+//!    that doesn't open a block ends, are for the grammar to say.
 //! 2. The braces: every `}` closes a `{` before it, and every `{` is closed. A `}` with nothing
 //!    open always comes before any `{` left open, so the first such `}` is the earliest problem.
 //!    Otherwise it's the outermost `{` left open.
@@ -99,9 +98,8 @@ pub fn lint_tokens(lexed: Tokens<'_>) -> Result<Layout<'_>, Problem> {
     Ok(Layout { tokens: lexed })
 }
 
-/// The first step: `{` ends its line and doesn't start it, `}` is the only token on its line, and
-/// a line of code ends with `{` or `}`. The tokens are looked at in order, so the first problem
-/// found is the earliest.
+/// The first step: `{` ends its line and doesn't start it, and `}` is the only token on its line.
+/// The tokens are looked at in order, so the first problem found is the earliest.
 fn lint_tokens_lines(tokens: &[Token]) -> Result<(), Problem> {
     for (index, token) in tokens.iter().enumerate() {
         assert!(!token.span().is_empty(), "a token is at least one character");
@@ -120,29 +118,19 @@ fn lint_tokens_lines(tokens: &[Token]) -> Result<(), Problem> {
                 Some(Kind::BraceCloseNotAlone)
             }
             // A `{` that ends its line and doesn't start it, a `}` alone on its line, and any
-            // other code with a token after it are all as they should be.
+            // other code, wherever it is on its line, are all as they should be. How a line that
+            // doesn't open a block ends is the grammar's to say.
             (BraceOpen, true, false)
             | (BraceClose, false, false)
             | (
                 Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose,
                 true | false,
-                true,
+                true | false,
             ) => None,
             (Comment, after_one, before_one) => {
                 assert!(!after_one, "the lexer makes a comment of a whole line");
                 assert!(!before_one, "the lexer makes a comment of a whole line");
                 None
-            }
-            (
-                Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose,
-                true | false,
-                false,
-            ) => {
-                // The line ends with a token that isn't a brace, and the problem is just past
-                // it.
-                let column = column_after(token);
-                let position = Position::on_line(token.position().line()).at_column(column);
-                return Err(problem(Kind::LineEndsWithoutBrace, position));
             }
         };
         if let Some(kind) = kind {
@@ -314,12 +302,11 @@ const fn spaces_wanted(neighbors: Neighbors) -> u32 {
     }
 }
 
-/// Returns the problem `kind` at `position`, which is a character on a line of the source, or
-/// just past the last token of one.
+/// Returns the problem `kind` at `position`, which is a character on a line of the source.
 fn problem(kind: Kind, position: Position) -> Problem {
     assert!(
-        position.column() <= SOURCE_BYTES_MAX,
-        "every line ends with a `\\n`, so just past a line's last token is still in the source"
+        position.column() < SOURCE_BYTES_MAX,
+        "every line ends with a `\\n`, so a character on one is never a source's last byte"
     );
     Problem { kind, position }
 }

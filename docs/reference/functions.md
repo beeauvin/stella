@@ -8,6 +8,25 @@ refused at its `{`, since `returns` and the type must come first. Tested by
 [`function_lines`](../../grammar/tests/parse.rs) and
 [`every_line`](../../grammar/tests/parse.rs).
 
+A first line that ends before its `{` is refused just past its last token, for
+the first part it lacks. So a first line can't be split, and this is refused
+at the end of its first line, since the return type must come after `returns`:
+
+```stella
+function main() returns
+Void {
+}
+```
+
+```
+hello.stella:1:24: the function's return type must come after `returns`.
+    function main() returns
+                           ^
+```
+
+Tested by [`lines_that_end_early`](../../grammar/tests/parse.rs) and
+[`every_line`](../../grammar/tests/parse.rs).
+
 ```stella
 function main() returns Void {
 }

@@ -10,13 +10,14 @@ use stella_source::Position;
 
 /// A problem is the one thing the grammar refused, and where it is.
 ///
-/// The grammar only reads tokens, so a problem is always at a token, never with the file as a
-/// whole.
+/// The grammar only reads tokens, so a problem is always on a line, never with the file as a
+/// whole: at a token, or just past a line's last token when the line ends before its rule does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Problem {
     /// The kind says what's wrong.
     pub kind: Kind,
-    /// The position is the first character of the first token at fault.
+    /// The position is the first character of the first token at fault, or the column just past
+    /// a line's last token, when the line ends before its rule does.
     pub position: Position,
 }
 
@@ -29,7 +30,8 @@ pub enum Kind {
     /// A line of code is in a function's body, which holds only comments, for now. It's at the
     /// line's first token, whatever follows it.
     CodeInBody,
-    /// A function's first line has some other token where this part goes. It's at that token.
+    /// A function's first line has some other token where this part goes, and it's at that
+    /// token. Or the line ends where this part goes, and it's just past the line's last token.
     Expected(Part),
 }
 
