@@ -50,7 +50,7 @@ const EMPTY_BODY_MESSAGE: &str = ":1:30: `{` must end its line.\n    \
      function main() returns Void {}\n                                 ^\n";
 
 /// This is the sentence for a type that doesn't exist.
-const NO_SUCH_TYPE: &str = "this type doesn't exist; for now, the only type is `Void`.";
+const NO_SUCH_TYPE: &str = "this type doesn't exist; for now, the types are `Void` and `U8`.";
 
 /// This is the sentence for a source with no `main`.
 const NO_MAIN: &str = "a program needs a function named `main`.";
@@ -644,13 +644,42 @@ fn code_that_breaks_the_grammar() {
     let expected = Run::exits(
         2,
         &format!(
-            "b.stella:2:5: a function's body can hold only comments, for now.\n        \
+            "b.stella:2:5: in a function's body, a line of code must start with `return`, for \
+             now.\n        \
              main {{\n        ^\n\n\
              c.stella{EMPTY_BODY_MESSAGE}\n\
              e.stella: this file can't be read: Permission denied (os error 13).\n"
         ),
     );
     assert_eq!(stella(&directory, &["lint"]), expected);
+}
+
+#[test]
+fn code_that_doesnt_fit_its_type() {
+    // Once its types exist, what each function gives back is checked against its type, before
+    // the program is. Each fault is refused where it is: an integer too large for `U8`, a `U8`
+    // function with no `return`, and a `return` in a `Void` function.
+    let too_large: &[u8] = b"function main() returns U8 {\n    return 256\n}\n";
+    let message = "hello.stella:2:12: this integer doesn't fit in `U8`, which holds 0 to 255.\n    \
+                   \x20   return 256\n               ^\n";
+    assert_eq!(lints_hello("too-large", too_large), Run::exits(1, message));
+    let missing: &[u8] = b"function main() returns U8 {\n}\n";
+    let message = "hello.stella:2:1: a function that returns `U8` must end with `return` and a \
+                   value.\n    }\n    ^\n";
+    assert_eq!(lints_hello("missing-return", missing), Run::exits(1, message));
+    let void: &[u8] = b"function main() returns Void {\n    return 3\n}\n";
+    let message = "hello.stella:2:5: a function that returns `Void` ends without `return`.\n    \
+                   \x20   return 3\n        ^\n";
+    assert_eq!(lints_hello("void-returns", void), Run::exits(1, message));
+    // The fit comes before the program, so a function that doesn't fit is refused before a
+    // function after it is.
+    let both: &[u8] = b"function main() returns U8 {\n}\nfunction other() returns Void {\n}\n";
+    let message = "hello.stella:2:1: a function that returns `U8` must end with `return` and a \
+                   value.\n    }\n    ^\n";
+    assert_eq!(lints_hello("fit-first", both), Run::exits(1, message));
+    // And a program that fits passes in silence.
+    let fits: &[u8] = b"function main() returns U8 {\n    return 255\n}\n";
+    assert_eq!(lints_hello("fits", fits), Run::exits(0, ""));
 }
 
 #[test]

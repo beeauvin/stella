@@ -17,7 +17,8 @@
 #![forbid(unsafe_code)]
 
 pub use parse::{
-    FUNCTION_NAME_TOKEN_INDEX, FUNCTION_RETURN_TYPE_TOKEN_INDEX_FROM_END, Form, Forms, parse,
+    FUNCTION_NAME_TOKEN_INDEX, FUNCTION_RETURN_TYPE_TOKEN_INDEX_FROM_END, Form, Forms,
+    RETURN_VALUE_TOKEN_INDEX, parse,
 };
 pub use problem::{Kind, Part, Problem};
 

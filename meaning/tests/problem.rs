@@ -7,8 +7,10 @@
 
 #![forbid(unsafe_code)]
 
-use stella_meaning::Kind::{AnotherFunction, NoSuchType, NotMain};
-use stella_meaning::Problem;
+use stella_meaning::Kind::{
+    AnotherFunction, DoesntFit, MissingReturn, NoSuchType, NotMain, ReturnInVoid,
+};
+use stella_meaning::{IntegerType, Problem};
 use stella_source::{Position, SOURCE_BYTES_MAX};
 
 #[test]
@@ -18,9 +20,15 @@ fn sentences() {
     // Every kind of problem at a token, each with its sentence written out whole. A problem
     // prints its kind's sentence, wherever it is.
     for (kind, sentence) in [
-        (NoSuchType, "this type doesn't exist; for now, the only type is `Void`."),
+        (NoSuchType, "this type doesn't exist; for now, the types are `Void` and `U8`."),
         (NotMain, "a program's one function must be named `main`, for now."),
         (AnotherFunction, "a program holds only one function, for now."),
+        (ReturnInVoid, "a function that returns `Void` ends without `return`."),
+        (
+            MissingReturn(IntegerType::U8),
+            "a function that returns `U8` must end with `return` and a value.",
+        ),
+        (DoesntFit(IntegerType::U8), "this integer doesn't fit in `U8`, which holds 0 to 255."),
     ] {
         assert_eq!(kind.to_string(), sentence, "for {kind:?}");
         let problem = Problem::At { kind, position: Position::on_line(3).at_column(32) };
@@ -39,7 +47,15 @@ fn places() {
         Position::on_line(3).at_column(32),
         Position::on_line(SOURCE_BYTES_MAX).at_column(SOURCE_BYTES_MAX + 1),
     ];
-    for kind in [NoSuchType, NotMain, AnotherFunction] {
+    let kinds = [
+        NoSuchType,
+        NotMain,
+        AnotherFunction,
+        ReturnInVoid,
+        MissingReturn(IntegerType::U8),
+        DoesntFit(IntegerType::U8),
+    ];
+    for kind in kinds {
         for position in positions {
             let problem = Problem::At { kind, position };
             assert_eq!(problem.position(), Some(position), "for {problem:?}");

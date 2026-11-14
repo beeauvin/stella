@@ -12,8 +12,9 @@ by case, so `Function` is a type's [name](names.md), not the keyword. Tested by
 [`keywords`](../../lexer/tests/lex.rs).
 
 - `function` begins a [function](functions.md).
-- `return` gives back a function's value. For now it's only reserved: a line
-  that holds it isn't built yet, so it's refused wherever it is. Tested by
+- `return` starts the line in a function's body that gives back its value, as
+  [functions](functions.md) says. Anywhere else, it's refused. Tested by
+  [`return_lines`](../../grammar/tests/parse.rs) and
   [`return_and_integers`](../../grammar/tests/parse.rs).
 - `returns` comes before a function's return type.
 

@@ -8,7 +8,7 @@ use std::fmt;
 
 use stella_source::Position;
 
-use crate::resolve::Type;
+use crate::resolve::{IntegerType, Type};
 
 /// A problem is the one thing the meaning checks refused about a source.
 ///
@@ -54,11 +54,10 @@ impl fmt::Display for Problem {
     }
 }
 
-/// This is the only type there is, which `NoSuchType`'s sentence names. A type that's added
-/// stops the build at this `match`, where the sentence needs new words.
-const ONLY_TYPE: Type = match Type::Void {
-    Type::Void => Type::Void,
-};
+const _: () = assert!(
+    Type::ALL.len() == 2,
+    "`NoSuchType`'s sentence names both types there are, so a type that's added needs new words"
+);
 
 /// A kind is one of the problems the meaning checks can find at a token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +71,15 @@ pub enum Kind {
     /// The source holds a function after `main`. It's at that function's `function`. The
     /// program check finds it.
     AnotherFunction,
+    /// A function that returns `Void` has a `return`, though it returns when its body ends.
+    /// It's at the `return`. The fit check finds it.
+    ReturnInVoid,
+    /// A function that returns an integer type has no `return`, so its body ends with nothing
+    /// to give back. It's at the `}` that closes the body. The fit check finds it.
+    MissingReturn(IntegerType),
+    /// A `return`'s integer is greater than its function's integer type holds. It's at the
+    /// integer. The fit check finds it.
+    DoesntFit(IntegerType),
 }
 
 /// A kind displays as the sentence that says what's wrong.
@@ -79,11 +87,29 @@ impl fmt::Display for Kind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let sentence = match *self {
             Self::NoSuchType => {
-                let only = ONLY_TYPE.name();
-                return write!(f, "this type doesn't exist; for now, the only type is `{only}`.");
+                let [first, second] = Type::ALL.map(Type::name);
+                return write!(
+                    f,
+                    "this type doesn't exist; for now, the types are `{first}` and `{second}`."
+                );
             }
             Self::NotMain => "a program's one function must be named `main`, for now.",
             Self::AnotherFunction => "a program holds only one function, for now.",
+            Self::ReturnInVoid => "a function that returns `Void` ends without `return`.",
+            Self::MissingReturn(integer) => {
+                let name = integer.name();
+                return write!(
+                    f,
+                    "a function that returns `{name}` must end with `return` and a value."
+                );
+            }
+            Self::DoesntFit(integer) => {
+                let (name, min, max) = (integer.name(), integer.min(), integer.max());
+                return write!(
+                    f,
+                    "this integer doesn't fit in `{name}`, which holds {min} to {max}."
+                );
+            }
         };
         f.write_str(sentence)
     }

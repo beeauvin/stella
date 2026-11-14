@@ -20,14 +20,14 @@ use std::fmt::Debug;
 use std::ptr;
 
 use stella_blocks::{Blocks, nest};
-use stella_grammar::Form::{Comment, Function};
-use stella_grammar::Kind::{CodeInBody, Expected, NotAFunction};
+use stella_grammar::Form::{Comment, Function, Return};
+use stella_grammar::Kind::{AfterReturn, AfterReturnValue, Expected, NotAFunction, NotAReturn};
 use stella_grammar::Part::{
-    BraceOpen, Name, ParenthesisClose, ParenthesisOpen, ReturnType, Returns,
+    BraceOpen, Name, ParenthesisClose, ParenthesisOpen, ReturnType, ReturnValue, Returns,
 };
 use stella_grammar::{
     FUNCTION_NAME_TOKEN_INDEX, FUNCTION_RETURN_TYPE_TOKEN_INDEX_FROM_END, Form, Forms, Kind, Part,
-    Problem, parse,
+    Problem, RETURN_VALUE_TOKEN_INDEX, parse,
 };
 use stella_lexer::{TokenKind, lex};
 use stella_linter_text::lint;
@@ -191,11 +191,13 @@ fn tokens_in(code: &str, indentation: usize) -> Vec<(TokenKind, u32)> {
 /// from each line's text. A blank line and a `}` aren't nodes, and a comment is a node in any
 /// block. A line of code outside every block must be a function's first line, token for token,
 /// and is at fault at the first token that isn't, or just past its end when it stops short of
-/// the rule. Every line of code outside every block that
-/// passes opens a function's body, so until the first problem, a line of code that's indented is
-/// in one, and it's at fault at its first token.
+/// the rule. Every line of code outside every block that passes opens a function's body, so until
+/// the first problem, a line of code that's indented is in one. There it must be `return` and an
+/// integer, the body's only one, and is at fault where it isn't.
 fn oracle(source: &str) -> Outcome {
     let mut forms = Vec::new();
+    // Whether the body the oracle is in has had its `return`.
+    let mut returned = false;
     for (content, number) in source.split_terminator('\n').zip(1_u32..) {
         let code = content.trim_start_matches(' ');
         if code.is_empty() || code == "}" {
@@ -210,8 +212,24 @@ fn oracle(source: &str) -> Outcome {
         let at = |kind: Kind, (_, column): (TokenKind, u32)| Err(problem((kind, number, column)));
         let first = tokens[0];
         if indentation > 0 {
-            return at(CodeInBody, first);
+            let end = (TokenKind::BraceOpen, u32_from_usize(content.len()) + 1);
+            match (returned, tokens.as_slice()) {
+                (true, _) => return at(AfterReturn, first),
+                (false, [(TokenKind::Return, _)]) => return at(Expected(ReturnValue), end),
+                (false, [(TokenKind::Return, _), (TokenKind::Integer, _)]) => {}
+                (false, [(TokenKind::Return, _), (TokenKind::Integer, _), after, ..]) => {
+                    return at(AfterReturnValue, *after);
+                }
+                (false, [(TokenKind::Return, _), value, ..]) => {
+                    return at(Expected(ReturnValue), *value);
+                }
+                (false, _) => return at(NotAReturn, first),
+            }
+            returned = true;
+            forms.push(Return);
+            continue;
         }
+        returned = false;
         if first.0 != TokenKind::Function {
             return at(NotAFunction, first);
         }
@@ -301,8 +319,9 @@ fn random_first_line(rng: &mut Rng) -> Vec<&'static str> {
 }
 
 /// Adds a random function to `lines`: its first line, as `random_first_line` makes it, then up to
-/// three lines in its body, and its `}`. A line in its body is a comment, or now and then a blank
-/// line, or a line of code that opens a block of its own.
+/// three lines in its body, and its `}`. A line in its body is a comment, a `return` line,
+/// sometimes changed, or now and then a blank line, a line of code that opens no block, or one
+/// that opens a block of its own.
 fn random_function(rng: &mut Rng, lines: &mut Vec<String>) {
     let mut texts = random_first_line(rng);
     // Now and then the line ends before its `{`, and so opens no body.
@@ -328,6 +347,19 @@ fn random_function(rng: &mut Rng, lines: &mut Vec<String>) {
                     lines.push(format!("{}// deeper", indent(2)));
                 }
                 lines.push(format!("{}}}", indent(1)));
+            }
+            2 | 3 => {
+                let mut texts = vec!["return", rng.pick(&["3", "0", "255"])];
+                // Now and then the line is changed, or another token is put after it.
+                match rng.below(6) {
+                    0 => texts[1] = rng.pick(PIECES),
+                    1 => {
+                        texts.pop();
+                    }
+                    2 => texts.push(rng.pick(PIECES)),
+                    _ => {}
+                }
+                lines.push(format!("{}{}", indent(1), joined(&texts)));
             }
             _ => lines.push(format!("{}//{}", indent(1), rng.pick(COMMENT_TEXTS))),
         }
@@ -532,9 +564,8 @@ fn lines_that_end_early() {
 
 #[test]
 fn return_and_integers() {
-    // The lexer knows `return` and integers, but no rule takes either yet, so each is refused
-    // where it is: outside every block a line must start with `function`, a keyword is never a
-    // name, an integer is no type's name, and a function's body holds only comments.
+    // Outside a body, `return` and integers have no place: outside every block a line must start
+    // with `function`, a keyword is never a name, and an integer is no type's name.
     let mut examples = Examples::new();
     refuses(&mut examples, "return 3\n", (NotAFunction, 1, 1));
     refuses(&mut examples, "3\n", (NotAFunction, 1, 1));
@@ -546,9 +577,73 @@ fn return_and_integers() {
     );
     refuses_line(&mut examples, "function main() returns 3 {", (Expected(ReturnType), 25));
     refuses_line(&mut examples, "function main() return Void {", (Expected(Returns), 17));
-    let body = "function main() returns Void {\n    return 3\n}\n";
-    refuses(&mut examples, body, (CodeInBody, 2, 5));
     check(examples);
+}
+
+#[test]
+fn return_lines() {
+    // In a function's body, a line of code is `return` and an integer, and nothing after. It's
+    // the body's only one, and its last line of code, so nothing comes after it but comments.
+    let mut examples = Examples::new();
+    let body = |lines: &str| format!("function main() returns U8 {{\n{lines}}}\n");
+    accepts(&mut examples, &body("    return 3\n"), &[Function, Return]);
+    accepts(&mut examples, &body("    return 0\n"), &[Function, Return]);
+    let long = format!("    return {}\n", "9".repeat(30));
+    accepts(&mut examples, &body(&long), &[Function, Return]);
+    // Comments and blank lines can go before and after it.
+    let commented = body("    // a\n\n    return 3\n    // b\n\n");
+    accepts(&mut examples, &commented, &[Function, Comment, Return, Comment]);
+    // A body with no `return` is the grammar's to pass: whether it needs one is for its type.
+    accepts(&mut examples, "function main() returns U8 {\n}\n", &[Function]);
+    // Each body has its own, so a second function can return too.
+    let two = format!("{}{}", body("    return 1\n"), body("    return 2\n"));
+    accepts(&mut examples, &two, &[Function, Return, Function, Return]);
+    // The value is an integer, and a line that stops before it is refused just past its end.
+    refuses(&mut examples, &body("    return\n"), (Expected(ReturnValue), 2, 11));
+    refuses(&mut examples, &body("    return main\n"), (Expected(ReturnValue), 2, 12));
+    refuses(&mut examples, &body("    return Void\n"), (Expected(ReturnValue), 2, 12));
+    refuses(&mut examples, &body("    return return\n"), (Expected(ReturnValue), 2, 12));
+    refuses(&mut examples, &body("    return(3)\n"), (Expected(ReturnValue), 2, 11));
+    // Nothing goes after the value, not even a `{`.
+    refuses(&mut examples, &body("    return 3 4\n"), (AfterReturnValue, 2, 14));
+    refuses(&mut examples, &body("    return 3 main\n"), (AfterReturnValue, 2, 14));
+    refuses(&mut examples, &body("    return 3()\n"), (AfterReturnValue, 2, 13));
+    let opens = body("    return 3 {\n        // c\n    }\n");
+    refuses(&mut examples, &opens, (AfterReturnValue, 2, 14));
+    // Nothing comes after a `return`, wherever it would go, even after comments.
+    refuses(&mut examples, &body("    return 3\n    return 4\n"), (AfterReturn, 3, 5));
+    refuses(&mut examples, &body("    return 3\n    // a\n\n    main()\n"), (AfterReturn, 5, 5));
+    refuses(&mut examples, &body("    return 3\n    return\n"), (AfterReturn, 3, 5));
+    // Any other line of code in a body is refused at its first token, before or after one.
+    refuses(&mut examples, &body("    main()\n    return 3\n"), (NotAReturn, 2, 5));
+    refuses(&mut examples, &body("    3\n"), (NotAReturn, 2, 5));
+    refuses(&mut examples, &body("    returns 3\n"), (NotAReturn, 2, 5));
+    check(examples);
+}
+
+#[test]
+fn every_body_line() {
+    // Every line of one to three tokens in a function's body, from a set that holds `return`, an
+    // integer, and the rest. Each is checked against the oracle, and how many pass is counted:
+    // only `return` and then the integer.
+    const BODY_SPELLINGS: [&str; 8] =
+        ["return", "3", "main", "Void", "(", ")", "function", "returns"];
+    let mut accepted_count: u32 = 0;
+    let mut lines_count: u32 = 0;
+    for sequence in (1..=3).flat_map(|length| sequences(BODY_SPELLINGS.len(), length)) {
+        let texts: Vec<&str> = sequence.iter().map(|&spelling| BODY_SPELLINGS[spelling]).collect();
+        let source = format!("function main() returns U8 {{\n    {}\n}}\n", joined(&texts));
+        if !lays_out(&source) {
+            // Two words or integers with no space between them aren't two tokens.
+            continue;
+        }
+        let expected = oracle(&source);
+        accepted_count += u32::from(expected.is_ok());
+        assert_eq!(parsed(&source), expected, "for {}", excerpt(&source));
+        lines_count += 1;
+    }
+    assert_eq!(lines_count, 584);
+    assert_eq!(accepted_count, 1);
 }
 
 #[test]
@@ -558,24 +653,24 @@ fn bodies() {
     let mut examples = Examples::new();
     let body = |lines: &str| format!("function main() returns Void {{\n{lines}}}\n");
     let inner = body("    function inner() returns Void {\n    }\n");
-    refuses(&mut examples, &inner, (CodeInBody, 2, 5));
-    refuses(&mut examples, &body("    main {\n    }\n"), (CodeInBody, 2, 5));
-    refuses(&mut examples, &body("    function main {\n    }\n"), (CodeInBody, 2, 5));
-    refuses(&mut examples, &body("    ({\n    }\n"), (CodeInBody, 2, 5));
+    refuses(&mut examples, &inner, (NotAReturn, 2, 5));
+    refuses(&mut examples, &body("    main {\n    }\n"), (NotAReturn, 2, 5));
+    refuses(&mut examples, &body("    function main {\n    }\n"), (NotAReturn, 2, 5));
+    refuses(&mut examples, &body("    ({\n    }\n"), (NotAReturn, 2, 5));
     // A line of code that opens no block, too.
-    refuses(&mut examples, &body("    main()\n"), (CodeInBody, 2, 5));
-    refuses(&mut examples, &body("    function main() returns Void\n"), (CodeInBody, 2, 5));
+    refuses(&mut examples, &body("    main()\n"), (NotAReturn, 2, 5));
+    refuses(&mut examples, &body("    function main() returns Void\n"), (NotAReturn, 2, 5));
     // After comments and blank lines in the body.
     let after = body("    // a\n\n    // b\n    Void {\n    }\n");
-    refuses(&mut examples, &after, (CodeInBody, 5, 5));
+    refuses(&mut examples, &after, (NotAReturn, 5, 5));
     // A line of code in a function's body that holds nodes of its own. The nodes two blocks deep
     // are never reached, since the node whose block they're in is refused first.
     let nested = body("    x {\n        // y\n        z {\n        }\n    }\n");
-    refuses(&mut examples, &nested, (CodeInBody, 2, 5));
+    refuses(&mut examples, &nested, (NotAReturn, 2, 5));
     // In the second of two functions.
     let second = "function a() returns A {\n}\nfunction b() returns B {\n    // c\n    x {\n    \
                   }\n}\n";
-    refuses(&mut examples, second, (CodeInBody, 5, 5));
+    refuses(&mut examples, second, (NotAReturn, 5, 5));
     // As deep as the largest source lets blocks go under a function, 63 in all, and one more
     // doesn't fit: refused at the first block in its body.
     let deep = |levels: u32| {
@@ -586,7 +681,7 @@ fn bodies() {
     };
     assert!(deep(63).len() <= usize_from_u32(SOURCE_BYTES_MAX));
     assert!(deep(64).len() > usize_from_u32(SOURCE_BYTES_MAX));
-    refuses(&mut examples, &deep(63), (CodeInBody, 2, 5));
+    refuses(&mut examples, &deep(63), (NotAReturn, 2, 5));
     check(examples);
 }
 
@@ -599,7 +694,7 @@ fn the_first_problem_wins() {
     refuses(&mut examples, "function main {\n}\nVoid {\n}\n", (Expected(ParenthesisOpen), 1, 15));
     refuses(&mut examples, "Void {\n}\nfunction main {\n}\n", (NotAFunction, 1, 1));
     let body_first = "function a() returns A {\n    b {\n    }\n}\nVoid {\n}\n";
-    refuses(&mut examples, body_first, (CodeInBody, 2, 5));
+    refuses(&mut examples, body_first, (NotAReturn, 2, 5));
     let body_second = "Void {\n}\nfunction a() returns A {\n    b {\n    }\n}\n";
     refuses(&mut examples, body_second, (NotAFunction, 1, 1));
     let line_first = "function a() {\n    b {\n    }\n}\n";
@@ -657,10 +752,10 @@ fn the_largest_sources() {
     let body_after = |count: usize| {
         format!("{}function a() returns A {{\n    ({{\n    }}\n}}\n", "//\n".repeat(count))
     };
-    refuses(&mut examples, &body_after(300), (CodeInBody, 302, 5));
+    refuses(&mut examples, &body_after(300), (NotAReturn, 302, 5));
     assert!(body_after(5_448).len() <= size);
     assert!(body_after(5_449).len() > size);
-    refuses(&mut examples, &body_after(5_448), (CodeInBody, 5_450, 5));
+    refuses(&mut examples, &body_after(5_448), (NotAReturn, 5_450, 5));
     // The last line any line at fault can be on, after the most blank lines, and a function's
     // first line far down.
     let last_line = |blanks: usize| format!("{}({{\n}}\n", "\n".repeat(blanks));
@@ -676,7 +771,7 @@ fn the_largest_sources() {
     };
     assert!(last_in_body(size - 40).len() <= size);
     assert!(last_in_body(size - 39).len() > size);
-    refuses(&mut examples, &last_in_body(size - 40), (CodeInBody, 16_346, 5));
+    refuses(&mut examples, &last_in_body(size - 40), (NotAReturn, 16_346, 5));
     check(examples);
 }
 
@@ -715,7 +810,7 @@ fn wide_lines() {
     let body_most = size - body(0).len();
     assert!(body(body_most + 1).len() > size);
     for opens in [1, 8, 255, 256, 257, body_most] {
-        refuses(&mut examples, &fits(body(opens)), (CodeInBody, 2, 5));
+        refuses(&mut examples, &fits(body(opens)), (NotAReturn, 2, 5));
     }
     // A fault at the widest column: after a function's name as long as fits.
     let named = |length: usize| format!("function {} {{\n}}\n", "a".repeat(length));
@@ -740,6 +835,13 @@ fn where_a_functions_parts_are() {
     let from_end = usize_from_u32(FUNCTION_RETURN_TYPE_TOKEN_INDEX_FROM_END);
     let return_type = &line[line.len() - 1 - from_end];
     assert_eq!((tokens.text(name), tokens.text(return_type)), ("main", "Void"));
+    // A `return` line's value is where the rule puts it, counted from the line's first token.
+    let source = "function main() returns U8 {\n    return 42\n}\n";
+    let forms = parse(blocks_of(source)).expect("the source parses");
+    let node = &forms.blocks().nodes()[1];
+    let line = forms.blocks().tokens_of(node);
+    let value = &line[usize_from_u32(RETURN_VALUE_TOKEN_INDEX)];
+    assert_eq!(forms.blocks().tokens().text(value), "42");
 }
 
 #[test]
@@ -813,7 +915,7 @@ fn every_line() {
         let source =
             format!("function main() returns Void {{\n    {}\n    }}\n}}\n", line_of(&sequence));
         assert!(lays_out(&source), "{} should be laid out the one way", excerpt(&source));
-        let expected = Err(problem((CodeInBody, 2, 5)));
+        let expected = Err(problem((NotAReturn, 2, 5)));
         assert_eq!(oracle(&source), expected, "the oracle, for {}", excerpt(&source));
         assert_eq!(parsed(&source), expected, "for {}", excerpt(&source));
         body_count += 1;
@@ -857,13 +959,16 @@ fn fuzz_against_the_oracle() {
     let mut rng = Rng::new(0x4752_414D_4D41_5201);
     let kind_floors = [
         (NotAFunction, 2_300_u32),
-        (CodeInBody, 1_500),
+        (NotAReturn, 1_500),
         (Expected(Name), 700),
         (Expected(ParenthesisOpen), 550),
         (Expected(ParenthesisClose), 450),
         (Expected(Returns), 350),
         (Expected(ReturnType), 200),
         (Expected(BraceOpen), 300),
+        (Expected(ReturnValue), 650),
+        (AfterReturn, 250),
+        (AfterReturnValue, 300),
     ];
     let mut kind_counts = kind_floors.map(|(kind, _)| (kind, 0_u32));
     let (mut with_function_count, mut without_function_count): (u32, u32) = (0, 0);

@@ -8,12 +8,16 @@
 //! stack of its own, a region of the binary sized exactly, rather than on the one macOS gives the
 //! main thread, where the loader, the arguments and the environment live. So the switch keeps the
 //! system's stack pointer and return address in `x9` and `x10`, points `sp` at the top of
-//! Stella's stack, and calls `main`. When `main` returns, it puts both back and returns 0 to the
-//! loader. Stella's code never uses `x9` or `x10`, so nothing is written to memory to keep them,
-//! and a program that writes nothing needs 0 bytes of running memory.
+//! Stella's stack, and calls `main`. When `main` returns, it puts both back and returns the
+//! program's exit status to the loader in `w0`: 0 when `main` returns `Void`, which the switch
+//! sets, and `main`'s own value when it returns `U8`, which `main` left in `w0` and the switch
+//! leaves alone. Stella's code never uses `x9` or `x10`, so nothing is written to memory to keep
+//! them, and a program that writes nothing needs 0 bytes of running memory.
 //!
-//! The functions follow the switch, in the order they're in the source. A function's body is
-//! `ret` for now, since it holds nothing but comments, so it returns when its body ends.
+//! The functions follow the switch, in the order they're in the source. A function that returns
+//! `Void` is `ret`, so it returns when its body ends. One that returns `U8` puts its value in
+//! `w0`, where a call's result goes, with `movz w0`, which clears the rest of `x0`, and then is
+//! `ret`.
 //!
 //! Where the stack is depends on where the file format puts the code and the stack, which only
 //! it knows. So the two instructions of the switch that find the stack's top aren't made here.
@@ -21,7 +25,7 @@
 //! relocated when the program is loaded: a placement is two numbers the format worked out.
 
 use stella_ast::FUNCTIONS_MAX;
-use stella_meaning::Program;
+use stella_meaning::{Program, Returned};
 use stella_source::usize_from_u32;
 
 use crate::instruction::{
@@ -32,10 +36,10 @@ use crate::instruction::{
 /// This is how many bytes an instruction takes. Every arm64 instruction takes 4.
 pub const INSTRUCTION_BYTES: u32 = 4;
 
-/// This is the most instructions a program's code can take: the switch, and the most functions
-/// with the longest bodies.
+/// This is the most instructions a program's code can take: the longest switch, and the most
+/// functions with the longest bodies.
 pub const CODE_INSTRUCTIONS_MAX: u32 =
-    SWITCH_INSTRUCTIONS_COUNT + FUNCTIONS_MAX * BODY_INSTRUCTIONS_MAX;
+    SWITCH_INSTRUCTIONS_MAX + FUNCTIONS_MAX * BODY_INSTRUCTIONS_MAX;
 
 /// This is the most bytes a program's code can take.
 pub const CODE_BYTES_MAX: u32 = CODE_INSTRUCTIONS_MAX * INSTRUCTION_BYTES;
@@ -44,17 +48,19 @@ pub const CODE_BYTES_MAX: u32 = CODE_INSTRUCTIONS_MAX * INSTRUCTION_BYTES;
 /// aligned as arm64 needs.
 pub const STACK_ALIGNMENT_BYTES: u32 = 16;
 
-/// This is how many instructions the switch takes.
-const SWITCH_INSTRUCTIONS_COUNT: u32 = 10;
+/// This is the most instructions the switch takes: when `main` returns `Void`, it sets the exit
+/// status itself, with one more instruction than when `main` returns `U8` and sets it.
+const SWITCH_INSTRUCTIONS_MAX: u32 = 10;
 
-/// This is the most instructions a function's body takes. For now a body is `ret`.
-const BODY_INSTRUCTIONS_MAX: u32 = 1;
+/// This is the fewest instructions the switch takes.
+const SWITCH_INSTRUCTIONS_MIN: u32 = SWITCH_INSTRUCTIONS_MAX - 1;
 
-/// This is how many instructions a function's body takes today: `ret`.
-const BODY_INSTRUCTIONS_COUNT: u32 = 1;
+/// This is the most instructions a function's body takes: `movz` and `ret`, for one that
+/// returns `U8`.
+const BODY_INSTRUCTIONS_MAX: u32 = 2;
 
-/// This is how many bytes of stack a function's frame takes today. A body holds nothing but
-/// comments, so it keeps nothing.
+/// This is how many bytes of stack a function's frame takes today. A body puts its value in a
+/// register, so it keeps nothing.
 const FRAME_BYTES: u32 = 0;
 
 /// This is the index, in the switch, of the `adrp` that finds the page the stack's top is in.
@@ -94,10 +100,6 @@ const _: () = assert!(
     CODE_INSTRUCTIONS_MAX <= BRANCH_INSTRUCTIONS_MAX.unsigned_abs(),
     "the switch's `bl` reaches `main` wherever it is in the most code there can be"
 );
-const _: () = assert!(
-    BODY_INSTRUCTIONS_COUNT <= BODY_INSTRUCTIONS_MAX,
-    "a body takes no more instructions than the most a body takes"
-);
 const _: () =
     assert!(FRAME_BYTES.is_multiple_of(STACK_ALIGNMENT_BYTES), "a frame keeps `sp` aligned");
 const _: () = assert!(
@@ -109,7 +111,7 @@ const _: () = assert!(
     "the stack's top is found before `main` is called on it"
 );
 const _: () = assert!(
-    CALL_INDEX < SWITCH_INSTRUCTIONS_COUNT - 1,
+    CALL_INDEX < SWITCH_INSTRUCTIONS_MIN - 1,
     "the switch goes on after `main` returns, to put the system's stack back"
 );
 
@@ -147,7 +149,7 @@ impl Code {
     #[must_use]
     pub fn size_bytes(&self) -> u32 {
         let size_bytes = instructions_count(&self.words) * INSTRUCTION_BYTES;
-        assert!(size_bytes >= SWITCH_INSTRUCTIONS_COUNT * INSTRUCTION_BYTES, "the switch is there");
+        assert!(size_bytes >= SWITCH_INSTRUCTIONS_MIN * INSTRUCTION_BYTES, "the switch is there");
         assert!(size_bytes <= CODE_BYTES_MAX, "no program's code is more than `CODE_BYTES_MAX`");
         size_bytes
     }
@@ -210,49 +212,84 @@ impl Code {
 /// If there isn't the memory for its code, Rust ends the process, which isn't a panic.
 #[must_use]
 pub fn generate(program: &Program<'_>) -> Code {
-    let functions = program.types().ast().functions();
+    let returned = program.fitted().as_slice();
     assert!(
-        functions.len() <= usize_from_u32(FUNCTIONS_MAX),
+        returned.len() <= usize_from_u32(FUNCTIONS_MAX),
         "no source holds more than `FUNCTIONS_MAX` functions"
     );
-    let main_function_index = program.main_function_index();
-    let is_function = usize_from_u32(main_function_index) < functions.len();
-    assert!(is_function, "`main` is one of the functions");
+    let main_function_index = usize_from_u32(program.main_function_index());
+    assert!(main_function_index < returned.len(), "`main` is one of the functions");
+    let main_returned = returned[main_function_index];
     // The switch, then a body for each function: room for every instruction, made once.
-    let instructions_count_max =
-        usize_from_u32(SWITCH_INSTRUCTIONS_COUNT) + functions.len() * BODY_INSTRUCTIONS_MAX_USIZE;
+    let instructions_count_max = usize_from_u32(SWITCH_INSTRUCTIONS_MAX)
+        + returned.len() * usize_from_u32(BODY_INSTRUCTIONS_MAX);
     let mut words = Vec::with_capacity(instructions_count_max);
     let capacity_before = words.capacity();
-    // Each body follows the switch and the bodies before it.
-    let main_instruction_index =
-        SWITCH_INSTRUCTIONS_COUNT + main_function_index * BODY_INSTRUCTIONS_COUNT;
-    words.extend_from_slice(&generate_switch(main_instruction_index));
-    for _ in functions {
-        // A body holds nothing but comments, so all it does is return.
-        words.push(Instruction::Return.encode());
+    // `main`'s body follows the switch and the bodies before it.
+    let bodies_before: u32 = returned[..main_function_index].iter().copied().map(body_count).sum();
+    let main_instruction_index = switch_count(main_returned) + bodies_before;
+    words.extend(generate_switch(main_instruction_index, main_returned));
+    for &each in returned {
+        words.extend(generate_body(each));
     }
     assert!(words.len() <= instructions_count_max, "the switch, and a body for each function");
     assert_eq!(words.capacity(), capacity_before, "the room made for the code never grows");
-    assert_generated(&words, main_instruction_index);
+    assert_generated(&words, returned, main_function_index);
     // `main` calls nothing, so the deepest frame along its calls is its own.
     Code { words, stack_bytes: FRAME_BYTES }
 }
 
-/// This is the most instructions a function's body takes, to size memory with.
-const BODY_INSTRUCTIONS_MAX_USIZE: usize = usize_from_u32(BODY_INSTRUCTIONS_MAX);
+/// Returns how many instructions the switch takes when `main` gives back `main_returned`: one
+/// fewer when `main` sets the exit status itself.
+const fn switch_count(main_returned: Returned) -> u32 {
+    match main_returned {
+        Returned::Void => SWITCH_INSTRUCTIONS_MAX,
+        Returned::U8(_) => SWITCH_INSTRUCTIONS_MIN,
+    }
+}
+
+/// Returns how many instructions the body of a function that gives back `returned` takes.
+const fn body_count(returned: Returned) -> u32 {
+    match returned {
+        Returned::Void => 1,
+        Returned::U8(_) => 2,
+    }
+}
+
+/// Returns the body of a function that gives back `returned`, as words: for `Void`, `ret`, and
+/// for `U8`, `movz w0` of the value, which clears the rest of `x0`, then `ret`. A call's result
+/// goes in `w0`.
+fn generate_body(returned: Returned) -> impl Iterator<Item = u32> {
+    let value = match returned {
+        Returned::Void => None,
+        Returned::U8(value) => {
+            Some(Instruction::MoveWideWithZero { target: STATUS, immediate: u16::from(value) })
+        }
+    };
+    let body = value.into_iter().chain([Instruction::Return]).map(Instruction::encode);
+    let count = u32::try_from(body.clone().count()).expect("a body is a few instructions");
+    assert_eq!(count, body_count(returned), "a body is as long as its count says");
+    assert!(count <= BODY_INSTRUCTIONS_MAX, "a body takes no more than the most a body takes");
+    body
+}
 
 /// Returns the switch, which calls `main` at `main_instruction_index` in the code, with
-/// `UNPLACED` where `Code::placed` makes the two instructions that find the stack's top.
-fn generate_switch(
-    main_instruction_index: u32,
-) -> [u32; usize_from_u32(SWITCH_INSTRUCTIONS_COUNT)] {
-    assert!(main_instruction_index >= SWITCH_INSTRUCTIONS_COUNT, "`main` follows the switch");
+/// `UNPLACED` where `Code::placed` makes the two instructions that find the stack's top. When
+/// `main` gives back `Void`, the switch sets the exit status to 0 itself, and otherwise leaves
+/// `main`'s value where it is.
+fn generate_switch(main_instruction_index: u32, main_returned: Returned) -> Vec<u32> {
+    let count = switch_count(main_returned);
+    assert!(main_instruction_index >= count, "`main` follows the switch");
     assert!(main_instruction_index < CODE_INSTRUCTIONS_MAX, "`main` is in the code");
     let call_distance = main_instruction_index - CALL_INDEX;
     let call_distance = i32::try_from(call_distance).expect("the code is far less than 2 GiB");
     let stack_pointer = StackOrRegister::StackPointer;
     let register = StackOrRegister::Register;
-    [
+    let status = match main_returned {
+        Returned::Void => Some(Instruction::MoveWideWithZero { target: STATUS, immediate: 0 }),
+        Returned::U8(_) => None,
+    };
+    let switch: Vec<u32> = [
         // Keep the system's stack pointer and return address.
         Instruction::AddImmediate {
             target: register(SYSTEM_STACK),
@@ -271,7 +308,7 @@ fn generate_switch(
         }
         .encode(),
         Instruction::BranchWithLink { instructions: call_distance }.encode(),
-        // Put the system's stack pointer and return address back, and return 0 to the loader.
+        // Put the system's stack pointer and return address back.
         Instruction::AddImmediate {
             target: stack_pointer,
             source: register(SYSTEM_STACK),
@@ -279,9 +316,14 @@ fn generate_switch(
         }
         .encode(),
         Instruction::MoveRegister { target: LINK, source: SYSTEM_RETURN }.encode(),
-        Instruction::MoveWideWithZero { target: STATUS, immediate: 0 }.encode(),
-        Instruction::Return.encode(),
     ]
+    .into_iter()
+    // Set the exit status when `main` didn't, and return it to the loader.
+    .chain(status.map(Instruction::encode))
+    .chain([Instruction::Return.encode()])
+    .collect();
+    assert_eq!(instructions_count(&switch), count, "the switch is as long as its count says");
+    switch
 }
 
 /// Returns the two instructions that find the stack's top for `placement`, as words: `adrp x11`
@@ -342,11 +384,14 @@ fn page_instruction_address(code_address: u64) -> u64 {
     code_address + u64::from(STACK_TOP_PAGE_INDEX * INSTRUCTION_BYTES)
 }
 
-/// Asserts that `words`, generated with `main` at `main_instruction_index`, hold together as
-/// `Code::placed` and the file format will trust: the switch, then bodies that only return, the
-/// stack's two words left to be placed, and the call landing on `main`.
-fn assert_generated(words: &[u32], main_instruction_index: u32) {
-    let switch_count = usize_from_u32(SWITCH_INSTRUCTIONS_COUNT);
+/// Asserts that `words`, generated for functions that give back `returned`, with `main` the one
+/// at `main_function_index`, hold together as `Code::placed` and the file format will trust: the
+/// switch, then each function's body, read back from its words as giving back what `returned`
+/// says, the stack's two words left to be placed, the call landing on `main`'s body, and the exit
+/// status set by the switch exactly when `main` gives back `Void`.
+fn assert_generated(words: &[u32], returned: &[Returned], main_function_index: usize) {
+    let main_returned = returned[main_function_index];
+    let switch_count = usize_from_u32(switch_count(main_returned));
     assert!(words.len() > switch_count, "the switch, and at least `main`'s body");
     let (switch, bodies) = words.split_at(switch_count);
     for (index, &word) in switch.iter().enumerate() {
@@ -360,13 +405,37 @@ fn assert_generated(words: &[u32], main_instruction_index: u32) {
         unreachable!("the switch calls `main` with `bl`, not {call:?}");
     };
     let called_index = CALL_INDEX.checked_add_signed(instructions);
-    assert_eq!(called_index, Some(main_instruction_index), "the switch calls `main`");
-    let is_body = usize_from_u32(main_instruction_index) < words.len();
-    assert!(is_body, "`main` is one of the bodies");
+    let called_index = usize_from_u32(called_index.expect("the switch calls forward"));
+    assert!(called_index < words.len(), "`main` is one of the bodies");
     let returns = Instruction::Return.encode();
     assert_eq!(switch[switch_count - 1], returns, "the switch returns to the loader");
-    for &body in bodies {
-        assert_eq!(body, returns, "a body returns when it ends");
+    let status = Instruction::decode(switch[switch_count - 2]);
+    let sets_status =
+        status == Some(Instruction::MoveWideWithZero { target: STATUS, immediate: 0 });
+    assert_eq!(sets_status, main_returned == Returned::Void, "the switch sets 0 for `Void`");
+    let mut rest = bodies;
+    for (index, &each) in returned.iter().enumerate() {
+        if index == main_function_index {
+            assert_eq!(words.len() - rest.len(), called_index, "the switch calls `main`'s body");
+        }
+        let (body, after) = rest.split_at(usize_from_u32(body_count(each)));
+        assert_eq!(read_body(body), each, "a body gives back what its function returns");
+        rest = after;
+    }
+    assert!(rest.is_empty(), "the code is the switch and the bodies, and nothing more");
+}
+
+/// Returns what `body`, a function's body as words, gives back, read back from its words: a
+/// lone `ret` gives back `Void`, and `movz w0` of a value then `ret` gives back that `U8`.
+fn read_body(body: &[u32]) -> Returned {
+    let decoded: Vec<Option<Instruction>> = body.iter().copied().map(Instruction::decode).collect();
+    match decoded.as_slice() {
+        [Some(Instruction::Return)] => Returned::Void,
+        [
+            Some(Instruction::MoveWideWithZero { target: STATUS, immediate }),
+            Some(Instruction::Return),
+        ] => Returned::U8(u8::try_from(*immediate).expect("a `U8` body sets a value a `U8` holds")),
+        other => unreachable!("a body is `ret`, or `movz w0` then `ret`, not {other:?}"),
     }
 }
 

@@ -33,8 +33,10 @@ Stella code has one layout, and the compiler refuses any other.
   Tested by [`lines`](../../linter/tokens/tests/layout.rs). Which tokens can
   come before a `{`, and how a line that opens no block can end, are the
   grammar's to say, once the layout has passed. For now, a line of code is a
-  [function](functions.md)'s first line, outside every block, and a function's
-  body holds no code. Tested by [`every_line`](../../grammar/tests/parse.rs).
+  [function](functions.md)'s first line, outside every block, or a `return`
+  line, in a function's body. Tested by
+  [`every_line`](../../grammar/tests/parse.rs) and
+  [`every_body_line`](../../grammar/tests/parse.rs).
 - `{` ends the line it's on, and `}` sits on a line of its own. That holds even
   for an empty body, so this is refused:
 

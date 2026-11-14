@@ -98,9 +98,13 @@ exactly by the compiler, so what the program needs doesn't depend on who
 starts it. The switch keeps macOS's stack pointer and return address in two
 registers Stella's code never uses, points the stack pointer at Stella's
 stack, and calls `main`. When `main` returns, the switch puts both back and
-returns 0, so the program exits with 0. Nothing is written to memory to do it.
-Tested by [`the_smallest_program`](../../arm64/tests/generate.rs), against
-the system's assembler, and
+returns the program's exit status. When `main` returns `Void`, the switch sets
+it to 0. When `main` returns `U8`, `main` has already put its value where a
+result goes, and the switch leaves it there, so the program exits with that
+value. Nothing is written to memory to do any of it. Tested by
+[`the_smallest_program`](../../arm64/tests/generate.rs) and
+[`main_returns_a_u8`](../../arm64/tests/generate.rs), against the system's
+assembler, and
 [`the_linker_finds_the_stack_the_same_way`](../../arm64/tests/generate.rs),
 against its linker. Every instruction's word is tested against the assembler
 too, by
@@ -220,11 +224,15 @@ When a build succeeds, the compiler prints what the program needs, on stdout.
 It gives two numbers:
 
 - **Running memory** is the memory the program writes while it runs. For now,
-  that's 0 bytes, because `main` does nothing.
+  that's 0 bytes, because `main` keeps nothing: what it gives back goes in a
+  register.
 - **Code** is the machine code Stella generates. For now, that's 11
-  instructions, 44 bytes: ten for the switch to Stella's stack and back, and
-  one for `main`, which returns. Tested by
-  [`the_smallest_program`](../../arm64/tests/generate.rs).
+  instructions, 44 bytes, whatever `main` returns. When it returns `Void`,
+  ten are the switch to Stella's stack and back, and one is `main`, which
+  returns. When it returns `U8`, the switch is nine, since it doesn't set the
+  exit status, and `main` is two: one to set its value, and one to return.
+  Tested by [`the_smallest_program`](../../arm64/tests/generate.rs) and
+  [`main_returns_a_u8`](../../arm64/tests/generate.rs).
 
 Neither counts what macOS needs to run any program: the loader, libSystem,
 the program's arguments and environment, and the file format that wraps the
@@ -332,7 +340,9 @@ one less to worry about:
    allows, and the line ends where its rule does, as
    [functions](functions.md) and [programs](programs.md) say.
 10. The [types](types.md): every type a function returns exists.
-11. The [program](programs.md): there's exactly one function, and it's named
+11. The fit: what each function's body gives back fits the type it returns,
+    as [types](types.md) says.
+12. The [program](programs.md): there's exactly one function, and it's named
     `main`.
 
 The order of the checks on the path as it's given is tested by
@@ -345,9 +355,11 @@ That the tokens come after the text is tested by
 4, and that the layout comes
 after the tokens by [`code_in_another_layout`](../../cli/tests/lint.rs). That
 the grammar comes after the layout is tested by
-[`code_that_breaks_the_grammar`](../../cli/tests/lint.rs), and that the types
+[`code_that_breaks_the_grammar`](../../cli/tests/lint.rs), that the types
 come after the grammar, and the program after the types, by
-[`code_that_isnt_a_program`](../../cli/tests/lint.rs).
+[`code_that_isnt_a_program`](../../cli/tests/lint.rs), and that the fit comes
+after the types and before the program by
+[`code_that_doesnt_fit_its_type`](../../cli/tests/lint.rs).
 
 For now, when the compiler refuses a program, it stops at the first check that
 fails. Within that check, it reports the earliest problem in the file. The

@@ -183,6 +183,56 @@ fn builds_a_program() {
 }
 
 #[test]
+fn exits_with_what_main_returns() {
+    // A `main` that returns a `U8` exits with its value. Every value a `U8` holds is built, each
+    // in its own file, and its binary run: it exits with exactly that value, says nothing, and
+    // takes 44 bytes of code and no running memory, as hello does. The first and the last are
+    // checked by `codesign` too. The builds and runs are spread over eight threads, each its own
+    // value's file, binary and process, so the test takes a few seconds rather than a minute.
+    // One past the most is refused, and nothing is built for it.
+    let directory = fresh_directory("exits");
+    let values: Vec<u8> = (0_u8..=255).collect();
+    std::thread::scope(|scope| {
+        for chunk in values.chunks(32) {
+            let directory = &directory;
+            let _: std::thread::ScopedJoinHandle<'_, ()> = scope.spawn(move || {
+                for &value in chunk {
+                    builds_and_exits_with(directory, value);
+                }
+            });
+        }
+    });
+    write(&directory, "exit-256.stella", b"function main() returns U8 {\n    return 256\n}\n");
+    let refused = stella(&directory, &["build", "exit-256.stella"]);
+    let said = concat!(
+        "exit-256.stella:2:12: this integer doesn't fit in `U8`, which holds 0 to 255.\n",
+        "        return 256\n",
+        "               ^\n",
+    );
+    assert_eq!(refused, Run { status: REFUSED, stdout: String::new(), stderr: String::from(said) });
+    assert!(!directory.join(".build/exit-256").exists(), "nothing is built for a refused program");
+}
+
+/// Builds, in `directory`, a program whose `main` returns `value`, and checks that the build says
+/// what it needs and that its binary exits with `value`, saying nothing. The binaries for 0 and
+/// 255, the ends of a `U8`, are checked by `codesign` too.
+fn builds_and_exits_with(directory: &Path, value: u8) {
+    let name = format!("exit-{value}");
+    let source = format!("function main() returns U8 {{\n    return {value}\n}}\n");
+    write(directory, &format!("{name}.stella"), source.as_bytes());
+    let path = format!("{name}.stella");
+    assert_eq!(stella(directory, &["build", &path]), built(&report_of(&name)), "for {value}");
+    let binary = directory.join(".build").join(&name);
+    if value == u8::MIN || value == u8::MAX {
+        let mut codesign = Command::new("/usr/bin/codesign");
+        let verified = Run::of(codesign.args(["--verify", "--strict"]).arg(&binary));
+        assert_eq!(verified, Run::exits(0, ""), "codesign should accept {value}'s binary");
+    }
+    let ran = Run::of(&mut Command::new(&binary));
+    assert_eq!(ran, Run::exits(i32::from(value), ""), "running {value}'s binary");
+}
+
+#[test]
 fn the_report_names_the_program() {
     // A program is named for its file, without `.stella`, wherever the file is and however its
     // path was typed. The report starts with that name.

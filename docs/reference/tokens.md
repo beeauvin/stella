@@ -22,8 +22,9 @@ ASCII. The smallest program is eight tokens: `function`, `main`, `(`, `)`,
   an integer can't start with `0` unless it's `0`: `03` is refused at its
   `0`. A letter or `_` can't come right after an integer, so `3x` is refused
   at the `x`, rather than read as two tokens missing a space. An integer can
-  be as long as its line: what it's worth is checked once it has a type, which
-  isn't built yet. Tested by [`integers`](../../lexer/tests/lex.rs) and
+  be as long as its line: whether what it's worth fits is checked against its
+  [type](types.md), once the types are known. Tested by
+  [`integers`](../../lexer/tests/lex.rs) and
   [`every_printable_character`](../../lexer/tests/lex.rs).
 - `(`, `)`, `{` and `}` are each a token of their own, with or without spaces
   around them. Tested by [`spaces_and_lines`](../../lexer/tests/lex.rs).

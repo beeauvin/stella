@@ -22,10 +22,32 @@ function main() returns Void {
 }
 ```
 
-Running the program runs `main`. When `main` returns, the program exits with
-status 0. Tested by [`the_smallest_program`](../../arm64/tests/generate.rs),
-which pins the code that calls `main` and returns 0, and by running the binary,
-in [`macos_checks_the_signature_and_runs_it`](../../macho/tests/write.rs) and
+Running the program runs `main`. When `main` returns `Void`, the program exits
+with status 0. Tested by
+[`the_smallest_program`](../../arm64/tests/generate.rs), which pins the code
+that calls `main` and returns 0, and by running the binary, in
+[`macos_checks_the_signature_and_runs_it`](../../macho/tests/write.rs) and
 [`builds_a_program`](../../cli/tests/build.rs).
+
+When `main` returns [`U8`](types.md), the program exits with the value `main`
+gives back:
+
+```stella
+function main() returns U8 {
+    return 3
+}
+```
+
+```
+$ stella build programs/three.stella
+three needs 0 bytes of running memory and 44 bytes of code, on top of what macOS needs to run any program.
+$ .build/programs/three; echo $?
+3
+```
+
+Every value a `U8` holds is built and run, and exits with itself, by
+[`exits_with_what_main_returns`](../../cli/tests/build.rs). `main` may return
+`Void` or `U8`, every type there is. Tested by
+[`what_main_returns`](../../meaning/tests/program.rs).
 
 [The compiler](compiler.md) says how a program is built.

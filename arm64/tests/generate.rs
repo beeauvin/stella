@@ -6,9 +6,11 @@
 //! reach only what the crates make public: every source goes through every check, from `lint`
 //! to `check_program`, and then `generate`.
 //!
-//! Every program today has the same code, so it's stated here as the instructions it is, and
-//! the system's assembler and linker say what their words are, as each test runs: `as` makes
-//! the switch from its assembly, and `ld` places it against stacks of several sizes. Then
+//! Every program today is `main` returning `Void`, whose code is the same for every one, or
+//! `main` returning a `U8`, whose code differs only in its value. So each is stated here as the
+//! instructions it is, and the system's assembler and linker say what their words are, as each
+//! test runs: `as` makes the switch and `main` from their assembly, and `ld` places it against
+//! stacks of several sizes. Then
 //! placements are swept across their edges against an oracle that works out, from two
 //! addresses alone, how far `adrp` must reach. The instructions' own words are the
 //! instruction tests' to check.
@@ -28,7 +30,7 @@ use stella_grammar::parse;
 use stella_lexer::lex;
 use stella_linter_text::lint;
 use stella_linter_tokens::lint_tokens;
-use stella_meaning::{check_program, resolve};
+use stella_meaning::{check_fit, check_program, resolve};
 use stella_source::{SOURCE_BYTES_MAX, usize_from_u32};
 use stella_test_support::{Run, Scratch, assemble, text};
 
@@ -56,8 +58,31 @@ _stella_main:
     ret
 ";
 
-/// This is how many instructions the code of today's one program takes: ten for the switch, and
-/// one for `main`.
+/// This is the switch and a `main` that returns a `U8`, as they're written for `as`, with the
+/// stack's top left as `{PAGE}` and `{OFFSET}`, and the value as `{VALUE}`. `main` leaves its
+/// value in `w0`, so the switch doesn't set it.
+const SWITCH_ASSEMBLY_U8: &str = "\
+.text
+.globl _main
+.p2align 2
+_main:
+    mov x9, sp
+    mov x10, x30
+    adrp x11, {PAGE}
+    add x11, x11, {OFFSET}
+    mov sp, x11
+    bl _stella_main
+    mov sp, x9
+    mov x30, x10
+    ret
+_stella_main:
+    mov w0, #{VALUE}
+    ret
+";
+
+/// This is how many instructions the code of a `main` that returns `Void` takes: ten for the
+/// switch, and one for `main`. A `main` that returns a `U8` takes as many: one fewer for the
+/// switch, and one more for `main`.
 const INSTRUCTIONS_COUNT: usize = 11;
 
 /// This is the index, in the code, of the `adrp` that finds the stack's top. The `add` that
@@ -82,7 +107,8 @@ fn generated(source: &str) -> Code {
     let layout = lint_tokens(tokens).expect("source should be laid out the one way");
     let forms = parse(nest(layout)).expect("source should pass the grammar");
     let types = resolve(build(forms)).expect("source should pass the types");
-    let program = check_program(types).expect("source should be a program");
+    let fitted = check_fit(types).expect("source should pass the fit");
+    let program = check_program(fitted).expect("source should be a program");
     generate(&program)
 }
 
@@ -183,6 +209,40 @@ fn the_smallest_program() {
 }
 
 #[test]
+fn main_returns_a_u8() {
+    // A `main` that returns a `U8` is 11 instructions too, 44 bytes, with no stack: the switch
+    // without the `mov w0, #0` that sets the exit status, and `main` setting it to its value and
+    // returning. For values at both ends of a `U8` and between, it's word for word what `as`
+    // makes of it written out. For every value, its code is the same but for `main`'s `movz`,
+    // which holds that value.
+    let placement = Placement { code_address: 0x1_0000_0290, stack_top_address: 0x1_0000_4000 };
+    let source = |value: u8| format!("function main() returns U8 {{\n    return {value}\n}}\n");
+    let directory = fresh_directory("u8");
+    for value in [0_u8, 1, 3, 127, 128, 254, 255] {
+        let code = generated(&source(value));
+        assert_eq!((code.size_bytes(), code.stack_bytes()), (44, 0), "for {value}");
+        let assembly = SWITCH_ASSEMBLY_U8
+            .replace("{PAGE}", "#16384")
+            .replace("{OFFSET}", "#0")
+            .replace("{VALUE}", &value.to_string());
+        let assembled = text(&assemble(&directory, &format!("switch-{value}"), &assembly)).words;
+        assert_eq!(assembled.len(), INSTRUCTIONS_COUNT, "for {value}");
+        assert_eq!(placed(&code, placement), assembled, "for {value}");
+    }
+    let zero = placed(&generated(&source(0)), placement);
+    for value in 0_u8..=255 {
+        let words = placed(&generated(&source(value)), placement);
+        let read: Vec<Option<Instruction>> =
+            words.iter().map(|&word| Instruction::decode(word)).collect();
+        let set =
+            Instruction::MoveWideWithZero { target: Register::new(0), immediate: value.into() };
+        assert_eq!(read[9..], [Some(set), Some(Instruction::Return)], "`main` gives back {value}");
+        assert_eq!(read[8], Some(Instruction::Return), "the switch returns, for {value}");
+        assert_eq!(words[..9], zero[..9], "the switch is the same, for {value}");
+    }
+}
+
+#[test]
 fn the_linker_finds_the_stack_the_same_way() {
     // The switch, assembled with its stack's top as a symbol and an offset, and linked by `ld`
     // against stacks of several sizes. `ld` puts the code and the stack where it likes and
@@ -231,8 +291,8 @@ fn the_largest_sources() {
     let one_more = comments_then_main(5_451);
     assert!(one_more.len() > usize_from_u32(SOURCE_BYTES_MAX), "5,451 comments don't");
     assert_eq!(placed(&generated(&most), placement), smallest);
-    assert_eq!(CODE_INSTRUCTIONS_MAX, 10 + 4_096);
-    assert_eq!(CODE_BYTES_MAX, 16_424);
+    assert_eq!(CODE_INSTRUCTIONS_MAX, 10 + 4_096 * 2);
+    assert_eq!(CODE_BYTES_MAX, 32_808);
 }
 
 #[test]

@@ -25,8 +25,7 @@ use stella_lexer::lex;
 use stella_linter_text::lint;
 use stella_linter_tokens::lint_tokens;
 use stella_meaning::Kind::{AnotherFunction, NotMain};
-use stella_meaning::Type::Void;
-use stella_meaning::{Kind, Problem, Types, check_program, resolve};
+use stella_meaning::{Fitted, Kind, Problem, Returned, check_fit, check_program, resolve};
 use stella_source::{Position, SOURCE_BYTES_MAX, usize_from_u32};
 use stella_test_support::{Example, Examples, Rng, excerpt, indent, programs_of, source_of};
 
@@ -48,8 +47,8 @@ const ITEMS: [&str; 4] = [
 const NAMES: &[&str] =
     &["main", "main", "main", "a", "mains", "main_2", "ma", "my_main", "xain", "maix"];
 
-/// Says whether `source` passes every check through the types, so it reaches the program.
-fn resolves(source: &str) -> bool {
+/// Says whether `source` passes every check through the fit, so it reaches the program.
+fn fits(source: &str) -> bool {
     let Ok(text) = lint(source.as_bytes()) else {
         return false;
     };
@@ -62,36 +61,37 @@ fn resolves(source: &str) -> bool {
     let Ok(forms) = parse(nest(layout)) else {
         return false;
     };
-    resolve(build(forms)).is_ok()
+    resolve(build(forms)).is_ok_and(|types| check_fit(types).is_ok())
 }
 
-/// Returns what the types found in `source`, which must pass them.
-fn types_of(source: &str) -> Types<'_> {
+/// Returns what the fit found in `source`, which must pass it.
+fn fitted_of(source: &str) -> Fitted<'_> {
     let text = lint(source.as_bytes()).expect("source should pass the text lint");
     let tokens = lex(text).expect("source should lex");
     let layout = lint_tokens(tokens).expect("source should be laid out the one way");
     let forms = parse(nest(layout)).expect("source should pass the grammar");
-    resolve(build(forms)).expect("source should pass the types")
+    let types = resolve(build(forms)).expect("source should pass the types");
+    check_fit(types).expect("source should pass the fit")
 }
 
-/// Checks the program `source` holds, which must pass the types, and returns what the program
+/// Checks the program `source` holds, which must pass the fit, and returns what the program
 /// check made of it. On the way, it checks that what `check_program` returns holds the very AST
-/// the types were found for, and the types, and that its `main` is the source's one function,
-/// named `main`, which returns `Void`.
+/// the types were found for, the types, and what the fit found, and that its `main` is the
+/// source's one function, named `main`.
 fn checked(source: &str) -> Outcome {
-    let types = types_of(source);
-    let functions = ptr::from_ref(types.ast().functions());
-    let found = types.as_slice().to_vec();
-    let program = check_program(types)?;
-    let types = program.types();
+    let fitted = fitted_of(source);
+    let functions = ptr::from_ref(fitted.types().ast().functions());
+    let (found, returned) = (fitted.types().as_slice().to_vec(), fitted.as_slice().to_vec());
+    let program = check_program(fitted)?;
+    let types = program.fitted().types();
     let ast = types.ast();
     let main = &ast.functions()[usize_from_u32(program.main_function_index())];
     assert!(ptr::eq(ast.functions(), functions), "it holds the AST the types were found for");
     assert_eq!(types.as_slice(), found, "it holds the types found");
+    assert_eq!(program.fitted().as_slice(), returned, "it holds what the fit found");
     assert_eq!(ast.functions(), [*main], "`main` is the program's one function");
     assert_eq!(program.main_function_index(), 0, "so `main` is the first of the functions");
     assert_eq!(ast.text(ast.name(main)), "main", "`main` is named `main`");
-    assert_eq!(types.as_slice(), [Void], "`main` returns `Void`");
     Ok(ast.name(main).position().line())
 }
 
@@ -109,7 +109,7 @@ fn check(examples: Examples<Outcome>) {
     let examples = examples.take();
     for Example { source, expected, at } in &examples {
         let excerpt = excerpt(source);
-        assert!(resolves(source), "{at}: {excerpt} should pass the types");
+        assert!(fits(source), "{at}: {excerpt} should pass the fit");
         assert_eq!(oracle(source), *expected, "{at}: the oracle, for {excerpt}");
     }
     for Example { source, expected, at } in &examples {
@@ -196,6 +196,24 @@ fn the_smallest_program() {
     let mut examples = Examples::new();
     examples.add(SMALLEST, Ok(1));
     check(examples);
+}
+
+#[test]
+fn what_main_returns() {
+    // `main` may return `Void` or `U8`, every type there is, and the program holds what `main`
+    // gives back, for the code to exit with.
+    let mut examples = Examples::new();
+    examples.add("function main() returns U8 {\n    return 3\n}\n", Ok(1));
+    examples.add("// a\nfunction main() returns U8 {\n    return 255\n}\n", Ok(2));
+    check(examples);
+    for (source, expected) in [
+        (SMALLEST, Returned::Void),
+        ("function main() returns U8 {\n    return 0\n}\n", Returned::U8(0)),
+        ("function main() returns U8 {\n    return 255\n}\n", Returned::U8(255)),
+    ] {
+        let program = check_program(fitted_of(source)).expect("the source is a program");
+        assert_eq!(program.fitted().as_slice(), [expected], "for {source:?}");
+    }
 }
 
 #[test]
@@ -316,7 +334,7 @@ fn every_program() {
     let mut reached: BTreeMap<String, u32> = BTreeMap::new();
     let mut expected = Vec::new();
     for source in &sources {
-        assert!(resolves(source), "{} should pass the types", excerpt(source));
+        assert!(fits(source), "{} should pass the fit", excerpt(source));
         let outcome = oracle(source);
         *reached.entry(outcome_name(&outcome)).or_default() += 1;
         expected.push(outcome);
@@ -341,7 +359,7 @@ fn fuzz_against_the_oracle() {
     let mut checks = Vec::new();
     for _ in 0_u32..20_000 {
         let source = source_of(&random_program(&mut rng));
-        assert!(resolves(&source), "the generator passes the types with {}", excerpt(&source));
+        assert!(fits(&source), "the generator passes the fit with {}", excerpt(&source));
         let expected = oracle(&source);
         let name = outcome_name(&expected);
         let is_past_line_1 = outcome_line(&expected).is_some_and(|line| line > 1);
