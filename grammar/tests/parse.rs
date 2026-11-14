@@ -152,9 +152,9 @@ fn check(examples: Examples<Outcome>) {
 }
 
 /// Returns the tokens of `code`, a line of code without its `indentation`, as each one's kind and
-/// column: each of `(`, `)`, `{` and `}` is one, and a run of letters, digits and `_` is a word.
-/// A word spelled as a keyword is that keyword, and any other is a name, or a type's name when it
-/// starts with a capital.
+/// column: each of `(`, `)`, `{` and `}` is one, and a run of letters, digits and `_` is a word,
+/// or an integer when it starts with a digit. A word spelled as a keyword is that keyword, and
+/// any other is a name, or a type's name when it starts with a capital.
 fn tokens_in(code: &str, indentation: usize) -> Vec<(TokenKind, u32)> {
     let mut tokens = Vec::new();
     let bytes = code.as_bytes();
@@ -171,7 +171,11 @@ fn tokens_in(code: &str, indentation: usize) -> Vec<(TokenKind, u32)> {
             "{" => Some(TokenKind::BraceOpen),
             "}" => Some(TokenKind::BraceClose),
             "function" => Some(TokenKind::Function),
+            "return" => Some(TokenKind::Return),
             "returns" => Some(TokenKind::Returns),
+            word if word.starts_with(|first: char| first.is_ascii_digit()) => {
+                Some(TokenKind::Integer)
+            }
             word if word.starts_with(|first: char| first.is_ascii_uppercase()) => {
                 Some(TokenKind::TypeName)
             }
@@ -523,6 +527,27 @@ fn lines_that_end_early() {
     refuses(&mut examples, "main()\n", (NotAFunction, 1, 1));
     // A token out of place is found before the line's end.
     refuses(&mut examples, "function main) returns Void\n", (Expected(ParenthesisOpen), 1, 14));
+    check(examples);
+}
+
+#[test]
+fn return_and_integers() {
+    // The lexer knows `return` and integers, but no rule takes either yet, so each is refused
+    // where it is: outside every block a line must start with `function`, a keyword is never a
+    // name, an integer is no type's name, and a function's body holds only comments.
+    let mut examples = Examples::new();
+    refuses(&mut examples, "return 3\n", (NotAFunction, 1, 1));
+    refuses(&mut examples, "3\n", (NotAFunction, 1, 1));
+    refuses_line(&mut examples, "function return() returns Void {", (Expected(Name), 10));
+    refuses_line(
+        &mut examples,
+        "function main(3) returns Void {",
+        (Expected(ParenthesisClose), 15),
+    );
+    refuses_line(&mut examples, "function main() returns 3 {", (Expected(ReturnType), 25));
+    refuses_line(&mut examples, "function main() return Void {", (Expected(Returns), 17));
+    let body = "function main() returns Void {\n    return 3\n}\n";
+    refuses(&mut examples, body, (CodeInBody, 2, 5));
     check(examples);
 }
 

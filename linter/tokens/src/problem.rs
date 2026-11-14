@@ -114,9 +114,11 @@ impl fmt::Display for Kind {
 const fn named(kind: TokenKind) -> &'static str {
     match kind {
         TokenKind::Function => "`function`",
+        TokenKind::Return => "`return`",
         TokenKind::Returns => "`returns`",
         TokenKind::Name => "a name",
         TokenKind::TypeName => "a type's name",
+        TokenKind::Integer => "an integer",
         TokenKind::ParenthesisOpen => "`(`",
         TokenKind::ParenthesisClose => "`)`",
         TokenKind::BraceOpen => "`{`",

@@ -30,8 +30,8 @@
 use std::cmp::Ordering;
 
 use stella_lexer::TokenKind::{
-    BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
-    TypeName,
+    BraceClose, BraceOpen, Comment, Function, Integer, Name, ParenthesisClose, ParenthesisOpen,
+    Return, Returns, TypeName,
 };
 use stella_lexer::{TOKENS_MAX, Token, Tokens};
 use stella_linter_text::LEVEL_SPACES;
@@ -123,7 +123,8 @@ fn lint_tokens_lines(tokens: &[Token]) -> Result<(), Problem> {
             (BraceOpen, true, false)
             | (BraceClose, false, false)
             | (
-                Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose,
+                Function | Return | Returns | Name | TypeName | Integer | ParenthesisOpen
+                | ParenthesisClose,
                 true | false,
                 true | false,
             ) => None,
@@ -166,8 +167,8 @@ fn lint_tokens_braces(tokens: &[Token]) -> Result<(), Problem> {
                     outermost = None;
                 }
             }
-            Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose | Comment => {
-            }
+            Function | Return | Returns | Name | TypeName | Integer | ParenthesisOpen
+            | ParenthesisClose | Comment => {}
         }
         assert!(depth <= TOKENS_MAX, "every `{{` that's open is a token");
         assert_eq!(outermost.is_some(), depth > 0, "an outermost `{{` is open when any is");
@@ -200,8 +201,8 @@ fn lint_tokens_within_lines(tokens: &[Token]) -> Result<(), Problem> {
                 assert!(depth > 0, "the braces pair up, so a `}}` closes a `{{` before it");
                 depth -= 1;
             }
-            Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose | Comment => {
-            }
+            Function | Return | Returns | Name | TypeName | Integer | ParenthesisOpen
+            | ParenthesisClose | Comment => {}
         }
         assert!(depth <= TOKENS_MAX, "every `{{` that's open is a token");
     }
@@ -286,18 +287,19 @@ const fn spaces_wanted(neighbors: Neighbors) -> u32 {
     match (neighbors.before, neighbors.after) {
         (
             ParenthesisOpen,
-            Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose | BraceOpen
-            | BraceClose | Comment,
+            Function | Return | Returns | Name | TypeName | Integer | ParenthesisOpen
+            | ParenthesisClose | BraceOpen | BraceClose | Comment,
         )
         | (
-            Function | Returns | Name | TypeName | ParenthesisClose | BraceOpen | BraceClose
-            | Comment,
+            Function | Return | Returns | Name | TypeName | Integer | ParenthesisClose | BraceOpen
+            | BraceClose | Comment,
             ParenthesisOpen | ParenthesisClose,
         ) => 0,
         (
-            Function | Returns | Name | TypeName | ParenthesisClose | BraceOpen | BraceClose
+            Function | Return | Returns | Name | TypeName | Integer | ParenthesisClose | BraceOpen
+            | BraceClose | Comment,
+            Function | Return | Returns | Name | TypeName | Integer | BraceOpen | BraceClose
             | Comment,
-            Function | Returns | Name | TypeName | BraceOpen | BraceClose | Comment,
         ) => 1,
     }
 }

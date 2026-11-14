@@ -17,6 +17,14 @@ ASCII. The smallest program is eight tokens: `function`, `main`, `(`, `)`,
   `main`, is a function's, a variable's or an instance's. One that starts with
   a capital, like `Void`, is a type's. Each has its one [shape](names.md).
   Tested by [`names`](../../lexer/tests/lex.rs).
+- An ASCII digit, then any ASCII digits, is one token, an integer, like `3`
+  or `255`. The longest run is one integer. Each value has one spelling, so
+  an integer can't start with `0` unless it's `0`: `03` is refused at its
+  `0`. A letter or `_` can't come right after an integer, so `3x` is refused
+  at the `x`, rather than read as two tokens missing a space. An integer can
+  be as long as its line: what it's worth is checked once it has a type, which
+  isn't built yet. Tested by [`integers`](../../lexer/tests/lex.rs) and
+  [`every_printable_character`](../../lexer/tests/lex.rs).
 - `(`, `)`, `{` and `}` are each a token of their own, with or without spaces
   around them. Tested by [`spaces_and_lines`](../../lexer/tests/lex.rs).
 - A [comment](comments.md) is one token, from its `//` to the end of its line.
@@ -35,10 +43,10 @@ tested by
 own by [`every_source_owns_its_tokens`](../../lexer/tests/lex.rs).
 
 Anything else in code is refused: every character in code is in a token or is
-a space, and the first one that isn't is the problem. A name can hold a digit
-or `_`, but can't start with one, so `9lives` is refused at the `9`. For now,
-every other character, like `;`, `"` or a lone `/`, can't appear in code at
-all. For example:
+a space, and the first one that isn't is the problem. A name can hold `_`, but
+can't start with one, so `_main` is refused at the `_`. For now, every other
+character, like `;`, `"` or a lone `/`, can't appear in code at all. For
+example:
 
 ```
 hello.stella:1:32: `;` can't start a token.
@@ -52,6 +60,6 @@ where a line starts, after indentation, right after a symbol, and after a
 comment that isn't ASCII, by
 [`every_printable_character_in_context`](../../lexer/tests/lex.rs). The order is
 tested by [`the_first_problem_wins`](../../lexer/tests/lex.rs), random sources
-by [`fuzz_against_the_oracle`](../../lexer/tests/lex.rs), the sentence by
+by [`fuzz_against_the_oracle`](../../lexer/tests/lex.rs), the sentences by
 [`sentences`](../../lexer/tests/problem.rs), and the command by
 [`code_that_cant_be_lexed`](../../cli/tests/lint.rs).

@@ -7,14 +7,15 @@
 
 #![forbid(unsafe_code)]
 
-use stella_lexer::Kind::{NameNotSnakeCase, TypeNameNotPascalCase, Unexpected};
+use stella_lexer::Kind::{
+    IntegerRunsIntoWord, IntegerStartsWithZero, NameNotSnakeCase, TypeNameNotPascalCase, Unexpected,
+};
 
 #[test]
 fn sentences() {
     // Every kind of problem the lexer has, each with its sentence written out whole.
     for (kind, sentence) in [
         (Unexpected(';'), "`;` can't start a token."),
-        (Unexpected('9'), "`9` can't start a token."),
         (Unexpected('_'), "`_` can't start a token."),
         (Unexpected('/'), "`/` can't start a token."),
         (Unexpected('"'), "`\"` can't start a token."),
@@ -30,6 +31,8 @@ fn sentences() {
             "a type's name must be words that each start with one capital, then lowercase letters \
              and digits, like `Void` or `MessageQueue`.",
         ),
+        (IntegerStartsWithZero, "an integer can't start with `0`, unless it's `0`."),
+        (IntegerRunsIntoWord, "an integer is digits only, so a letter or `_` can't follow one."),
     ] {
         assert_eq!(kind.to_string(), sentence, "for {kind:?}");
     }

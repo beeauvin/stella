@@ -19,8 +19,8 @@
 use std::cmp::Ordering;
 
 use stella_lexer::TokenKind::{
-    self, BraceClose, BraceOpen, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
-    TypeName,
+    self, BraceClose, BraceOpen, Function, Integer, Name, ParenthesisClose, ParenthesisOpen,
+    Return, Returns, TypeName,
 };
 use stella_lexer::lex;
 use stella_linter_text::{LEVEL_SPACES, lint};
@@ -46,21 +46,25 @@ const SMALLEST: &str = "function main() returns Void {\n}\n";
 
 /// The tokens that can come first of two on a line, once the braces are where they go, each
 /// written as code writes it.
-const FIRSTS: [(TokenKind, &str); 6] = [
+const FIRSTS: [(TokenKind, &str); 8] = [
     (Function, "function"),
+    (Return, "return"),
     (Returns, "returns"),
     (Name, "main"),
     (TypeName, "Void"),
+    (Integer, "3"),
     (ParenthesisOpen, "("),
     (ParenthesisClose, ")"),
 ];
 
 /// The tokens that can come second: the same ones, and `{`.
-const SECONDS: [(TokenKind, &str); 7] = [
+const SECONDS: [(TokenKind, &str); 9] = [
     (Function, "function"),
+    (Return, "return"),
     (Returns, "returns"),
     (Name, "main"),
     (TypeName, "Void"),
+    (Integer, "3"),
     (ParenthesisOpen, "("),
     (ParenthesisClose, ")"),
     (BraceOpen, "{"),
@@ -69,14 +73,16 @@ const SECONDS: [(TokenKind, &str); 7] = [
 /// How many spaces go between each first token, by row, and each second, by column, as the
 /// layout page says: one, except none after `(`, and none before `(` or `)`.
 #[rustfmt::skip]
-const SPACES: [[usize; 7]; 6] = [
-    // function, returns, main, Void, (, ), {
-    [1, 1, 1, 1, 0, 0, 1], // function
-    [1, 1, 1, 1, 0, 0, 1], // returns
-    [1, 1, 1, 1, 0, 0, 1], // main
-    [1, 1, 1, 1, 0, 0, 1], // Void
-    [0, 0, 0, 0, 0, 0, 0], // (
-    [1, 1, 1, 1, 0, 0, 1], // )
+const SPACES: [[usize; 9]; 8] = [
+    // function, return, returns, main, Void, 3, (, ), {
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // function
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // return
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // returns
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // main
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // Void
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // 3
+    [0, 0, 0, 0, 0, 0, 0, 0, 0], // (
+    [1, 1, 1, 1, 1, 1, 0, 0, 1], // )
 ];
 
 /// These are what a random line of code is made of, before the `{` it ends with.
@@ -164,9 +170,10 @@ const fn column_at(levels: u32) -> u32 {
     levels * LEVEL_SPACES + 1
 }
 
-/// Says whether a token of `kind` is a word, which runs into a word right after it.
-const fn is_word(kind: TokenKind) -> bool {
-    matches!(kind, Function | Returns | Name | TypeName)
+/// Says whether a token of `kind` is a word or an integer. Two of them with nothing between are
+/// one word, or one integer, or an integer that a letter runs into, which the lexer refuses.
+const fn runs_together(kind: TokenKind) -> bool {
+    matches!(kind, Function | Return | Returns | Name | TypeName | Integer)
 }
 
 /// Returns the lines of blocks opened `depth` deep, each line laid out the one way, then `line`,
@@ -235,7 +242,9 @@ fn split(content: &str, from: usize) -> Vec<(usize, &str)> {
 fn kind_of(text: &str) -> TokenKind {
     match text {
         "function" => Function,
+        "return" => Return,
         "returns" => Returns,
+        _ if text.starts_with(|character: char| character.is_ascii_digit()) => Integer,
         "(" => ParenthesisOpen,
         ")" => ParenthesisClose,
         "{" => BraceOpen,
@@ -707,14 +716,16 @@ fn every_gap() {
         for (column, &(second, second_text)) in SECONDS.iter().enumerate() {
             let wanted = SPACES[row][column];
             for gap in 0..=2 {
-                // Two words with nothing between them are one word.
-                if gap == 0 && is_word(first) && is_word(second) {
+                // Two words or integers with nothing between them aren't two tokens.
+                if gap == 0 && runs_together(first) && runs_together(second) {
                     continue;
                 }
                 let rest = match second {
                     BraceOpen => "",
                     ParenthesisOpen => ") {",
-                    Function | Returns | Name | TypeName | ParenthesisClose => " {",
+                    Function | Return | Returns | Name | TypeName | Integer | ParenthesisClose => {
+                        " {"
+                    }
                     BraceClose | TokenKind::Comment => {
                         unreachable!("no line here has a `}}` or a comment second")
                     }
@@ -748,7 +759,7 @@ fn every_gap() {
             }
         }
     }
-    assert_eq!(cases_count, 6 * 7 * 3 - 4 * 4);
+    assert_eq!(cases_count, 8 * 9 * 3 - 6 * 6);
     check(examples);
 }
 

@@ -37,6 +37,12 @@ pub enum Kind {
     /// capital, then lowercase letters and digits. An underscore is refused, and so are two
     /// capitals in a row.
     TypeNameNotPascalCase,
+    /// An integer starts with `0` and goes on, as in `03`. Each value has one spelling, so only
+    /// `0` starts with `0`. It's at the `0`.
+    IntegerStartsWithZero,
+    /// A letter or `_` comes right after an integer, as in `3x`. An integer is digits only, and
+    /// it's at the letter or `_`.
+    IntegerRunsIntoWord,
 }
 
 /// A kind displays as the sentence that says what's wrong. A message prints it after the file,
@@ -57,6 +63,12 @@ impl fmt::Display for Kind {
                 "a type's name must be words that each start with one capital, then lowercase \
                  letters and digits, like `Void` or `MessageQueue`.",
             ),
+            Self::IntegerStartsWithZero => {
+                f.write_str("an integer can't start with `0`, unless it's `0`.")
+            }
+            Self::IntegerRunsIntoWord => {
+                f.write_str("an integer is digits only, so a letter or `_` can't follow one.")
+            }
         }
     }
 }

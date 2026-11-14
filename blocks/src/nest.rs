@@ -28,8 +28,8 @@ use std::iter::FusedIterator;
 use std::ops::Range;
 
 use stella_lexer::TokenKind::{
-    BraceClose, BraceOpen, Comment, Function, Name, ParenthesisClose, ParenthesisOpen, Returns,
-    TypeName,
+    BraceClose, BraceOpen, Comment, Function, Integer, Name, ParenthesisClose, ParenthesisOpen,
+    Return, Returns, TypeName,
 };
 use stella_lexer::{TOKENS_MAX, Token, Tokens};
 use stella_linter_text::LEVEL_SPACES;
@@ -325,7 +325,8 @@ fn assert_line(line: &[Token], depth: u32) {
     assert_eq!(column, column_at(depth), "a line is indented a level for each block it's in");
     for token in before {
         let goes_on = match token.kind() {
-            Function | Returns | Name | TypeName | ParenthesisOpen | ParenthesisClose => true,
+            Function | Return | Returns | Name | TypeName | Integer | ParenthesisOpen
+            | ParenthesisClose => true,
             BraceOpen | BraceClose | Comment => false,
         };
         assert!(goes_on, "a brace or a comment is the last token on its line");
